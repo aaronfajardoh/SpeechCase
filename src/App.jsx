@@ -174,6 +174,7 @@ function App() {
   const currentReadingElementRef = useRef(null) // Track the element currently being read
   const previousBoundaryPositionRef = useRef(null) // Track previous boundary position to highlight current word
   const historyIndexRef = useRef(0) // Track current history index for undo/redo
+  const textItemsRef = useRef([]) // Track text items for event handlers
 
   useEffect(() => {
     // Check if browser supports Web Speech API
@@ -219,6 +220,10 @@ function App() {
   useEffect(() => {
     playbackSpeedRef.current = playbackSpeed
   }, [playbackSpeed])
+
+  useEffect(() => {
+    textItemsRef.current = textItems
+  }, [textItems])
 
   // Set up Media Session API handlers once (runs only on mount)
   useEffect(() => {
@@ -799,62 +804,73 @@ function App() {
     if (currentReadingElementRef.current) {
       const element = currentReadingElementRef.current
       // Only remove reading highlight, preserve start position marker if it's the same element
-      if (!element.classList.contains('start-position-marker')) {
+      if (element.classList.contains('start-position-marker')) {
+        // If it's also the start marker, just remove reading-specific styles (green glow)
+        // Keep the blue background and border
+        element.style.boxShadow = ''
+        element.classList.remove('current-reading-marker')
+      } else {
+        // If it's NOT the start marker, remove all reading highlight styles
+        // This won't affect the blue start marker which is on a different element
         element.style.backgroundColor = ''
         element.style.borderBottom = ''
         element.style.borderBottomColor = ''
-      } else {
-        // If it's also the start marker, just remove reading-specific styles
         element.style.boxShadow = ''
+        element.classList.remove('current-reading-marker')
       }
-      element.classList.remove('current-reading-marker')
       currentReadingElementRef.current = null
     }
-    // Reset previous boundary position tracking
-    previousBoundaryPositionRef.current = null
+    // Don't reset previousBoundaryPositionRef here - it's used for tracking
   }
 
   // Highlight the element currently being read
   const highlightCurrentReading = (position) => {
-    if (!textItems || textItems.length === 0) return
-    
-    // Find the text item that contains this position
-    const itemAtPosition = textItems.find(item => 
-      item.charIndex <= position && 
-      item.charIndex + item.str.length >= position
-    )
+    // Use requestAnimationFrame to ensure DOM is ready, especially after quick restarts
+    requestAnimationFrame(() => {
+      // Use ref to get latest textItems (important for event handlers)
+      const currentTextItems = textItemsRef.current
+      if (!currentTextItems || currentTextItems.length === 0) return
+      
+      // Find the text item that contains this position
+      const itemAtPosition = currentTextItems.find(item => 
+        item.charIndex <= position && 
+        item.charIndex + item.str.length >= position
+      )
 
-    if (itemAtPosition && itemAtPosition.element) {
-      const element = itemAtPosition.element
-      
-      // Clear previous reading highlight
-      clearReadingHighlight()
-      
-      // Apply reading highlight (different from start position marker)
-      // Use a pulsing/glowing effect to show it's actively being read
-      if (element.classList.contains('start-position-marker')) {
-        // If it's also the start marker, add a glow effect
-        element.style.boxShadow = '0 0 8px rgba(34, 197, 94, 0.6)'
-      } else {
-        // Otherwise, use a green highlight to show active reading
-        element.style.backgroundColor = 'rgba(34, 197, 94, 0.3)'
-        element.style.borderBottom = '2px solid #22c55e'
-        element.style.boxShadow = '0 0 6px rgba(34, 197, 94, 0.4)'
+      if (itemAtPosition && itemAtPosition.element) {
+        const element = itemAtPosition.element
+        
+        // Clear previous reading highlight (but preserve blue start marker if it's on a different element)
+        clearReadingHighlight()
+        
+        // Apply reading highlight (green) - this should coexist with blue start marker
+        if (element.classList.contains('start-position-marker')) {
+          // If this element is ALSO the start marker, add green glow on top of blue
+          // The blue background and border are already there, just add green glow
+          element.style.boxShadow = '0 0 8px rgba(34, 197, 94, 0.8), 0 0 12px rgba(34, 197, 94, 0.6)'
+        } else {
+          // If this is a different element, apply full green highlight
+          // This won't affect the blue start marker which is on a different element
+          element.style.backgroundColor = 'rgba(34, 197, 94, 0.4)'
+          element.style.borderBottom = '2px solid #22c55e'
+          element.style.borderBottomColor = '#22c55e'
+          element.style.boxShadow = '0 0 8px rgba(34, 197, 94, 0.5)'
+        }
+        element.classList.add('current-reading-marker')
+        currentReadingElementRef.current = element
+        
+        // Scroll the element into view if it's not visible (only if significantly out of viewport)
+        const rect = element.getBoundingClientRect()
+        const viewportHeight = window.innerHeight
+        const viewportWidth = window.innerWidth
+        const isOutOfView = rect.bottom < 0 || rect.top > viewportHeight || 
+                            rect.right < 0 || rect.left > viewportWidth
+        
+        if (isOutOfView) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }
       }
-      element.classList.add('current-reading-marker')
-      currentReadingElementRef.current = element
-      
-      // Scroll the element into view if it's not visible (only if significantly out of viewport)
-      const rect = element.getBoundingClientRect()
-      const viewportHeight = window.innerHeight
-      const viewportWidth = window.innerWidth
-      const isOutOfView = rect.bottom < 0 || rect.top > viewportHeight || 
-                          rect.right < 0 || rect.left > viewportWidth
-      
-      if (isOutOfView) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }
-    }
+    })
   }
 
   const handleWordClick = (charIndex, word) => {
@@ -869,6 +885,9 @@ function App() {
       utteranceRef.current = null
       clearReadingHighlight()
       
+      // Reset boundary position tracking for clean restart
+      previousBoundaryPositionRef.current = null
+      
       // Update Media Session metadata
       if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = 'paused'
@@ -877,9 +896,11 @@ function App() {
     
     // Update the start position
     setStartPosition(wordStart)
+    startPositionRef.current = wordStart
     
-    // Find and mark the clicked word
-    const clickedItem = textItems.find(item => 
+    // Find and mark the clicked word (use ref to get latest textItems)
+    const currentTextItems = textItemsRef.current.length > 0 ? textItemsRef.current : textItems
+    const clickedItem = currentTextItems.find(item => 
       item.charIndex <= charIndex && 
       item.charIndex + item.str.length >= charIndex
     )
@@ -887,18 +908,34 @@ function App() {
       markStartPosition(clickedItem.element)
     }
     
-    // If playback was happening, restart from the new position
-    if (wasPlaying && synthRef.current && extractedText) {
-      // Use a small delay to ensure cancellation is complete before restarting
+    // Always start reading immediately from the new position
+    if (synthRef.current && extractedText) {
+      // Use a small delay to ensure cancellation is complete before restarting (if was playing)
+      const delay = wasPlaying ? 100 : 0
       setTimeout(() => {
-        // Double-check we're still supposed to be playing (user might have stopped)
-        if (!synthRef.current.speaking) {
-          const success = startPlaybackFromPosition(wordStart)
-          if (!success) {
-            setError('No text to read from the selected position.')
+        // Ensure speech is fully stopped before restarting
+        if (wasPlaying) {
+          // Force cancel any remaining speech
+          synthRef.current.cancel()
+          // Wait a bit more if still speaking
+          if (synthRef.current.speaking) {
+            setTimeout(() => {
+              synthRef.current.cancel()
+              // Reset boundary tracking before restart
+              previousBoundaryPositionRef.current = null
+              startPlaybackFromPosition(wordStart)
+            }, 50)
+            return
           }
         }
-      }, 50)
+        // Reset boundary tracking before starting (in case it wasn't playing)
+        previousBoundaryPositionRef.current = null
+        // Start playback from the new position
+        const success = startPlaybackFromPosition(wordStart)
+        if (!success) {
+          setError('No text to read from the selected position.')
+        }
+      }, delay)
     }
   }
 
@@ -2123,7 +2160,7 @@ function App() {
       </div>
 
       {/* Floating Controls Panel */}
-      {extractedText && (
+      {pdfDoc && (
         <div className="reader-controls-panel">
           <div className="controls-panel-header">
             <IconSpeaker size={18} />
@@ -2228,7 +2265,7 @@ function App() {
                 <button
                   onClick={handleRewind}
                   className="btn btn-secondary btn-rewind-forward"
-                  disabled={isLoading || startPosition === 0}
+                  disabled={isLoading || !extractedText || startPosition === 0}
                   title="Rewind 10 seconds"
                 >
                   <IconRewind size={16} />
@@ -2236,7 +2273,7 @@ function App() {
                 <button
                   onClick={handlePlay}
                   className={`btn btn-primary btn-play ${isPlaying ? 'playing' : ''}`}
-                  disabled={isLoading}
+                  disabled={isLoading || !extractedText}
                 >
                   {isPlaying ? <IconPause size={18} /> : <IconPlay size={18} />}
                   <span>{isPlaying ? 'Pause' : 'Play'}</span>
@@ -2261,13 +2298,19 @@ function App() {
             </div>
           </div>
 
-          {interactionMode === 'read' && startPosition === 0 && (
+          {!extractedText && (
+            <div className="controls-panel-hint">
+              {isLoading ? 'Extracting text from PDF...' : 'No text extracted from PDF'}
+            </div>
+          )}
+
+          {extractedText && interactionMode === 'read' && startPosition === 0 && (
             <div className="controls-panel-hint">
               Click any word in the PDF to set reading start position
             </div>
           )}
 
-          {interactionMode === 'highlight' && highlights.length === 0 && (
+          {extractedText && interactionMode === 'highlight' && highlights.length === 0 && (
             <div className="controls-panel-hint">
               Select text to create highlights
             </div>
