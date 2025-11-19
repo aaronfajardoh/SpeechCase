@@ -1959,7 +1959,7 @@ function App() {
 
           <footer className="footer">
             <p>
-              Powered by <strong>Web Speech API</strong> — No API keys required
+              Powered by <strong>Web Speech Technology</strong> — Beta Version
             </p>
             <p className="browser-note">
               Works best in Chrome, Edge, Safari, or Firefox
