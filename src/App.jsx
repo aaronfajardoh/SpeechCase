@@ -85,6 +85,13 @@ const IconSpeaker = ({ size = 16, className = '' }) => (
   </svg>
 )
 
+const IconLoading = ({ size = 18, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={{ animation: 'spin 1s linear infinite' }}>
+    <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+    <path d="M12 2a10 10 0 0 1 10 10" strokeDasharray="31.416" strokeDashoffset="23.562" />
+  </svg>
+)
+
 const IconHighlighter = ({ size = 16, className = '' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
@@ -135,13 +142,14 @@ function App() {
   const [textItems, setTextItems] = useState([]) // Store text items with positions for mapping
   const [isLoading, setIsLoading] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isTTSLoading, setIsTTSLoading] = useState(false) // Loading state for TTS synthesis
   const [currentPage, setCurrentPage] = useState(1) // Current viewing page (1-indexed) - for tracking
   const [totalPages, setTotalPages] = useState(0)
   const [error, setError] = useState('')
   const [language, setLanguage] = useState('auto') // 'auto', 'en', 'es'
   const [detectedLanguage, setDetectedLanguage] = useState(null)
   const [startPosition, setStartPosition] = useState(0) // Character position to start reading from
-  const [playbackSpeed, setPlaybackSpeed] = useState(1.0) // Playback speed (0.5x to 2.0x)
+  const [playbackSpeed, setPlaybackSpeed] = useState(1.3) // Playback speed (0.5x to 2.0x)
   const [pageScale, setPageScale] = useState(1.5) // Scale for PDF rendering
   const [renderedPages, setRenderedPages] = useState([]) // Track which pages are rendered
   const [pageData, setPageData] = useState([]) // Store page rendering data
@@ -169,12 +177,17 @@ function App() {
   const pdfFileRef = useRef(null) // Track PDF file for Media Session metadata
   const languageRef = useRef('auto') // Track language for Media Session handlers
   const detectedLanguageRef = useRef(null) // Track detected language for Media Session handlers
-  const playbackSpeedRef = useRef(1.0) // Track playback speed for Media Session handlers
+  const playbackSpeedRef = useRef(1.3) // Track playback speed for Media Session handlers
   const markedStartElementRef = useRef(null) // Track the element marked as start position
   const currentReadingElementRef = useRef(null) // Track the element currently being read
   const previousBoundaryPositionRef = useRef(null) // Track previous boundary position to highlight current word
   const historyIndexRef = useRef(0) // Track current history index for undo/redo
   const textItemsRef = useRef([]) // Track text items for event handlers
+  const audioRef = useRef(null) // Track audio element for Google TTS playback
+  const googleTtsTextRef = useRef('') // Track text being spoken via Google TTS
+  const googleTtsStartPositionRef = useRef(0) // Track start position for Google TTS
+  const isCancelledRef = useRef(false) // Track if Google TTS playback is cancelled
+  const currentChunkIndexRef = useRef(0) // Track current chunk index for Google TTS
   const [isMobile, setIsMobile] = useState(false) // Track if device is mobile
   const [toolbarVisible, setToolbarVisible] = useState(true) // Toolbar visibility for mobile
   const [controlsPanelExpanded, setControlsPanelExpanded] = useState(false) // Controls panel expanded state for mobile
@@ -359,12 +372,12 @@ function App() {
     console.log('Setting up Media Session API handlers (one-time setup)')
     
     // Helper function to start playback (uses refs for latest values)
-    const startPlayback = () => {
+    const startPlayback = async () => {
       const currentlyPlaying = isPlayingRef.current
       const currentText = extractedTextRef.current
       const currentStartPos = startPositionRef.current
       
-      if (currentlyPlaying || !currentText || !synthRef.current) {
+      if (currentlyPlaying || !currentText) {
         return false
       }
       
@@ -386,52 +399,86 @@ function App() {
         setError('No text to read from the selected position.')
         return false
       }
-      
-      const utterance = new SpeechSynthesisUtterance(textToRead)
-      utterance.lang = langToUse === 'es' ? 'es-ES' : 'en-US'
-      utterance.rate = playbackSpeedRef.current
-      utterance.pitch = 1.0
-      utterance.volume = 1.0
 
-      utterance.onboundary = (event) => {
-        if (event.name === 'word' || event.name === 'sentence') {
-          const absolutePosition = position + event.charIndex
-          currentPlaybackPositionRef.current = absolutePosition
-          lastBoundaryPositionRef.current = absolutePosition
+      // Use Google TTS for Spanish, browser TTS for English
+      console.log('Media Session: Starting playback, language:', langToUse, 'text length:', textToRead.length)
+      if (langToUse === 'es') {
+        // Use Google TTS for Spanish
+        console.log('Media Session: Using Google TTS for Spanish text')
+        try {
+          const success = await playGoogleTTSAudio(textToRead, position, playbackSpeedRef.current)
+          console.log('Media Session: Google TTS playback started:', success)
+          return success
+        } catch (error) {
+          console.error('Media Session: Google TTS error:', error)
+          setError('Error with Google TTS: ' + error.message)
+          return false
         }
-      }
+      } else {
+        console.log('Media Session: Using browser TTS for English text')
+        // Use browser TTS for English
+        if (!synthRef.current) {
+          setError('Text-to-speech is not available in your browser.')
+          return false
+        }
 
-      utterance.onstart = () => {
-        setIsPlaying(true)
-        currentPlaybackPositionRef.current = position
-        playbackStartPositionRef.current = position
-        playbackStartTimeRef.current = Date.now()
-        lastBoundaryPositionRef.current = position
-        
-        if ('mediaSession' in navigator) {
-          navigator.mediaSession.playbackState = 'playing'
-          navigator.mediaSession.metadata = new MediaMetadata({
-            title: pdfFileRef.current ? pdfFileRef.current.name : 'SpeechCase',
-            artist: 'Text-to-Speech',
-            album: 'PDF Reader'
-          })
+        const utterance = new SpeechSynthesisUtterance(textToRead)
+        utterance.lang = 'en-US'
+        utterance.rate = playbackSpeedRef.current
+        utterance.pitch = 1.0
+        utterance.volume = 1.0
+
+        utterance.onboundary = (event) => {
+          if (event.name === 'word' || event.name === 'sentence') {
+            const absolutePosition = position + event.charIndex
+            currentPlaybackPositionRef.current = absolutePosition
+            lastBoundaryPositionRef.current = absolutePosition
+          }
         }
-      }
-      
-      utterance.onend = () => {
-        setIsPlaying(false)
-        currentPlaybackPositionRef.current = currentText.length
-        playbackStartTimeRef.current = null
-        
-        if ('mediaSession' in navigator) {
-          // Keep as 'paused' instead of 'none' so macOS continues to route media keys
-          navigator.mediaSession.playbackState = 'paused'
+
+        utterance.onstart = () => {
+          setIsPlaying(true)
+          currentPlaybackPositionRef.current = position
+          playbackStartPositionRef.current = position
+          playbackStartTimeRef.current = Date.now()
+          lastBoundaryPositionRef.current = position
+          
+          if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'playing'
+            navigator.mediaSession.metadata = new MediaMetadata({
+              title: pdfFileRef.current ? pdfFileRef.current.name : 'SpeechCase',
+              artist: 'Text-to-Speech',
+              album: 'PDF Reader'
+            })
+          }
         }
-      }
-      
-      utterance.onerror = (event) => {
-        // Ignore "interrupted" errors - these are expected when pausing/cancelling speech
-        if (event.error === 'interrupted') {
+        
+        utterance.onend = () => {
+          setIsPlaying(false)
+          currentPlaybackPositionRef.current = currentText.length
+          playbackStartTimeRef.current = null
+          
+          if ('mediaSession' in navigator) {
+            // Keep as 'paused' instead of 'none' so macOS continues to route media keys
+            navigator.mediaSession.playbackState = 'paused'
+          }
+        }
+        
+        utterance.onerror = (event) => {
+          // Ignore "interrupted" errors - these are expected when pausing/cancelling speech
+          if (event.error === 'interrupted') {
+            setIsPlaying(false)
+            playbackStartTimeRef.current = null
+            
+            if ('mediaSession' in navigator) {
+              // Keep as 'paused' instead of 'none' so macOS continues to route media keys
+              navigator.mediaSession.playbackState = 'paused'
+            }
+            return
+          }
+          
+          // Only show errors for actual problems
+          setError('Error during speech: ' + event.error)
           setIsPlaying(false)
           playbackStartTimeRef.current = null
           
@@ -439,30 +486,19 @@ function App() {
             // Keep as 'paused' instead of 'none' so macOS continues to route media keys
             navigator.mediaSession.playbackState = 'paused'
           }
-          return
         }
-        
-        // Only show errors for actual problems
-        setError('Error during speech: ' + event.error)
-        setIsPlaying(false)
-        playbackStartTimeRef.current = null
-        
-        if ('mediaSession' in navigator) {
-          // Keep as 'paused' instead of 'none' so macOS continues to route media keys
-          navigator.mediaSession.playbackState = 'paused'
-        }
-      }
 
-      utteranceRef.current = utterance
-      synthRef.current.speak(utterance)
-      return true
+        utteranceRef.current = utterance
+        synthRef.current.speak(utterance)
+        return true
+      }
     }
 
     // Helper function to pause playback
     const pausePlayback = () => {
       const currentlyPlaying = isPlayingRef.current
       
-      if (currentlyPlaying && synthRef.current) {
+      if (currentlyPlaying) {
         // Save current playback position before canceling
         const currentPos = lastBoundaryPositionRef.current !== undefined 
           ? lastBoundaryPositionRef.current 
@@ -472,8 +508,20 @@ function App() {
           startPositionRef.current = currentPos
         }
         
-        synthRef.current.cancel()
+        // Handle Google TTS audio
+        if (audioRef.current) {
+          isCancelledRef.current = true
+          audioRef.current.pause()
+          audioRef.current = null
+        }
+        
+        // Handle browser TTS
+        if (synthRef.current) {
+          synthRef.current.cancel()
+        }
+        
         setIsPlaying(false)
+        isPlayingRef.current = false
         clearReadingHighlight()
         if ('mediaSession' in navigator) {
           navigator.mediaSession.playbackState = 'paused'
@@ -767,6 +815,458 @@ function App() {
     spanishScore += accentedChars * 2
     
     return spanishScore > englishScore ? 'es' : 'en'
+  }
+
+  // Function to call Google TTS API for Spanish text
+  const synthesizeGoogleTTS = async (text, rate = 1.0) => {
+    try {
+      console.log('Calling Google TTS API with text length:', text.length, 'rate:', rate)
+      const response = await fetch('/api/tts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text, rate }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+        console.error('Google TTS API error:', response.status, errorData)
+        throw new Error(errorData.error || `Failed to synthesize speech: ${response.status}`)
+      }
+
+      const data = await response.json()
+      if (data.audioChunks) {
+        console.log('Google TTS API success, received', data.audioChunks.length, 'audio chunks')
+      } else {
+        console.log('Google TTS API success, audio length:', data.audioContent?.length)
+      }
+      return data
+    } catch (error) {
+      console.error('Google TTS error:', error)
+      throw error
+    }
+  }
+
+  // Function to play Google TTS audio
+  const playGoogleTTSAudio = async (text, startPosition, rate = 1.0) => {
+    // Prevent duplicate calls
+    if (isPlayingRef.current) {
+      console.log('Playback already in progress, ignoring duplicate call')
+      return false
+    }
+
+    try {
+      // Stop any existing audio
+      if (audioRef.current) {
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+
+      // Reset cancellation flag
+      isCancelledRef.current = false
+      currentChunkIndexRef.current = 0
+
+      // Store text and position for tracking
+      googleTtsTextRef.current = text
+      googleTtsStartPositionRef.current = startPosition
+
+      // Show loading state immediately
+      setIsPlaying(true)
+      isPlayingRef.current = true // Update ref immediately
+
+      // Check if we need to split into chunks
+      const textBytes = new TextEncoder().encode(text).length
+      const maxBytes = 4500
+
+      if (textBytes <= maxBytes) {
+        // Single chunk - play directly
+        setIsTTSLoading(true)
+        const response = await synthesizeGoogleTTS(text, rate)
+        setIsTTSLoading(false)
+        const { audioContent, mimeType } = response
+
+        const audio = new Audio(`data:${mimeType};base64,${audioContent}`)
+        audio.playbackRate = rate
+        audioRef.current = audio
+
+        // Track position
+        const updatePosition = () => {
+          if (audio.currentTime && audio.duration && !isCancelledRef.current) {
+            const progress = audio.currentTime / audio.duration
+            const textLength = text.length
+            const estimatedPosition = startPosition + Math.floor(progress * textLength)
+            currentPlaybackPositionRef.current = estimatedPosition
+            lastBoundaryPositionRef.current = estimatedPosition
+
+            const wordStart = findWordStart(extractedText, estimatedPosition)
+            highlightCurrentReading(wordStart)
+          }
+        }
+
+        audio.addEventListener('timeupdate', updatePosition)
+
+        audio.addEventListener('play', () => {
+          currentPlaybackPositionRef.current = startPosition
+          playbackStartPositionRef.current = startPosition
+          playbackStartTimeRef.current = Date.now()
+          lastBoundaryPositionRef.current = startPosition
+          previousBoundaryPositionRef.current = startPosition
+          highlightCurrentReading(startPosition)
+
+          if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'playing'
+            navigator.mediaSession.metadata = new MediaMetadata({
+              title: pdfFile ? pdfFile.name : 'SpeechCase',
+              artist: 'Text-to-Speech (Google)',
+              album: 'PDF Reader'
+            })
+          }
+        })
+
+        audio.addEventListener('ended', () => {
+          setIsPlaying(false)
+          isPlayingRef.current = false
+          currentPlaybackPositionRef.current = startPosition + text.length
+          playbackStartTimeRef.current = null
+          clearReadingHighlight()
+
+          if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'paused'
+          }
+
+          audioRef.current = null
+        })
+
+        audio.addEventListener('error', (event) => {
+          console.error('Audio playback error:', event)
+          setError('Error playing audio: ' + (event.message || 'Unknown error'))
+          setIsPlaying(false)
+          isPlayingRef.current = false
+          playbackStartTimeRef.current = null
+          clearReadingHighlight()
+
+          if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'paused'
+          }
+
+          audioRef.current = null
+        })
+
+        await audio.play()
+        return true
+      } else {
+        // Multiple chunks - use smart chunking for immediate start
+        console.log(`Text is ${textBytes} bytes, using smart chunking for immediate playback...`)
+        
+        // Create a longer first chunk (~600-900 chars) to give time for second chunk to preload
+        const getFirstChunk = (text) => {
+          // Try to find 2-3 sentences (about 600-900 chars) for first chunk
+          // This gives enough time for second chunk to preload while first plays
+          let targetLength = 600
+          let currentPos = 0
+          let sentenceCount = 0
+          
+          // Find sentences until we reach target length or 3 sentences
+          while (currentPos < text.length && sentenceCount < 3) {
+            const nextSentenceEnd = text.substring(currentPos).search(/[.!?]\s+/)
+            if (nextSentenceEnd > 0) {
+              currentPos += nextSentenceEnd + 1
+              sentenceCount++
+              // If we've found at least 2 sentences and are past 600 chars, stop
+              if (sentenceCount >= 2 && currentPos >= targetLength) {
+                break
+              }
+            } else {
+              break
+            }
+          }
+          
+          // If we found sentences, use them
+          if (currentPos > 0 && currentPos < text.length) {
+            return text.substring(0, currentPos).trim()
+          }
+          
+          // Fallback: take first 600 characters (or up to first space after 600)
+          if (text.length > 600) {
+            const spaceAfter600 = text.indexOf(' ', 600)
+            return spaceAfter600 > 0 ? text.substring(0, spaceAfter600) : text.substring(0, 600)
+          }
+          return text
+        }
+
+        const firstChunkText = getFirstChunk(text)
+        const remainingText = text.substring(firstChunkText.length).trim()
+        
+        console.log(`First chunk: ${firstChunkText.length} chars, remaining: ${remainingText.length} chars`)
+
+        // Get all chunks first (including remaining text chunks)
+        let remainingChunks = []
+        if (remainingText.length > 0) {
+          try {
+            const chunksResponse = await fetch('/api/tts/chunks', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: remainingText }),
+            })
+            
+            if (chunksResponse.ok) {
+              const { chunks } = await chunksResponse.json()
+              remainingChunks = chunks
+              console.log(`Remaining text split into ${chunks.length} chunks`)
+            } else {
+              console.error('Failed to get remaining chunks, will process as single chunk')
+              remainingChunks = [remainingText] // Fallback: treat remaining as one chunk
+            }
+          } catch (err) {
+            console.error('Error getting remaining chunks:', err)
+            remainingChunks = [remainingText] // Fallback: treat remaining as one chunk
+          }
+        }
+
+        const allChunks = [firstChunkText, ...remainingChunks]
+        console.log(`Total chunks to play: ${allChunks.length}`)
+
+        // Show loading indicator
+        setIsTTSLoading(true)
+
+        // Preload cache for chunks - start preloading ALL chunks in parallel immediately
+        const chunkCache = new Map()
+        
+        // Function to preload a chunk
+        const preloadChunk = async (chunkIndex) => {
+          if (chunkIndex >= allChunks.length || chunkCache.has(chunkIndex)) {
+            return
+          }
+          
+          try {
+            console.log(`Preloading chunk ${chunkIndex + 1} of ${allChunks.length}`)
+            const response = await synthesizeGoogleTTS(allChunks[chunkIndex], rate)
+            chunkCache.set(chunkIndex, response)
+            console.log(`Chunk ${chunkIndex + 1} preloaded and cached`)
+          } catch (err) {
+            console.error(`Error preloading chunk ${chunkIndex + 1}:`, err)
+          }
+        }
+
+        // Start preloading first chunk immediately - this is what we'll play first
+        // Then we'll preload subsequent chunks one at a time while playing
+        setIsTTSLoading(true)
+        await preloadChunk(0)
+        setIsTTSLoading(false)
+        
+        const firstResponse = chunkCache.get(0)
+        const { audioContent: firstAudioContent, mimeType } = firstResponse
+        
+        // Start preloading chunk 1 in background while chunk 0 plays
+        if (allChunks.length > 1) {
+          preloadChunk(1).catch(err => console.error('Error preloading chunk 1:', err))
+        }
+
+        // Function to play a chunk
+        const playChunk = async (chunkIndex) => {
+          if (isCancelledRef.current) {
+            return Promise.resolve()
+          }
+
+          // Wait for chunk to be ready (should already be preloaded, but wait if not)
+          let response
+          if (chunkCache.has(chunkIndex)) {
+            console.log(`Using cached chunk ${chunkIndex + 1}`)
+            response = chunkCache.get(chunkIndex)
+          } else {
+            // Chunk not ready yet - wait for it (shouldn't happen with proper preloading)
+            console.log(`Chunk ${chunkIndex + 1} not cached yet, loading now...`)
+            setIsTTSLoading(true)
+            await preloadChunk(chunkIndex)
+            response = chunkCache.get(chunkIndex)
+            setIsTTSLoading(false)
+          }
+          
+          // Start preloading next chunk while this one is playing
+          if (chunkIndex + 1 < allChunks.length && !chunkCache.has(chunkIndex + 1)) {
+            preloadChunk(chunkIndex + 1).catch(err => 
+              console.error(`Error preloading chunk ${chunkIndex + 2}:`, err)
+            )
+          }
+          
+          const { audioContent, mimeType: chunkMimeType } = response
+
+          if (isCancelledRef.current) {
+            return Promise.resolve()
+          }
+
+          const audio = new Audio(`data:${chunkMimeType};base64,${audioContent}`)
+          audio.playbackRate = rate
+          audioRef.current = audio
+
+          // Calculate text position for this chunk
+          // For first chunk, use its actual length; for others, estimate based on remaining text
+          let chunkStartPosition
+          if (chunkIndex === 0) {
+            chunkStartPosition = startPosition
+          } else {
+            // Calculate cumulative position based on actual chunk lengths
+            let cumulativeLength = firstChunkText.length
+            for (let i = 1; i < chunkIndex; i++) {
+              cumulativeLength += allChunks[i].length
+            }
+            chunkStartPosition = startPosition + cumulativeLength
+          }
+          const chunkTextLength = allChunks[chunkIndex].length
+
+          // Track position
+          const updatePosition = () => {
+            if (audio.currentTime && audio.duration && !isCancelledRef.current) {
+              const progress = audio.currentTime / audio.duration
+              const chunkEndPosition = chunkIndex < allChunks.length - 1
+                ? chunkStartPosition + chunkTextLength
+                : startPosition + text.length
+              const estimatedPosition = Math.min(
+                chunkStartPosition + Math.floor(progress * chunkTextLength),
+                chunkEndPosition
+              )
+              currentPlaybackPositionRef.current = estimatedPosition
+              lastBoundaryPositionRef.current = estimatedPosition
+
+              const wordStart = findWordStart(extractedText, estimatedPosition)
+              highlightCurrentReading(wordStart)
+            }
+          }
+
+          audio.addEventListener('timeupdate', updatePosition)
+
+          if (chunkIndex === 0) {
+            audio.addEventListener('play', () => {
+              currentPlaybackPositionRef.current = startPosition
+              playbackStartPositionRef.current = startPosition
+              playbackStartTimeRef.current = Date.now()
+              lastBoundaryPositionRef.current = startPosition
+              previousBoundaryPositionRef.current = startPosition
+              highlightCurrentReading(startPosition)
+
+              if ('mediaSession' in navigator) {
+                navigator.mediaSession.playbackState = 'playing'
+                navigator.mediaSession.metadata = new MediaMetadata({
+                  title: pdfFile ? pdfFile.name : 'SpeechCase',
+                  artist: 'Text-to-Speech (Google)',
+                  album: 'PDF Reader'
+                })
+              }
+            })
+          }
+
+          return new Promise((resolve, reject) => {
+            audio.addEventListener('ended', () => {
+              console.log(`Chunk ${chunkIndex + 1} of ${allChunks.length} ended`)
+              currentChunkIndexRef.current = chunkIndex + 1
+              
+              // Play next chunk if available and not cancelled
+              if (!isCancelledRef.current && chunkIndex + 1 < allChunks.length) {
+                console.log(`Playing next chunk ${chunkIndex + 2} of ${allChunks.length}`)
+                
+                // Check if next chunk is already preloaded
+                if (chunkCache.has(chunkIndex + 1)) {
+                  // Next chunk is ready - play immediately (no pause!)
+                  console.log(`Next chunk is preloaded, playing immediately`)
+                  playChunk(chunkIndex + 1)
+                    .then(resolve)
+                    .catch((err) => {
+                      console.error('Error playing next chunk:', err)
+                      setIsPlaying(false)
+                      isPlayingRef.current = false
+                      setError('Error playing next audio chunk: ' + err.message)
+                      resolve()
+                    })
+                } else {
+                  // Next chunk not ready yet - wait for it (should be rare if preloading works)
+                  console.log(`Next chunk not ready, waiting...`)
+                  setIsTTSLoading(true)
+                  preloadChunk(chunkIndex + 1)
+                    .then(() => {
+                      setIsTTSLoading(false)
+                      if (!isCancelledRef.current && chunkCache.has(chunkIndex + 1)) {
+                        playChunk(chunkIndex + 1)
+                          .then(resolve)
+                          .catch((err) => {
+                            console.error('Error playing next chunk:', err)
+                            setIsPlaying(false)
+                            isPlayingRef.current = false
+                            setError('Error playing next audio chunk: ' + err.message)
+                            resolve()
+                          })
+                      } else {
+                        resolve()
+                      }
+                    })
+                    .catch((err) => {
+                      setIsTTSLoading(false)
+                      console.error('Error preloading next chunk:', err)
+                      setIsPlaying(false)
+                      isPlayingRef.current = false
+                      setError('Error loading next audio chunk: ' + err.message)
+                      resolve()
+                    })
+                }
+              } else {
+                // All chunks done or cancelled
+                console.log('All chunks finished or cancelled')
+                setIsPlaying(false)
+                isPlayingRef.current = false
+                setIsTTSLoading(false)
+                currentPlaybackPositionRef.current = startPosition + text.length
+                playbackStartTimeRef.current = null
+                clearReadingHighlight()
+
+                if ('mediaSession' in navigator) {
+                  navigator.mediaSession.playbackState = 'paused'
+                }
+
+                audioRef.current = null
+                resolve()
+              }
+            })
+
+            audio.addEventListener('error', (event) => {
+              console.error('Audio playback error:', event, audio.error)
+              if (!isCancelledRef.current) {
+                const errorMsg = audio.error ? `Code: ${audio.error.code}, Message: ${audio.error.message}` : 'Unknown error'
+                setError('Error playing audio: ' + errorMsg)
+                setIsPlaying(false)
+                isPlayingRef.current = false
+                playbackStartTimeRef.current = null
+                clearReadingHighlight()
+
+                if ('mediaSession' in navigator) {
+                  navigator.mediaSession.playbackState = 'paused'
+                }
+              }
+              audioRef.current = null
+              reject(new Error(errorMsg || 'Audio playback error'))
+            })
+
+            // Start playing
+            audio.play()
+              .then(() => {
+                console.log(`Started playing chunk ${chunkIndex + 1}`)
+              })
+              .catch(reject)
+          })
+        }
+
+        // All chunks are already being preloaded in parallel
+        // Start playing first chunk immediately (it's already loaded)
+        await playChunk(0)
+        return true
+      }
+    } catch (error) {
+      console.error('Error playing Google TTS audio:', error)
+      setError('Error with text-to-speech: ' + error.message)
+      setIsPlaying(false)
+      isPlayingRef.current = false
+      setIsTTSLoading(false)
+      return false
+    }
   }
 
   const initializePages = async () => {
@@ -1107,11 +1607,24 @@ function App() {
     const wordStart = findWordStart(extractedText, charIndex)
     
     // If playback is currently happening, stop it first
-    const wasPlaying = isPlaying
-    if (wasPlaying && synthRef.current) {
-      synthRef.current.cancel()
+    const wasPlaying = isPlayingRef.current
+    
+    if (wasPlaying) {
+      // Stop Google TTS audio if playing
+      if (audioRef.current) {
+        isCancelledRef.current = true
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+      
+      // Stop browser TTS if playing
+      if (synthRef.current) {
+        synthRef.current.cancel()
+        utteranceRef.current = null
+      }
+      
       setIsPlaying(false)
-      utteranceRef.current = null
+      isPlayingRef.current = false
       clearReadingHighlight()
       
       // Reset boundary position tracking for clean restart
@@ -1138,27 +1651,23 @@ function App() {
     }
     
     // Always start reading immediately from the new position
-    if (synthRef.current && extractedText) {
-      // Use a small delay to ensure cancellation is complete before restarting (if was playing)
+    if (extractedText) {
       const delay = wasPlaying ? 100 : 0
       setTimeout(() => {
-        // Ensure speech is fully stopped before restarting
-        if (wasPlaying) {
-          // Force cancel any remaining speech
+        // Ensure speech is fully stopped before restarting (for browser TTS)
+        if (wasPlaying && synthRef.current && synthRef.current.speaking) {
           synthRef.current.cancel()
-          // Wait a bit more if still speaking
-          if (synthRef.current.speaking) {
-            setTimeout(() => {
-              synthRef.current.cancel()
-              // Reset boundary tracking before restart
-              previousBoundaryPositionRef.current = null
-              startPlaybackFromPosition(wordStart)
-            }, 50)
-            return
-          }
+          setTimeout(() => {
+            // Reset boundary tracking before restart
+            previousBoundaryPositionRef.current = null
+            startPlaybackFromPosition(wordStart)
+          }, 50)
+          return
         }
-        // Reset boundary tracking before starting (in case it wasn't playing)
+        
+        // Reset boundary tracking before starting
         previousBoundaryPositionRef.current = null
+        
         // Start playback from the new position
         const success = startPlaybackFromPosition(wordStart)
         if (!success) {
@@ -1285,6 +1794,7 @@ function App() {
       // Auto-detect language
       if (language === 'auto' && finalText) {
         const detected = detectLanguage(finalText)
+        console.log('Detected language:', detected, 'for text length:', finalText.length)
         setDetectedLanguage(detected)
       }
       
@@ -1311,8 +1821,8 @@ function App() {
   }
 
   // Helper function to start playback from a specific position
-  const startPlaybackFromPosition = (position) => {
-    if (!extractedText || !synthRef.current) return false
+  const startPlaybackFromPosition = async (position) => {
+    if (!extractedText) return false
 
     // Update the current playback position ref
     currentPlaybackPositionRef.current = position
@@ -1332,88 +1842,127 @@ function App() {
     if (!textToRead) {
       return false
     }
-    
-    // Create new utterance
-    const utterance = new SpeechSynthesisUtterance(textToRead)
-    utterance.lang = langToUse === 'es' ? 'es-ES' : 'en-US'
-    utterance.rate = playbackSpeed
-    utterance.pitch = 1.0
-    utterance.volume = 1.0
 
-    // Track position using boundary events (fires when speaking each word)
-    utterance.onboundary = (event) => {
-      if (event.name === 'word' || event.name === 'sentence') {
-        // Calculate the character position based on the text being spoken
-        // event.charIndex is relative to the utterance text, so add the start position
-        const absolutePosition = position + event.charIndex
-        currentPlaybackPositionRef.current = absolutePosition
-        lastBoundaryPositionRef.current = absolutePosition
+    // Use Google TTS for Spanish, browser TTS for English
+    console.log('Starting playback, language:', langToUse, 'text length:', textToRead.length)
+    if (langToUse === 'es') {
+      // Use Google TTS for Spanish
+      console.log('Using Google TTS for Spanish text')
+      try {
+        const success = await playGoogleTTSAudio(textToRead, position, playbackSpeed)
+        console.log('Google TTS playback started:', success)
+        return success
+      } catch (error) {
+        console.error('Google TTS error:', error)
+        setError('Error with Google TTS: ' + error.message)
+        return false
+      }
+    } else {
+      console.log('Using browser TTS for English text')
+      // Use browser TTS for English
+      if (!synthRef.current) {
+        setError('Text-to-speech is not available in your browser.')
+        return false
+      }
+
+      // Create new utterance
+      const utterance = new SpeechSynthesisUtterance(textToRead)
+      utterance.lang = 'en-US'
+      utterance.rate = playbackSpeed
+      utterance.pitch = 1.0
+      utterance.volume = 1.0
+
+      // Track position using boundary events (fires when speaking each word)
+      utterance.onboundary = (event) => {
+        if (event.name === 'word' || event.name === 'sentence') {
+          // Calculate the character position based on the text being spoken
+          // event.charIndex is relative to the utterance text, so add the start position
+          const absolutePosition = position + event.charIndex
+          currentPlaybackPositionRef.current = absolutePosition
+          lastBoundaryPositionRef.current = absolutePosition
+          
+          // When a boundary event fires at position X, it means we're STARTING to speak the word at X
+          // However, there's often a slight delay, so we should highlight the word we were just speaking
+          // (the previous boundary position) to show what's currently being spoken
+          let positionToHighlight
+          
+          if (previousBoundaryPositionRef.current !== null && previousBoundaryPositionRef.current !== position) {
+            // Highlight the word at the previous boundary (the one we were just speaking)
+            // Find the start of that word
+            positionToHighlight = findWordStart(extractedText, previousBoundaryPositionRef.current)
+          } else {
+            // First boundary or no previous position - highlight the starting word
+            positionToHighlight = findWordStart(extractedText, position)
+          }
+          
+          // Highlight the word currently being read
+          highlightCurrentReading(positionToHighlight)
+          
+          // Update previous position for next boundary event
+          previousBoundaryPositionRef.current = absolutePosition
+        }
+      }
+
+      utterance.onstart = () => {
+        setIsPlaying(true)
+        // Ensure position is tracked
+        currentPlaybackPositionRef.current = position
+        playbackStartPositionRef.current = position
+        playbackStartTimeRef.current = Date.now()
+        lastBoundaryPositionRef.current = position
+        previousBoundaryPositionRef.current = position // Initialize previous position
         
-        // When a boundary event fires at position X, it means we're STARTING to speak the word at X
-        // However, there's often a slight delay, so we should highlight the word we were just speaking
-        // (the previous boundary position) to show what's currently being spoken
-        let positionToHighlight
+        // Highlight the starting position
+        highlightCurrentReading(position)
         
-        if (previousBoundaryPositionRef.current !== null && previousBoundaryPositionRef.current !== position) {
-          // Highlight the word at the previous boundary (the one we were just speaking)
-          // Find the start of that word
-          positionToHighlight = findWordStart(extractedText, previousBoundaryPositionRef.current)
-        } else {
-          // First boundary or no previous position - highlight the starting word
-          positionToHighlight = findWordStart(extractedText, position)
+        // Update Media Session metadata for macOS media key support
+        if ('mediaSession' in navigator) {
+          console.log('Setting Media Session playbackState to "playing"')
+          navigator.mediaSession.playbackState = 'playing'
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: pdfFile ? pdfFile.name : 'SpeechCase',
+            artist: 'Text-to-Speech',
+            album: 'PDF Reader'
+          })
+          console.log('Media Session state updated. PlaybackState:', navigator.mediaSession.playbackState)
+        }
+      }
+      utterance.onend = () => {
+        setIsPlaying(false)
+        // Update position to end when finished
+        currentPlaybackPositionRef.current = extractedText.length
+        playbackStartTimeRef.current = null
+        
+        // Clear the reading highlight
+        clearReadingHighlight()
+        
+        // Update Media Session metadata
+        // Keep as 'paused' instead of 'none' so macOS continues to route media keys
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.playbackState = 'paused'
+          console.log('Media Session playbackState set to "paused" (end)')
+        }
+      }
+      utterance.onerror = (event) => {
+        // Ignore "interrupted" errors - these are expected when pausing/cancelling speech
+        if (event.error === 'interrupted') {
+          setIsPlaying(false)
+          playbackStartTimeRef.current = null
+          
+          // Clear the reading highlight
+          clearReadingHighlight()
+          
+          // Update Media Session metadata
+          // Keep as 'paused' instead of 'none' so macOS continues to route media keys
+          if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'paused'
+            console.log('Media Session playbackState set to "paused" (interrupted)')
+          }
+          return
         }
         
-        // Highlight the word currently being read
-        highlightCurrentReading(positionToHighlight)
-        
-        // Update previous position for next boundary event
-        previousBoundaryPositionRef.current = absolutePosition
-      }
-    }
-
-    utterance.onstart = () => {
-      setIsPlaying(true)
-      // Ensure position is tracked
-      currentPlaybackPositionRef.current = position
-      playbackStartPositionRef.current = position
-      playbackStartTimeRef.current = Date.now()
-      lastBoundaryPositionRef.current = position
-      previousBoundaryPositionRef.current = position // Initialize previous position
-      
-      // Highlight the starting position
-      highlightCurrentReading(position)
-      
-      // Update Media Session metadata for macOS media key support
-      if ('mediaSession' in navigator) {
-        console.log('Setting Media Session playbackState to "playing"')
-        navigator.mediaSession.playbackState = 'playing'
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: pdfFile ? pdfFile.name : 'SpeechCase',
-          artist: 'Text-to-Speech',
-          album: 'PDF Reader'
-        })
-        console.log('Media Session state updated. PlaybackState:', navigator.mediaSession.playbackState)
-      }
-    }
-    utterance.onend = () => {
-      setIsPlaying(false)
-      // Update position to end when finished
-      currentPlaybackPositionRef.current = extractedText.length
-      playbackStartTimeRef.current = null
-      
-      // Clear the reading highlight
-      clearReadingHighlight()
-      
-      // Update Media Session metadata
-      // Keep as 'paused' instead of 'none' so macOS continues to route media keys
-      if ('mediaSession' in navigator) {
-        navigator.mediaSession.playbackState = 'paused'
-        console.log('Media Session playbackState set to "paused" (end)')
-      }
-    }
-    utterance.onerror = (event) => {
-      // Ignore "interrupted" errors - these are expected when pausing/cancelling speech
-      if (event.error === 'interrupted') {
+        // Only show errors for actual problems
+        setError('Error during speech: ' + event.error)
         setIsPlaying(false)
         playbackStartTimeRef.current = null
         
@@ -1424,30 +1973,14 @@ function App() {
         // Keep as 'paused' instead of 'none' so macOS continues to route media keys
         if ('mediaSession' in navigator) {
           navigator.mediaSession.playbackState = 'paused'
-          console.log('Media Session playbackState set to "paused" (interrupted)')
+          console.log('Media Session playbackState set to "paused" (error)')
         }
-        return
       }
-      
-      // Only show errors for actual problems
-      setError('Error during speech: ' + event.error)
-      setIsPlaying(false)
-      playbackStartTimeRef.current = null
-      
-      // Clear the reading highlight
-      clearReadingHighlight()
-      
-      // Update Media Session metadata
-      // Keep as 'paused' instead of 'none' so macOS continues to route media keys
-      if ('mediaSession' in navigator) {
-        navigator.mediaSession.playbackState = 'paused'
-        console.log('Media Session playbackState set to "paused" (error)')
-      }
-    }
 
-    utteranceRef.current = utterance
-    synthRef.current.speak(utterance)
-    return true
+      utteranceRef.current = utterance
+      synthRef.current.speak(utterance)
+      return true
+    }
   }
 
   const handlePlay = () => {
@@ -1456,12 +1989,7 @@ function App() {
       return
     }
 
-    if (!synthRef.current) {
-      setError('Text-to-speech is not available in your browser.')
-      return
-    }
-
-    // Stop any ongoing speech
+    // If already playing, pause instead
     if (isPlaying) {
       // Save current playback position before canceling
       const currentPos = lastBoundaryPositionRef.current !== undefined 
@@ -1469,11 +1997,41 @@ function App() {
         : currentPlaybackPositionRef.current
       if (currentPos !== undefined) {
         setStartPosition(currentPos)
+        startPositionRef.current = currentPos
       }
       
-      synthRef.current.cancel()
+      // Handle Google TTS audio
+      if (audioRef.current) {
+        isCancelledRef.current = true
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+      
+      // Handle browser TTS
+      if (synthRef.current) {
+        synthRef.current.cancel()
+        utteranceRef.current = null
+      }
+      
       setIsPlaying(false)
+      isPlayingRef.current = false
       clearReadingHighlight()
+      
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'paused'
+      }
+      return
+    }
+
+    // Determine language to check if we need synthRef
+    let langToUse = language
+    if (language === 'auto') {
+      langToUse = detectedLanguage || detectLanguage(extractedText) || 'en'
+    }
+
+    // Only check synthRef for English (Google TTS doesn't need it)
+    if (langToUse !== 'es' && !synthRef.current) {
+      setError('Text-to-speech is not available in your browser.')
       return
     }
 
@@ -1490,22 +2048,31 @@ function App() {
   }
 
   const handleStop = () => {
-    if (synthRef.current) {
-      synthRef.current.cancel()
-      utteranceRef.current = null
-      setIsPlaying(false)
-      playbackStartTimeRef.current = null
-      // Keep currentPlaybackPositionRef at current value (don't reset)
-      
-      // Clear the reading highlight
-      clearReadingHighlight()
-      
-      // Update Media Session metadata
-      if ('mediaSession' in navigator) {
-        navigator.mediaSession.playbackState = 'none'
+        // Handle Google TTS audio
+        if (audioRef.current) {
+          isCancelledRef.current = true
+          audioRef.current.pause()
+          audioRef.current = null
+        }
+        
+        // Handle browser TTS
+        if (synthRef.current) {
+          synthRef.current.cancel()
+          utteranceRef.current = null
+        }
+        
+        setIsPlaying(false)
+        playbackStartTimeRef.current = null
+        // Keep currentPlaybackPositionRef at current value (don't reset)
+        
+        // Clear the reading highlight
+        clearReadingHighlight()
+        
+        // Update Media Session metadata
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.playbackState = 'none'
+        }
       }
-    }
-  }
 
   const handleResetStartPosition = () => {
     clearStartMarker()
@@ -1536,14 +2103,24 @@ function App() {
     setStartPosition(wordStart)
     
     // If currently playing, immediately restart from new position
-    if (isPlaying && synthRef.current) {
+    if (isPlaying) {
       // Store the new position before cancellation
       const newPos = wordStart
       
-      // Cancel all speech (clear the queue) - do this multiple times to ensure it works
-      synthRef.current.cancel()
-      if (utteranceRef.current) {
-        utteranceRef.current = null
+      // Handle Google TTS audio
+      if (audioRef.current) {
+        isCancelledRef.current = true
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+      
+      // Handle browser TTS
+      if (synthRef.current) {
+        // Cancel all speech (clear the queue) - do this multiple times to ensure it works
+        synthRef.current.cancel()
+        if (utteranceRef.current) {
+          utteranceRef.current = null
+        }
       }
       
       // Reset playing state
@@ -1552,8 +2129,8 @@ function App() {
       
       // Force stop any remaining speech and restart
       const restartPlayback = () => {
-        // Ensure speech is fully stopped
-        if (synthRef.current.speaking) {
+        // Ensure speech is fully stopped (for browser TTS)
+        if (synthRef.current && synthRef.current.speaking) {
           synthRef.current.cancel()
           setTimeout(restartPlayback, 50)
           return
@@ -1586,14 +2163,24 @@ function App() {
     setStartPosition(wordStart)
     
     // If currently playing, immediately restart from new position
-    if (isPlaying && synthRef.current) {
+    if (isPlaying) {
       // Store the new position before cancellation
       const newPos = wordStart
       
-      // Cancel all speech (clear the queue) - do this multiple times to ensure it works
-      synthRef.current.cancel()
-      if (utteranceRef.current) {
-        utteranceRef.current = null
+      // Handle Google TTS audio
+      if (audioRef.current) {
+        isCancelledRef.current = true
+        audioRef.current.pause()
+        audioRef.current = null
+      }
+      
+      // Handle browser TTS
+      if (synthRef.current) {
+        // Cancel all speech (clear the queue) - do this multiple times to ensure it works
+        synthRef.current.cancel()
+        if (utteranceRef.current) {
+          utteranceRef.current = null
+        }
       }
       
       // Reset playing state
@@ -1602,8 +2189,8 @@ function App() {
       
       // Force stop any remaining speech and restart
       const restartPlayback = () => {
-        // Ensure speech is fully stopped
-        if (synthRef.current.speaking) {
+        // Ensure speech is fully stopped (for browser TTS)
+        if (synthRef.current && synthRef.current.speaking) {
           synthRef.current.cancel()
           setTimeout(restartPlayback, 50)
           return
@@ -2369,6 +2956,16 @@ function App() {
           {error && (
             <div className="error-message error-floating">
               {error}
+            </div>
+          )}
+          
+          {/* TTS Loading Indicator */}
+          {isTTSLoading && (
+            <div className="tts-loading-overlay">
+              <div className="tts-loading-content">
+                <IconLoading size={24} />
+                <p>Preparing audio...</p>
+              </div>
             </div>
           )}
           
