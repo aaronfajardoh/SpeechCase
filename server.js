@@ -1,6 +1,7 @@
 import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { existsSync } from 'fs';
 import textToSpeech from '@google-cloud/text-to-speech';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -13,9 +14,31 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: '10mb' }));
 
 // Initialize Google Cloud TTS client
-const client = new textToSpeech.TextToSpeechClient({
-  keyFilename: join(__dirname, 'speechcase-1ff2439d1c93.json'),
-});
+// On Heroku, use GOOGLE_APPLICATION_CREDENTIALS env var or GOOGLE_CREDENTIALS JSON string
+// For local development, fall back to keyFilename if env vars are not set
+let clientConfig = {};
+
+if (process.env.GOOGLE_CREDENTIALS) {
+  // If credentials are provided as a JSON string in environment variable
+  try {
+    clientConfig.credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+  } catch (error) {
+    console.error('Error parsing GOOGLE_CREDENTIALS:', error);
+  }
+} else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  // If path to credentials file is provided
+  clientConfig.keyFilename = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+} else {
+  // Fall back to local file (for development)
+  const keyFile = join(__dirname, 'speechcase-1ff2439d1c93.json');
+  if (existsSync(keyFile)) {
+    clientConfig.keyFilename = keyFile;
+  } else {
+    console.warn('No Google Cloud credentials found. TTS functionality will not work.');
+  }
+}
+
+const client = new textToSpeech.TextToSpeechClient(clientConfig);
 
 // Helper function to split text into chunks under 5000 bytes
 function splitTextIntoChunks(text, maxBytes = 4500) {
