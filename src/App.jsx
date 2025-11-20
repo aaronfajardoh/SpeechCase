@@ -135,6 +135,23 @@ const IconRedo = ({ size = 16, className = '' }) => (
   </svg>
 )
 
+const IconTarget = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="12" cy="12" r="10" />
+    <circle cx="12" cy="12" r="6" />
+    <circle cx="12" cy="12" r="2" />
+  </svg>
+)
+
+const IconNavigation = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
+    {/* Upward-pointing triangle (arrow) */}
+    <path d="M12 3L8 10h8L12 3z" />
+    {/* Small detached base */}
+    <rect x="10.5" y="11" width="3" height="1.5" rx="0.5" />
+  </svg>
+)
+
 function App() {
   const [pdfFile, setPdfFile] = useState(null)
   const [pdfDoc, setPdfDoc] = useState(null)
@@ -197,6 +214,11 @@ function App() {
   const scrollTimeoutRef = useRef(null) // Timeout for showing toolbar after scroll stops
   const mobileControlsTimeoutRef = useRef(null) // Timeout for fading mobile controls
   const speedDropdownRef = useRef(null) // Ref for speed dropdown
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(true) // Auto-scroll to follow reading position
+  const autoScrollEnabledRef = useRef(true) // Ref to track auto-scroll state synchronously
+  const [hasCurrentReadingPosition, setHasCurrentReadingPosition] = useState(false) // Track if there's a current reading position (for button visibility)
+  const isProgrammaticScrollRef = useRef(false) // Track if scroll is programmatic (from our code) vs manual
+  const lastProgrammaticScrollTimeRef = useRef(0) // Track when we last scrolled programmatically
 
   // Detect mobile device
   useEffect(() => {
@@ -312,6 +334,82 @@ function App() {
       document.removeEventListener('touchstart', handleClickOutside)
     }
   }, [speedDropdownOpen])
+
+  // Detect manual scrolling and disable auto-scroll when user scrolls away
+  useEffect(() => {
+    if (!pdfDoc) return
+
+    const pdfViewer = document.querySelector('.pdf-viewer-container')
+    if (!pdfViewer) return
+
+    let lastScrollTop = pdfViewer.scrollTop
+    let scrollTimeout = null
+    let isUserScrolling = false
+
+    const handleScroll = () => {
+      const currentScrollTop = pdfViewer.scrollTop
+      const scrollDelta = Math.abs(currentScrollTop - lastScrollTop)
+      
+      // If this is a programmatic scroll (from our code), ignore it
+      if (isProgrammaticScrollRef.current) {
+        lastScrollTop = currentScrollTop
+        return
+      }
+
+      // If scroll happened very recently after a programmatic scroll, ignore it
+      // (to account for scroll momentum/continuation)
+      const timeSinceProgrammaticScroll = Date.now() - lastProgrammaticScrollTimeRef.current
+      if (timeSinceProgrammaticScroll < 800) {
+        lastScrollTop = currentScrollTop
+        return
+      }
+
+      // Only disable auto-scroll if there's a significant scroll change (more than 5px)
+      // This prevents false positives from tiny scroll adjustments
+      if (scrollDelta > 5) {
+        // Mark that user is scrolling
+        isUserScrolling = true
+        
+        // Clear any pending timeout
+        if (scrollTimeout) {
+          clearTimeout(scrollTimeout)
+        }
+        
+        // Disable auto-scroll immediately when user scrolls
+        // Use ref to check and update synchronously
+        if (autoScrollEnabledRef.current) {
+          autoScrollEnabledRef.current = false
+          setAutoScrollEnabled(false)
+          // Force a small delay to ensure the ref update is processed
+          // This prevents any pending applyReadingHighlight calls from scrolling
+        }
+        
+        // Reset user scrolling flag after a short delay
+        scrollTimeout = setTimeout(() => {
+          isUserScrolling = false
+        }, 100)
+      }
+      
+      lastScrollTop = currentScrollTop
+    }
+
+    pdfViewer.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      pdfViewer.removeEventListener('scroll', handleScroll)
+      if (scrollTimeout) {
+        clearTimeout(scrollTimeout)
+      }
+    }
+  }, [pdfDoc, autoScrollEnabled])
+
+  // Keep hasCurrentReadingPosition in sync with playback state
+  useEffect(() => {
+    if (isPlaying && !hasCurrentReadingPosition) {
+      // If playback is active but state says no reading position, set it to true
+      // This ensures the button appears even if state got out of sync
+      setHasCurrentReadingPosition(true)
+    }
+  }, [isPlaying, hasCurrentReadingPosition])
 
   useEffect(() => {
     // Check if browser supports Web Speech API
@@ -1587,6 +1685,11 @@ function App() {
       }
       currentReadingElementRef.current = null
     }
+    // Only clear the reading position state if playback is not active
+    // This ensures the button stays visible when user scrolls away during playback
+    if (!isPlayingRef.current) {
+      setHasCurrentReadingPosition(false)
+    }
     // Don't reset previousBoundaryPositionRef here - it's used for tracking
   }
 
@@ -1610,20 +1713,40 @@ function App() {
     }
     element.classList.add('current-reading-marker')
     currentReadingElementRef.current = element
+    setHasCurrentReadingPosition(true)
     
-    // Scroll the element into view if it's not visible (only if significantly out of viewport)
-    // Use a small delay to ensure styles are applied
-    setTimeout(() => {
-      const rect = element.getBoundingClientRect()
-      const viewportHeight = window.innerHeight
-      const viewportWidth = window.innerWidth
-      const isOutOfView = rect.bottom < 0 || rect.top > viewportHeight || 
-                          rect.right < 0 || rect.left > viewportWidth
-      
-      if (isOutOfView) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }
-    }, 0)
+    // Scroll the element into view if auto-scroll is enabled and it's not visible
+    // Use ref to check current state synchronously (not stale closure)
+    if (autoScrollEnabledRef.current) {
+      // Use a small delay to ensure styles are applied
+      setTimeout(() => {
+        // Double-check the ref value (it might have changed during the timeout)
+        if (!autoScrollEnabledRef.current) {
+          return
+        }
+        
+        const rect = element.getBoundingClientRect()
+        const viewportHeight = window.innerHeight
+        const viewportWidth = window.innerWidth
+        const isOutOfView = rect.bottom < 0 || rect.top > viewportHeight || 
+                            rect.right < 0 || rect.left > viewportWidth
+        
+        if (isOutOfView) {
+          // Final check before scrolling
+          if (!autoScrollEnabledRef.current) {
+            return
+          }
+          
+          isProgrammaticScrollRef.current = true
+          lastProgrammaticScrollTimeRef.current = Date.now()
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          // Reset flag after scroll animation completes (smooth scroll can take up to 1000ms)
+          setTimeout(() => {
+            isProgrammaticScrollRef.current = false
+          }, 1100)
+        }
+      }, 0)
+    }
   }
 
   // Highlight the element currently being read
@@ -1708,6 +1831,26 @@ function App() {
     // Update the start position
     setStartPosition(wordStart)
     startPositionRef.current = wordStart
+    
+    // Re-enable auto-scroll when user clicks a new position (they want to follow from there)
+    // Mark the next scroll as programmatic to prevent immediate disable
+    if (!autoScrollEnabledRef.current) {
+      autoScrollEnabledRef.current = true
+      isProgrammaticScrollRef.current = true
+      lastProgrammaticScrollTimeRef.current = Date.now()
+      setAutoScrollEnabled(true)
+      // Reset the flag after a short delay to allow initial scroll to complete
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false
+      }, 1200)
+    } else {
+      // Even if already enabled, mark next scroll as programmatic since we're jumping to new position
+      isProgrammaticScrollRef.current = true
+      lastProgrammaticScrollTimeRef.current = Date.now()
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false
+      }, 1200)
+    }
     
     // Find and mark the clicked word (use ref to get latest textItems)
     const currentTextItems = textItemsRef.current.length > 0 ? textItemsRef.current : textItems
@@ -2270,6 +2413,24 @@ function App() {
       
       // Start the restart process after a short delay
       setTimeout(restartPlayback, 100)
+    }
+  }
+
+  // Jump to the current reading position and re-enable auto-scroll
+  const jumpToCurrentReading = () => {
+    if (currentReadingElementRef.current) {
+      isProgrammaticScrollRef.current = true
+      lastProgrammaticScrollTimeRef.current = Date.now()
+      currentReadingElementRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      // Reset flag after scroll animation completes (smooth scroll can take up to 1000ms)
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false
+      }, 1100)
+      // Re-enable auto-scroll when user manually jumps to current position
+      if (!autoScrollEnabledRef.current) {
+        autoScrollEnabledRef.current = true
+        setAutoScrollEnabled(true)
+      }
     }
   }
 
@@ -2921,7 +3082,7 @@ function App() {
               Powered by <strong>Web Speech Technology</strong> — Beta Version
             </p>
             <p className="browser-note">
-              Works best in Chrome, Edge, Safari, or Firefox
+              Works best in Google Chrome
             </p>
           </footer>
         </div>
@@ -3037,7 +3198,26 @@ function App() {
               </div>
             </div>
           )}
-          
+
+          {/* Floating "Jump to Current Reading" Button */}
+          {(() => {
+            const shouldShow = !autoScrollEnabled && (hasCurrentReadingPosition || isPlaying)
+            if (shouldShow) {
+              console.log('Button should show:', { autoScrollEnabled, hasCurrentReadingPosition, isPlaying })
+            }
+            return shouldShow ? (
+              <button
+                onClick={jumpToCurrentReading}
+                className="floating-jump-button"
+                title="Jump to current reading position"
+                aria-label="Jump to current reading position"
+              >
+                <IconNavigation size={28} />
+                <span>Follow Reading</span>
+              </button>
+            ) : null
+          })()}
+
           <div className="pdf-pages-container">
             {isLoading && pageData.length === 0 && (
               <div className="loading-pages">
