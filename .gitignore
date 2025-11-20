@@ -23,3 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 
+# Google Cloud Service Account credentials
+*.json
+!package.json
+!package-lock.json
+speechcase-*.json
+
