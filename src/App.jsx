@@ -848,19 +848,62 @@ function App() {
     }
   }
 
+  // Helper function to fully stop Google TTS audio
+  const stopGoogleTTSAudio = async () => {
+    if (audioRef.current) {
+      // Set cancellation flag FIRST to prevent any new chunks from starting
+      isCancelledRef.current = true
+      const audio = audioRef.current
+      
+      // Stop the audio completely
+      try {
+        // Pause the audio immediately
+        audio.pause()
+        // Wait a moment to ensure pause takes effect
+        await new Promise(resolve => setTimeout(resolve, 50))
+        
+        // Clear the source to stop playback
+        audio.src = ''
+        audio.srcObject = null
+        // Reset the audio element
+        audio.load()
+        // Set currentTime to 0 to ensure it's fully stopped
+        audio.currentTime = 0
+      } catch (e) {
+        console.error('Error stopping audio:', e)
+      }
+      
+      // Clear the ref immediately to prevent any new operations on it
+      audioRef.current = null
+      
+      // Reset state
+      isPlayingRef.current = false
+      setIsPlaying(false)
+      
+      // Wait a bit more to ensure all async operations have completed
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      return true
+    }
+    return false
+  }
+
   // Function to play Google TTS audio
   const playGoogleTTSAudio = async (text, startPosition, rate = 1.0) => {
-    // Prevent duplicate calls
-    if (isPlayingRef.current) {
-      console.log('Playback already in progress, ignoring duplicate call')
-      return false
+    // Prevent duplicate calls - check both ref and actual audio element
+    // IMPORTANT: Always stop any existing audio first to prevent overlapping playback
+    if (audioRef.current || isPlayingRef.current) {
+      console.log('Playback already in progress, stopping existing audio first')
+      // Always stop existing audio before starting new playback
+      await stopGoogleTTSAudio()
+      // Wait a bit more to ensure everything is fully stopped
+      await new Promise(resolve => setTimeout(resolve, 150))
     }
 
     try {
-      // Stop any existing audio
+      // Double-check that audio is stopped before proceeding
       if (audioRef.current) {
-        audioRef.current.pause()
-        audioRef.current = null
+        await stopGoogleTTSAudio()
       }
 
       // Reset cancellation flag
@@ -1092,12 +1135,30 @@ function App() {
           
           const { audioContent, mimeType: chunkMimeType } = response
 
+          // Double-check cancellation before creating audio (might have been cancelled while waiting)
           if (isCancelledRef.current) {
             return Promise.resolve()
           }
 
           const audio = new Audio(`data:${chunkMimeType};base64,${audioContent}`)
           audio.playbackRate = rate
+          
+          // Final check before assigning - if cancelled now, don't start
+          if (isCancelledRef.current) {
+            // Clean up the audio element we just created
+            audio.pause()
+            audio.src = ''
+            return Promise.resolve()
+          }
+          
+          // Double-check that audioRef is still null (might have been set by another playback)
+          if (audioRef.current) {
+            console.log('Audio ref already set, cancelling this chunk')
+            audio.pause()
+            audio.src = ''
+            return Promise.resolve()
+          }
+          
           audioRef.current = audio
 
           // Calculate text position for this chunk
@@ -1159,10 +1220,18 @@ function App() {
           return new Promise((resolve, reject) => {
             audio.addEventListener('ended', () => {
               console.log(`Chunk ${chunkIndex + 1} of ${allChunks.length} ended`)
+              
+              // Check if this audio is still the current one (might have been replaced)
+              if (audioRef.current !== audio) {
+                console.log('Audio was replaced, not playing next chunk')
+                resolve()
+                return
+              }
+              
               currentChunkIndexRef.current = chunkIndex + 1
               
               // Play next chunk if available and not cancelled
-              if (!isCancelledRef.current && chunkIndex + 1 < allChunks.length) {
+              if (!isCancelledRef.current && chunkIndex + 1 < allChunks.length && audioRef.current === audio) {
                 console.log(`Playing next chunk ${chunkIndex + 2} of ${allChunks.length}`)
                 
                 // Check if next chunk is already preloaded
@@ -3074,20 +3143,33 @@ function App() {
                         setPlaybackSpeed(newSpeed)
                         setSpeedDropdownOpen(false)
                         // If currently playing, restart with new speed from current position
-                        if (isPlaying && synthRef.current) {
+                        if (isPlaying) {
                           const currentPos = lastBoundaryPositionRef.current !== undefined 
                             ? lastBoundaryPositionRef.current 
                             : currentPlaybackPositionRef.current
                           
-                          synthRef.current.cancel()
-                          utteranceRef.current = null
-                          setIsPlaying(false)
-                          
-                          setTimeout(() => {
-                            if (!synthRef.current.speaking) {
-                              startPlaybackFromPosition(currentPos)
-                            }
-                          }, 50)
+                          // Handle Google TTS (audio playback)
+                          if (audioRef.current) {
+                            // Stop audio and wait for it to fully stop
+                            stopGoogleTTSAudio().then(() => {
+                              // Double-check audio is stopped before restarting
+                              if (!audioRef.current && !isPlayingRef.current) {
+                                startPlaybackFromPosition(currentPos)
+                              }
+                            })
+                          } 
+                          // Handle browser TTS (speechSynthesis)
+                          else if (synthRef.current) {
+                            synthRef.current.cancel()
+                            utteranceRef.current = null
+                            setIsPlaying(false)
+                            
+                            setTimeout(() => {
+                              if (!synthRef.current.speaking) {
+                                startPlaybackFromPosition(currentPos)
+                              }
+                            }, 50)
+                          }
                         }
                       }}
                     >
@@ -3150,25 +3232,38 @@ function App() {
                   const newSpeed = parseFloat(e.target.value)
                   setPlaybackSpeed(newSpeed)
                   // If currently playing, restart with new speed from current position
-                  if (isPlaying && synthRef.current) {
+                  if (isPlaying) {
                     // Use the most recent tracked position (from boundary events if available)
                     const currentPos = lastBoundaryPositionRef.current !== undefined 
                       ? lastBoundaryPositionRef.current 
                       : currentPlaybackPositionRef.current
                     
-                    // Cancel current speech
-                    synthRef.current.cancel()
-                    utteranceRef.current = null
-                    setIsPlaying(false)
-                    
-                    // Restart from current position with new speed after a brief delay
-                    // This ensures the cancellation is complete before restarting
-                    setTimeout(() => {
-                      // Double-check we're still supposed to be playing (user might have stopped)
-                      if (!synthRef.current.speaking) {
-                        startPlaybackFromPosition(currentPos)
-                      }
-                    }, 50)
+                    // Handle Google TTS (audio playback)
+                    if (audioRef.current) {
+                      // Stop audio and wait for it to fully stop
+                      stopGoogleTTSAudio().then(() => {
+                        // Double-check audio is stopped before restarting
+                        if (!audioRef.current && !isPlayingRef.current) {
+                          startPlaybackFromPosition(currentPos)
+                        }
+                      })
+                    } 
+                    // Handle browser TTS (speechSynthesis)
+                    else if (synthRef.current) {
+                      // Cancel current speech
+                      synthRef.current.cancel()
+                      utteranceRef.current = null
+                      setIsPlaying(false)
+                      
+                      // Restart from current position with new speed after a brief delay
+                      // This ensures the cancellation is complete before restarting
+                      setTimeout(() => {
+                        // Double-check we're still supposed to be playing (user might have stopped)
+                        if (!synthRef.current.speaking) {
+                          startPlaybackFromPosition(currentPos)
+                        }
+                      }, 50)
+                    }
                   }
                 }}
                 className="speed-slider"
