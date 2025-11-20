@@ -1519,8 +1519,15 @@ function App() {
         const page = await pdfDoc.getPage(pageNum)
         const viewportObj = page.getViewport({ scale: pageScale })
         const context = canvas.getContext('2d')
+        
+        // Set internal dimensions to match viewport (for crisp rendering at the desired scale)
         canvas.height = viewportObj.height
         canvas.width = viewportObj.width
+        
+        // Set CSS dimensions to match internal dimensions exactly to prevent blurry CSS scaling
+        // The container will handle overflow with scrolling if the canvas is larger
+        canvas.style.width = viewportObj.width + 'px'
+        canvas.style.height = viewportObj.height + 'px'
 
         await page.render({
           canvasContext: context,
