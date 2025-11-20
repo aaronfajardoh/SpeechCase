@@ -175,6 +175,130 @@ function App() {
   const previousBoundaryPositionRef = useRef(null) // Track previous boundary position to highlight current word
   const historyIndexRef = useRef(0) // Track current history index for undo/redo
   const textItemsRef = useRef([]) // Track text items for event handlers
+  const [isMobile, setIsMobile] = useState(false) // Track if device is mobile
+  const [toolbarVisible, setToolbarVisible] = useState(true) // Toolbar visibility for mobile
+  const [controlsPanelExpanded, setControlsPanelExpanded] = useState(false) // Controls panel expanded state for mobile
+  const [mobileControlsOpacity, setMobileControlsOpacity] = useState(1) // Mobile bottom controls opacity
+  const [speedDropdownOpen, setSpeedDropdownOpen] = useState(false) // Speed dropdown open state
+  const lastScrollYRef = useRef(0) // Track last scroll position for auto-hide toolbar
+  const scrollTimeoutRef = useRef(null) // Timeout for showing toolbar after scroll stops
+  const mobileControlsTimeoutRef = useRef(null) // Timeout for fading mobile controls
+  const speedDropdownRef = useRef(null) // Ref for speed dropdown
+
+  // Detect mobile device
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= 768)
+    }
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
+  // Auto-hide toolbar on scroll (mobile only)
+  useEffect(() => {
+    if (!isMobile || !pdfDoc) return
+
+    const pdfViewer = document.querySelector('.pdf-viewer-container')
+    if (!pdfViewer) return
+
+    const handleScroll = () => {
+      const currentScrollY = pdfViewer.scrollTop
+      const scrollDelta = currentScrollY - lastScrollYRef.current
+
+      // Show toolbar when scrolling up, hide when scrolling down
+      if (scrollDelta < -10) {
+        // Scrolling up
+        setToolbarVisible(true)
+      } else if (scrollDelta > 10) {
+        // Scrolling down
+        setToolbarVisible(false)
+      }
+
+      lastScrollYRef.current = currentScrollY
+
+      // Clear existing timeout
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current)
+      }
+
+      // Show toolbar after scroll stops
+      scrollTimeoutRef.current = setTimeout(() => {
+        setToolbarVisible(true)
+      }, 2000)
+    }
+
+    pdfViewer.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      pdfViewer.removeEventListener('scroll', handleScroll)
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current)
+      }
+    }
+  }, [isMobile, pdfDoc])
+
+  // Auto-fade mobile bottom controls after inactivity
+  useEffect(() => {
+    if (!isMobile || !pdfDoc) return
+
+    const resetFadeTimer = () => {
+      // Show controls at full opacity
+      setMobileControlsOpacity(1)
+      
+      // Clear existing timeout
+      if (mobileControlsTimeoutRef.current) {
+        clearTimeout(mobileControlsTimeoutRef.current)
+      }
+
+      // Fade to 0.6 opacity after 3 seconds of inactivity
+      mobileControlsTimeoutRef.current = setTimeout(() => {
+        setMobileControlsOpacity(0.6)
+      }, 3000)
+    }
+
+    // Reset timer on user interaction
+    const handleInteraction = () => {
+      resetFadeTimer()
+    }
+
+    // Reset timer on play/pause
+    if (isPlaying) {
+      resetFadeTimer()
+    }
+
+    document.addEventListener('touchstart', handleInteraction, { passive: true })
+    document.addEventListener('click', handleInteraction, { passive: true })
+
+    // Initial timer
+    resetFadeTimer()
+
+    return () => {
+      document.removeEventListener('touchstart', handleInteraction)
+      document.removeEventListener('click', handleInteraction)
+      if (mobileControlsTimeoutRef.current) {
+        clearTimeout(mobileControlsTimeoutRef.current)
+      }
+    }
+  }, [isMobile, pdfDoc, isPlaying])
+
+  // Close speed dropdown when clicking outside
+  useEffect(() => {
+    if (!speedDropdownOpen) return
+
+    const handleClickOutside = (event) => {
+      if (speedDropdownRef.current && !speedDropdownRef.current.contains(event.target)) {
+        setSpeedDropdownOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('touchstart', handleClickOutside)
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('touchstart', handleClickOutside)
+    }
+  }, [speedDropdownOpen])
 
   useEffect(() => {
     // Check if browser supports Web Speech API
@@ -508,6 +632,34 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageData, interactionMode])
 
+  // Re-render text layers when window is resized (to fix scaling on mobile)
+  useEffect(() => {
+    if (!pdfDoc || pageData.length === 0) return
+
+    const handleResize = () => {
+      // Re-render text layers to recalculate scaling
+      if (pageData.length > 0) {
+        renderPages()
+      }
+    }
+
+    // Debounce resize events
+    let resizeTimeout
+    const debouncedResize = () => {
+      clearTimeout(resizeTimeout)
+      resizeTimeout = setTimeout(handleResize, 150)
+    }
+
+    window.addEventListener('resize', debouncedResize)
+    window.addEventListener('orientationchange', handleResize)
+
+    return () => {
+      window.removeEventListener('resize', debouncedResize)
+      window.removeEventListener('orientationchange', handleResize)
+      clearTimeout(resizeTimeout)
+    }
+  }, [pdfDoc, pageData])
+
   // Helper function to normalize text for comparison (removes extra whitespace, lowercases)
   const normalizeText = (text) => {
     return text.trim().toLowerCase().replace(/\s+/g, ' ')
@@ -682,6 +834,7 @@ function App() {
         const { pageNum, viewport, pageCharOffset, textContent } = pageInfo
         const canvas = canvasRefs.current[pageNum]
         const textLayerDiv = textLayerRefs.current[pageNum]
+        const highlightLayerDiv = highlightLayerRefs.current[pageNum]
 
         if (!canvas || !textLayerDiv) continue
 
@@ -697,7 +850,17 @@ function App() {
           viewport: viewportObj
         }).promise
 
-        // Render text layer
+        // Wait for canvas to be laid out
+        await new Promise(resolve => requestAnimationFrame(resolve))
+
+        // Set highlight layer dimensions to match canvas display size
+        if (highlightLayerDiv) {
+          const canvasRect = canvas.getBoundingClientRect()
+          highlightLayerDiv.style.width = canvasRect.width + 'px'
+          highlightLayerDiv.style.height = canvasRect.height + 'px'
+        }
+
+        // Render text layer (this will also set text layer dimensions)
         await renderTextLayerForPage(textContent, viewportObj, pageNum, textLayerDiv, pageCharOffset)
 
         setRenderedPages(prev => {
@@ -719,6 +882,29 @@ function App() {
     // Clear existing content
     textLayerDiv.innerHTML = ''
 
+    // Get the canvas to calculate scaling ratio
+    const canvas = canvasRefs.current[pageNum]
+    if (!canvas) return
+
+    // Wait for canvas to be laid out to get accurate dimensions
+    await new Promise(resolve => requestAnimationFrame(resolve))
+
+    // Calculate the scale ratio between canvas internal size and displayed size
+    // This ensures text layer scales correctly on mobile when canvas is scaled by CSS
+    const canvasRect = canvas.getBoundingClientRect()
+    const canvasWidth = canvas.width
+    const canvasHeight = canvas.height
+    const displayedWidth = canvasRect.width
+    const displayedHeight = canvasRect.height
+    
+    // Calculate scale factors (should be the same for both X and Y if aspect ratio is maintained)
+    const scaleX = displayedWidth / canvasWidth
+    const scaleY = displayedHeight / canvasHeight
+
+    // Set text layer dimensions to match canvas display size
+    textLayerDiv.style.width = displayedWidth + 'px'
+    textLayerDiv.style.height = displayedHeight + 'px'
+
     // Build text position mapping
     const pageTextItems = []
     let charIndex = 0
@@ -731,9 +917,10 @@ function App() {
       const span = document.createElement('span')
       span.textContent = item.str
       span.style.position = 'absolute'
-      span.style.left = tx[4] + 'px'
-      span.style.top = (tx[5] - fontHeight) + 'px'
-      span.style.fontSize = fontHeight + 'px'
+      // Scale positions to match canvas display size
+      span.style.left = (tx[4] * scaleX) + 'px'
+      span.style.top = ((tx[5] - fontHeight) * scaleY) + 'px'
+      span.style.fontSize = (fontHeight * scaleY) + 'px'
       span.style.fontFamily = item.fontName
       span.style.transform = `rotate(${angle}rad)`
       span.style.color = 'transparent'
@@ -776,10 +963,13 @@ function App() {
   const clearStartMarker = () => {
     if (markedStartElementRef.current) {
       const element = markedStartElementRef.current
-      element.style.backgroundColor = ''
-      element.style.borderBottom = ''
-      element.style.borderBottomColor = ''
-      element.classList.remove('start-position-marker')
+      // Check if element is still in DOM before trying to modify it
+      if (element.isConnected) {
+        element.style.removeProperty('background-color')
+        element.style.removeProperty('border-bottom')
+        element.style.removeProperty('border-bottom-color')
+        element.classList.remove('start-position-marker')
+      }
       markedStartElementRef.current = null
     }
   }
@@ -788,13 +978,18 @@ function App() {
   const markStartPosition = (element) => {
     if (!element) return
     
+    // Check if element is still in DOM
+    if (!element.isConnected) {
+      return
+    }
+    
     // Clear previous mark
     clearStartMarker()
     
-    // Apply persistent marker styling
-    element.style.backgroundColor = 'rgba(66, 133, 244, 0.25)'
-    element.style.borderBottom = '2px solid #4285f4'
-    element.style.borderBottomColor = '#4285f4'
+    // Apply persistent marker styling using setProperty for better browser compatibility
+    element.style.setProperty('background-color', 'rgba(66, 133, 244, 0.25)', 'important')
+    element.style.setProperty('border-bottom', '2px solid #4285f4', 'important')
+    element.style.setProperty('border-bottom-color', '#4285f4', 'important')
     element.classList.add('start-position-marker')
     markedStartElementRef.current = element
   }
@@ -803,24 +998,63 @@ function App() {
   const clearReadingHighlight = () => {
     if (currentReadingElementRef.current) {
       const element = currentReadingElementRef.current
-      // Only remove reading highlight, preserve start position marker if it's the same element
-      if (element.classList.contains('start-position-marker')) {
-        // If it's also the start marker, just remove reading-specific styles (green glow)
-        // Keep the blue background and border
-        element.style.boxShadow = ''
-        element.classList.remove('current-reading-marker')
-      } else {
-        // If it's NOT the start marker, remove all reading highlight styles
-        // This won't affect the blue start marker which is on a different element
-        element.style.backgroundColor = ''
-        element.style.borderBottom = ''
-        element.style.borderBottomColor = ''
-        element.style.boxShadow = ''
-        element.classList.remove('current-reading-marker')
+      // Check if element is still in DOM before trying to modify it
+      if (element.isConnected) {
+        // Only remove reading highlight, preserve start position marker if it's the same element
+        if (element.classList.contains('start-position-marker')) {
+          // If it's also the start marker, just remove reading-specific styles (green glow)
+          // Keep the blue background and border
+          element.style.removeProperty('box-shadow')
+          element.classList.remove('current-reading-marker')
+        } else {
+          // If it's NOT the start marker, remove all reading highlight styles
+          // This won't affect the blue start marker which is on a different element
+          element.style.removeProperty('background-color')
+          element.style.removeProperty('border-bottom')
+          element.style.removeProperty('border-bottom-color')
+          element.style.removeProperty('box-shadow')
+          element.classList.remove('current-reading-marker')
+        }
       }
       currentReadingElementRef.current = null
     }
     // Don't reset previousBoundaryPositionRef here - it's used for tracking
+  }
+
+  // Helper function to apply reading highlight
+  const applyReadingHighlight = (element) => {
+    // Clear previous reading highlight (but preserve blue start marker if it's on a different element)
+    clearReadingHighlight()
+    
+    // Apply reading highlight (green) - this should coexist with blue start marker
+    if (element.classList.contains('start-position-marker')) {
+      // If this element is ALSO the start marker, add green glow on top of blue
+      // The blue background and border are already there, just add green glow
+      element.style.setProperty('box-shadow', '0 0 8px rgba(34, 197, 94, 0.8), 0 0 12px rgba(34, 197, 94, 0.6)', 'important')
+    } else {
+      // If this is a different element, apply full green highlight
+      // This won't affect the blue start marker which is on a different element
+      element.style.setProperty('background-color', 'rgba(34, 197, 94, 0.4)', 'important')
+      element.style.setProperty('border-bottom', '2px solid #22c55e', 'important')
+      element.style.setProperty('border-bottom-color', '#22c55e', 'important')
+      element.style.setProperty('box-shadow', '0 0 8px rgba(34, 197, 94, 0.5)', 'important')
+    }
+    element.classList.add('current-reading-marker')
+    currentReadingElementRef.current = element
+    
+    // Scroll the element into view if it's not visible (only if significantly out of viewport)
+    // Use a small delay to ensure styles are applied
+    setTimeout(() => {
+      const rect = element.getBoundingClientRect()
+      const viewportHeight = window.innerHeight
+      const viewportWidth = window.innerWidth
+      const isOutOfView = rect.bottom < 0 || rect.top > viewportHeight || 
+                          rect.right < 0 || rect.left > viewportWidth
+      
+      if (isOutOfView) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    }, 0)
   }
 
   // Highlight the element currently being read
@@ -840,35 +1074,30 @@ function App() {
       if (itemAtPosition && itemAtPosition.element) {
         const element = itemAtPosition.element
         
-        // Clear previous reading highlight (but preserve blue start marker if it's on a different element)
-        clearReadingHighlight()
-        
-        // Apply reading highlight (green) - this should coexist with blue start marker
-        if (element.classList.contains('start-position-marker')) {
-          // If this element is ALSO the start marker, add green glow on top of blue
-          // The blue background and border are already there, just add green glow
-          element.style.boxShadow = '0 0 8px rgba(34, 197, 94, 0.8), 0 0 12px rgba(34, 197, 94, 0.6)'
-        } else {
-          // If this is a different element, apply full green highlight
-          // This won't affect the blue start marker which is on a different element
-          element.style.backgroundColor = 'rgba(34, 197, 94, 0.4)'
-          element.style.borderBottom = '2px solid #22c55e'
-          element.style.borderBottomColor = '#22c55e'
-          element.style.boxShadow = '0 0 8px rgba(34, 197, 94, 0.5)'
+        // Check if element is still in DOM (might have been re-rendered)
+        if (!element.isConnected) {
+          // Element was removed from DOM, try to find it again
+          const pageNum = itemAtPosition.page
+          const textLayer = textLayerRefs.current[pageNum]
+          if (textLayer) {
+            const newElement = textLayer.querySelector(`[data-char-index="${itemAtPosition.charIndex}"]`)
+            if (newElement) {
+              // Update the reference
+              itemAtPosition.element = newElement
+              currentTextItems.forEach(item => {
+                if (item.charIndex === itemAtPosition.charIndex && item.page === pageNum) {
+                  item.element = newElement
+                }
+              })
+              // Use the new element
+              applyReadingHighlight(newElement)
+              return
+            }
+          }
+          return
         }
-        element.classList.add('current-reading-marker')
-        currentReadingElementRef.current = element
         
-        // Scroll the element into view if it's not visible (only if significantly out of viewport)
-        const rect = element.getBoundingClientRect()
-        const viewportHeight = window.innerHeight
-        const viewportWidth = window.innerWidth
-        const isOutOfView = rect.bottom < 0 || rect.top > viewportHeight || 
-                            rect.right < 0 || rect.left > viewportWidth
-        
-        if (isOutOfView) {
-          element.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        }
+        applyReadingHighlight(element)
       }
     })
   }
@@ -953,9 +1182,32 @@ function App() {
     )
 
     if (itemAtPosition && itemAtPosition.element) {
+      // Check if element is still in DOM
+      if (!itemAtPosition.element.isConnected) {
+        // Element was removed, try to find it again by page and charIndex
+        const pageNum = itemAtPosition.page
+        const textLayer = textLayerRefs.current[pageNum]
+        if (textLayer) {
+          const newElement = textLayer.querySelector(`[data-char-index="${itemAtPosition.charIndex}"]`)
+          if (newElement) {
+            itemAtPosition.element = newElement
+            markStartPosition(newElement)
+            return
+          }
+        }
+        // Couldn't find element, clear marker
+        clearStartMarker()
+        return
+      }
+      
       // Check if this is already the marked element
       if (markedStartElementRef.current !== itemAtPosition.element) {
         markStartPosition(itemAtPosition.element)
+      } else {
+        // Re-apply marker in case it was cleared (e.g., after re-render)
+        if (!itemAtPosition.element.classList.contains('start-position-marker')) {
+          markStartPosition(itemAtPosition.element)
+        }
       }
     } else {
       // Element not found yet (might be rendering), clear marker for now
@@ -1098,25 +1350,23 @@ function App() {
         lastBoundaryPositionRef.current = absolutePosition
         
         // When a boundary event fires at position X, it means we're STARTING to speak the word at X
-        // The word currently being spoken (finishing) is the one that ends just before X
-        // So we highlight the word containing the previous boundary position
-        // This ensures we highlight the word that's actually being spoken right now, not the upcoming one
+        // However, there's often a slight delay, so we should highlight the word we were just speaking
+        // (the previous boundary position) to show what's currently being spoken
+        let positionToHighlight
         
-        // Determine which position to highlight
-        let positionToHighlight = absolutePosition
-        
-        if (previousBoundaryPositionRef.current !== null) {
-          // Highlight the word at the previous boundary (the word currently being spoken)
-          positionToHighlight = previousBoundaryPositionRef.current
+        if (previousBoundaryPositionRef.current !== null && previousBoundaryPositionRef.current !== position) {
+          // Highlight the word at the previous boundary (the one we were just speaking)
+          // Find the start of that word
+          positionToHighlight = findWordStart(extractedText, previousBoundaryPositionRef.current)
         } else {
-          // First boundary after start - highlight the starting word
-          positionToHighlight = position
+          // First boundary or no previous position - highlight the starting word
+          positionToHighlight = findWordStart(extractedText, position)
         }
         
         // Highlight the word currently being read
         highlightCurrentReading(positionToHighlight)
         
-        // Update previous position for next boundary event (save before updating)
+        // Update previous position for next boundary event
         previousBoundaryPositionRef.current = absolutePosition
       }
     }
@@ -1748,8 +1998,24 @@ function App() {
     const pageInfo = pageData.find(p => p.pageNum === highlight.page)
     if (!pageInfo) return
 
+    // Get canvas to calculate display scaling
+    const canvas = canvasRefs.current[highlight.page]
+    if (!canvas) return
+
+    const canvasRect = canvas.getBoundingClientRect()
+    const canvasWidth = canvas.width
+    const canvasHeight = canvas.height
+    const displayedWidth = canvasRect.width
+    const displayedHeight = canvasRect.height
+    
+    // Calculate scale factors for canvas display
+    const displayScaleX = displayedWidth / canvasWidth
+    const displayScaleY = displayedHeight / canvasHeight
+
     // Adjust coordinates if scale has changed since highlight was created
-    const scaleRatio = pageScale / (highlight.scale || pageScale)
+    // Also account for canvas display scaling
+    const scaleRatio = (pageScale / (highlight.scale || pageScale)) * displayScaleX
+    const scaleRatioY = (pageScale / (highlight.scale || pageScale)) * displayScaleY
     
     // Support both old format (single rect) and new format (array of rects)
     const rects = highlight.rects || [{
@@ -1762,9 +2028,9 @@ function App() {
     // Render each rectangle separately
     rects.forEach((rect, index) => {
       const x = rect.x * scaleRatio
-      const y = rect.y * scaleRatio
+      const y = rect.y * scaleRatioY
       const width = rect.width * scaleRatio
-      const height = rect.height * scaleRatio
+      const height = rect.height * scaleRatioY
 
       const div = document.createElement('div')
       div.className = 'highlight-rect'
@@ -2011,7 +2277,7 @@ function App() {
   return (
     <div className="app app-reader">
       {/* Top Toolbar */}
-      <div className="reader-toolbar">
+      <div className={`reader-toolbar ${isMobile ? (toolbarVisible ? 'toolbar-visible' : 'toolbar-hidden') : ''}`}>
         <div className="toolbar-left">
           <div className="toolbar-logo">
             <img src="/logo.png" alt="SpeechCase" className="logo-small" />
@@ -2113,42 +2379,38 @@ function App() {
                 <p>Loading pages...</p>
               </div>
             )}
-            {pageData.map((pageInfo) => (
-              <div key={pageInfo.pageNum} className="pdf-page-wrapper" id={`page-${pageInfo.pageNum}`}>
-                <div className="pdf-canvas-wrapper">
-                  <canvas
-                    ref={(el) => {
-                      if (el) canvasRefs.current[pageInfo.pageNum] = el
-                    }}
-                    className="pdf-canvas"
+            {pageData.map((pageInfo) => {
+              return (
+                <div key={pageInfo.pageNum} className="pdf-page-wrapper" id={`page-${pageInfo.pageNum}`}>
+                  <div 
+                    className="pdf-canvas-wrapper"
                     style={{
-                      width: `${pageInfo.viewport.width}px`,
-                      height: `${pageInfo.viewport.height}px`
+                      aspectRatio: `${pageInfo.viewport.width} / ${pageInfo.viewport.height}`,
+                      maxWidth: '100%'
                     }}
-                  />
-                  <div
-                    ref={(el) => {
-                      if (el) textLayerRefs.current[pageInfo.pageNum] = el
-                    }}
-                    className="text-layer"
-                    style={{
-                      width: `${pageInfo.viewport.width}px`,
-                      height: `${pageInfo.viewport.height}px`
-                    }}
-                  />
-                  <div
-                    ref={(el) => {
-                      if (el) highlightLayerRefs.current[pageInfo.pageNum] = el
-                    }}
-                    className="highlight-layer"
-                    style={{
-                      width: `${pageInfo.viewport.width}px`,
-                      height: `${pageInfo.viewport.height}px`
-                    }}
-                  />
+                  >
+                    <canvas
+                      ref={(el) => {
+                        if (el) canvasRefs.current[pageInfo.pageNum] = el
+                      }}
+                      className="pdf-canvas"
+                    />
+                    <div
+                      ref={(el) => {
+                        if (el) textLayerRefs.current[pageInfo.pageNum] = el
+                      }}
+                      className="text-layer"
+                    />
+                    <div
+                      ref={(el) => {
+                        if (el) highlightLayerRefs.current[pageInfo.pageNum] = el
+                      }}
+                      className="highlight-layer"
+                    />
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
             {!isLoading && pageData.length > 0 && renderedPages.length < pageData.length && (
               <div className="loading-pages">
                 <div className="spinner"></div>
@@ -2159,13 +2421,106 @@ function App() {
         </div>
       </div>
 
-      {/* Floating Controls Panel */}
-      {pdfDoc && (
-        <div className="reader-controls-panel">
-          <div className="controls-panel-header">
-            <IconSpeaker size={18} />
-            <span>Text-to-Speech</span>
+      {/* Mobile Bottom Controls Bar - Always Visible */}
+      {pdfDoc && isMobile && (
+        <div 
+          className="mobile-bottom-controls"
+          style={{ opacity: mobileControlsOpacity }}
+          onTouchStart={() => setMobileControlsOpacity(1)}
+          onClick={() => setMobileControlsOpacity(1)}
+        >
+          <div className="mobile-controls-content">
+            <button
+              onClick={handleRewind}
+              className="mobile-control-btn mobile-rewind-btn"
+              disabled={isLoading || !extractedText || startPosition === 0}
+              aria-label="Rewind 10 seconds"
+            >
+              <IconRewind size={20} />
+            </button>
+            
+            <button
+              onClick={handlePlay}
+              className={`mobile-control-btn mobile-play-btn ${isPlaying ? 'playing' : ''}`}
+              disabled={isLoading || !extractedText}
+              aria-label={isPlaying ? 'Pause' : 'Play'}
+            >
+              {isPlaying ? <IconPause size={24} /> : <IconPlay size={24} />}
+            </button>
+            
+            <button
+              onClick={handleForward}
+              className="mobile-control-btn mobile-forward-btn"
+              disabled={isLoading || !extractedText || startPosition >= extractedText.length - 10}
+              aria-label="Forward 10 seconds"
+            >
+              <IconForward size={20} />
+            </button>
+
+            {/* YouTube-style Speed Dropdown */}
+            <div className="mobile-speed-dropdown" ref={speedDropdownRef}>
+              <button
+                className="mobile-control-btn mobile-speed-btn"
+                onClick={() => setSpeedDropdownOpen(!speedDropdownOpen)}
+                aria-label="Playback speed"
+              >
+                <span>{playbackSpeed.toFixed(1)}x</span>
+              </button>
+              {speedDropdownOpen && (
+                <div className="speed-dropdown-menu">
+                  {[0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0].map((speed) => (
+                    <button
+                      key={speed}
+                      className={`speed-option ${playbackSpeed === speed ? 'active' : ''}`}
+                      onClick={() => {
+                        const newSpeed = speed
+                        setPlaybackSpeed(newSpeed)
+                        setSpeedDropdownOpen(false)
+                        // If currently playing, restart with new speed from current position
+                        if (isPlaying && synthRef.current) {
+                          const currentPos = lastBoundaryPositionRef.current !== undefined 
+                            ? lastBoundaryPositionRef.current 
+                            : currentPlaybackPositionRef.current
+                          
+                          synthRef.current.cancel()
+                          utteranceRef.current = null
+                          setIsPlaying(false)
+                          
+                          setTimeout(() => {
+                            if (!synthRef.current.speaking) {
+                              startPlaybackFromPosition(currentPos)
+                            }
+                          }, 50)
+                        }
+                      }}
+                    >
+                      {speed === 1.0 ? 'Normal' : `${speed.toFixed(2)}x`}
+                      {playbackSpeed === speed && <span className="checkmark">✓</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
+        </div>
+      )}
+
+      {/* Desktop Floating Controls Panel */}
+      {pdfDoc && !isMobile && (
+        <div className="reader-controls-panel">
+            <div className="controls-panel-header">
+              <IconSpeaker size={18} />
+              <span>Text-to-Speech</span>
+              {isMobile && (
+                <button
+                  className="panel-close-btn"
+                  onClick={() => setControlsPanelExpanded(false)}
+                  aria-label="Close controls"
+                >
+                  <IconClose size={16} />
+                </button>
+              )}
+            </div>
           
           <div className="controls-panel-content">
             <div className="control-group">
