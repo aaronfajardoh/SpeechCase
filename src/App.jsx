@@ -219,6 +219,7 @@ function App() {
   const [hasCurrentReadingPosition, setHasCurrentReadingPosition] = useState(false) // Track if there's a current reading position (for button visibility)
   const isProgrammaticScrollRef = useRef(false) // Track if scroll is programmatic (from our code) vs manual
   const lastProgrammaticScrollTimeRef = useRef(0) // Track when we last scrolled programmatically
+  const pendingScrollTimeoutRef = useRef(null) // Track pending scroll timeout to cancel if needed
 
   // Detect mobile device
   useEffect(() => {
@@ -356,17 +357,20 @@ function App() {
         return
       }
 
-      // If scroll happened very recently after a programmatic scroll, ignore it
-      // (to account for scroll momentum/continuation)
+      // If scroll happened very recently after a programmatic scroll, check scroll direction
+      // Only ignore if scrolling in the same direction as programmatic scroll (momentum)
       const timeSinceProgrammaticScroll = Date.now() - lastProgrammaticScrollTimeRef.current
-      if (timeSinceProgrammaticScroll < 800) {
+      const scrollDirection = currentScrollTop > lastScrollTop ? 'down' : 'up'
+      
+      // If it's been less than 300ms since programmatic scroll, be more lenient
+      // But still disable if user is clearly scrolling in a different direction or significantly
+      if (timeSinceProgrammaticScroll < 300 && scrollDelta < 20) {
         lastScrollTop = currentScrollTop
         return
       }
 
-      // Only disable auto-scroll if there's a significant scroll change (more than 5px)
-      // This prevents false positives from tiny scroll adjustments
-      if (scrollDelta > 5) {
+      // Disable auto-scroll on any scroll movement (reduced threshold for immediate response)
+      if (scrollDelta > 1) {
         // Mark that user is scrolling
         isUserScrolling = true
         
@@ -380,8 +384,14 @@ function App() {
         if (autoScrollEnabledRef.current) {
           autoScrollEnabledRef.current = false
           setAutoScrollEnabled(false)
-          // Force a small delay to ensure the ref update is processed
+          // Immediately mark that we're no longer in programmatic scroll mode
           // This prevents any pending applyReadingHighlight calls from scrolling
+          isProgrammaticScrollRef.current = false
+          // Cancel any pending scroll operations
+          if (pendingScrollTimeoutRef.current) {
+            clearTimeout(pendingScrollTimeoutRef.current)
+            pendingScrollTimeoutRef.current = null
+          }
         }
         
         // Reset user scrolling flag after a short delay
@@ -1718,8 +1728,16 @@ function App() {
     // Scroll the element into view if auto-scroll is enabled and it's not visible
     // Use ref to check current state synchronously (not stale closure)
     if (autoScrollEnabledRef.current) {
+      // Cancel any pending scroll timeout
+      if (pendingScrollTimeoutRef.current) {
+        clearTimeout(pendingScrollTimeoutRef.current)
+        pendingScrollTimeoutRef.current = null
+      }
+      
       // Use a small delay to ensure styles are applied
-      setTimeout(() => {
+      pendingScrollTimeoutRef.current = setTimeout(() => {
+        pendingScrollTimeoutRef.current = null
+        
         // Double-check the ref value (it might have changed during the timeout)
         if (!autoScrollEnabledRef.current) {
           return
