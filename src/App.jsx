@@ -78,6 +78,12 @@ const IconClose = ({ size = 16, className = '' }) => (
   </svg>
 )
 
+const IconMinimize = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <line x1="5" y1="12" x2="19" y2="12" />
+  </svg>
+)
+
 const IconSpeaker = ({ size = 16, className = '' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
@@ -209,6 +215,8 @@ function App() {
   const [toolbarVisible, setToolbarVisible] = useState(true) // Toolbar visibility for mobile
   const [controlsPanelExpanded, setControlsPanelExpanded] = useState(false) // Controls panel expanded state for mobile
   const [mobileControlsOpacity, setMobileControlsOpacity] = useState(1) // Mobile bottom controls opacity
+  const [isControlsPanelMinimized, setIsControlsPanelMinimized] = useState(false) // Controls panel minimized state for desktop
+  const [isHoveringMinimizedPanel, setIsHoveringMinimizedPanel] = useState(false) // Track hover state for minimized panel
   const [speedDropdownOpen, setSpeedDropdownOpen] = useState(false) // Speed dropdown open state
   const lastScrollYRef = useRef(0) // Track last scroll position for auto-hide toolbar
   const scrollTimeoutRef = useRef(null) // Timeout for showing toolbar after scroll stops
@@ -508,9 +516,10 @@ function App() {
         return false
       }
 
+      // TEMPORARILY: Use browser TTS for both languages (Google TTS disabled for debugging)
       // Use Google TTS for Spanish, browser TTS for English
       console.log('Media Session: Starting playback, language:', langToUse, 'text length:', textToRead.length)
-      if (langToUse === 'es') {
+      if (false && langToUse === 'es') {
         // Use Google TTS for Spanish
         console.log('Media Session: Using Google TTS for Spanish text')
         try {
@@ -523,7 +532,7 @@ function App() {
           return false
         }
       } else {
-        console.log('Media Session: Using browser TTS for English text')
+        console.log('Media Session: Using browser TTS for', langToUse === 'es' ? 'Spanish' : 'English', 'text')
         // Use browser TTS for English
         if (!synthRef.current) {
           setError('Text-to-speech is not available in your browser.')
@@ -1741,37 +1750,99 @@ function App() {
         pendingScrollTimeoutRef.current = null
       }
       
+      // Store reference to element to verify it's still the current one
+      const elementToScroll = element
+      const elementPage = getElementPageNumber(element)
+      
       // Use a small delay to ensure styles are applied
       pendingScrollTimeoutRef.current = setTimeout(() => {
         pendingScrollTimeoutRef.current = null
+        
+        // Verify this is still the current reading element (might have changed)
+        if (currentReadingElementRef.current !== elementToScroll) {
+          return
+        }
+        
+        // Verify element is still in DOM and valid
+        if (!elementToScroll.isConnected) {
+          return
+        }
+        
+        // Verify page hasn't changed (prevent scrolling to wrong page)
+        const currentElementPage = getElementPageNumber(elementToScroll)
+        if (elementPage !== null && currentElementPage !== elementPage) {
+          return
+        }
         
         // Double-check the ref value (it might have changed during the timeout)
         if (!autoScrollEnabledRef.current) {
           return
         }
         
-        const rect = element.getBoundingClientRect()
+        const rect = elementToScroll.getBoundingClientRect()
         const viewportHeight = window.innerHeight
         const viewportWidth = window.innerWidth
-        const isOutOfView = rect.bottom < 0 || rect.top > viewportHeight || 
-                            rect.right < 0 || rect.left > viewportWidth
         
-        if (isOutOfView) {
+        // Only scroll if element is significantly out of view (more than 50px)
+        // This prevents unnecessary scrolling when element is just slightly off-screen
+        // and prevents jumping to wrong pages
+        const margin = 50
+        const isSignificantlyOutOfView = rect.bottom < -margin || 
+                                        rect.top > viewportHeight + margin || 
+                                        rect.right < -margin || 
+                                        rect.left > viewportWidth + margin
+        
+        if (isSignificantlyOutOfView) {
           // Final check before scrolling
-          if (!autoScrollEnabledRef.current) {
+          if (!autoScrollEnabledRef.current || currentReadingElementRef.current !== elementToScroll) {
+            return
+          }
+          
+          // Verify element is still valid
+          if (!elementToScroll.isConnected) {
             return
           }
           
           isProgrammaticScrollRef.current = true
           lastProgrammaticScrollTimeRef.current = Date.now()
-          element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          elementToScroll.scrollIntoView({ behavior: 'smooth', block: 'center' })
           // Reset flag after scroll animation completes (smooth scroll can take up to 1000ms)
           setTimeout(() => {
             isProgrammaticScrollRef.current = false
           }, 1100)
         }
-      }, 0)
+      }, 50) // Small debounce to prevent rapid scroll calls
     }
+  }
+
+  // Helper function to check if an element is in the viewport
+  const isElementInViewport = (element) => {
+    if (!element || !element.isConnected) return false
+    const rect = element.getBoundingClientRect()
+    const viewportHeight = window.innerHeight
+    const viewportWidth = window.innerWidth
+    // Check if element is at least partially visible
+    return rect.bottom > 0 && rect.top < viewportHeight && 
+           rect.right > 0 && rect.left < viewportWidth
+  }
+
+  // Helper function to get the page number of an element
+  const getElementPageNumber = (element) => {
+    if (!element) return null
+    // Try to get page from dataset
+    if (element.dataset.page) {
+      return parseInt(element.dataset.page)
+    }
+    // Try to find parent page wrapper
+    let parent = element.parentElement
+    while (parent) {
+      if (parent.id && parent.id.startsWith('page-')) {
+        const pageNum = parseInt(parent.id.replace('page-', ''))
+        if (!isNaN(pageNum)) return pageNum
+      }
+      parent = parent.parentElement
+    }
+    return null
   }
 
   // Highlight the element currently being read
@@ -1782,11 +1853,25 @@ function App() {
       const currentTextItems = textItemsRef.current
       if (!currentTextItems || currentTextItems.length === 0) return
       
-      // Find the text item that contains this position
-      const itemAtPosition = currentTextItems.find(item => 
+      // Find all text items that contain this position (might have duplicates across pages)
+      const matchingItems = currentTextItems.filter(item => 
         item.charIndex <= position && 
         item.charIndex + item.str.length >= position
       )
+
+      if (matchingItems.length === 0) return
+
+      // Prefer items that are currently visible in the viewport
+      let itemAtPosition = matchingItems.find(item => {
+        if (!item.element || !item.element.isConnected) return false
+        return isElementInViewport(item.element)
+      })
+
+      // If no visible item found, prefer the one with the highest charIndex (most specific match)
+      // This helps avoid matching items from different pages
+      if (!itemAtPosition) {
+        itemAtPosition = matchingItems.sort((a, b) => b.charIndex - a.charIndex)[0]
+      }
 
       if (itemAtPosition && itemAtPosition.element) {
         const element = itemAtPosition.element
@@ -1797,7 +1882,7 @@ function App() {
           const pageNum = itemAtPosition.page
           const textLayer = textLayerRefs.current[pageNum]
           if (textLayer) {
-            const newElement = textLayer.querySelector(`[data-char-index="${itemAtPosition.charIndex}"]`)
+            const newElement = textLayer.querySelector(`[data-char-index="${itemAtPosition.charIndex}"][data-page="${pageNum}"]`)
             if (newElement) {
               // Update the reference
               itemAtPosition.element = newElement
@@ -1808,6 +1893,22 @@ function App() {
               })
               // Use the new element
               applyReadingHighlight(newElement)
+              return
+            }
+          }
+          return
+        }
+        
+        // Verify the element's page matches the item's page
+        const elementPage = getElementPageNumber(element)
+        if (elementPage !== null && elementPage !== itemAtPosition.page) {
+          // Page mismatch - element might be from wrong page, try to find correct one
+          const textLayer = textLayerRefs.current[itemAtPosition.page]
+          if (textLayer) {
+            const correctElement = textLayer.querySelector(`[data-char-index="${itemAtPosition.charIndex}"][data-page="${itemAtPosition.page}"]`)
+            if (correctElement) {
+              itemAtPosition.element = correctElement
+              applyReadingHighlight(correctElement)
               return
             }
           }
@@ -2057,6 +2158,44 @@ function App() {
     }
   }
 
+  // Helper function to reset speech synthesis state (fixes Chrome issues)
+  const resetSpeechSynthesis = () => {
+    if (!synthRef.current) return
+    
+    // Cancel any pending speech
+    synthRef.current.cancel()
+    utteranceRef.current = null
+    
+    // Chrome sometimes gets stuck - try to reset by getting a fresh reference
+    // This helps when speech synthesis is in a bad state
+    try {
+      // Force Chrome to reset by accessing the API in a new way
+      if (window.speechSynthesis) {
+        // Cancel all pending utterances
+        window.speechSynthesis.cancel()
+        // Small delay to let Chrome process the cancellation
+        return new Promise(resolve => setTimeout(resolve, 100))
+      }
+    } catch (e) {
+      console.warn('Error resetting speech synthesis:', e)
+    }
+    return Promise.resolve()
+  }
+
+  // Helper function to check if speech synthesis is in a good state
+  const isSpeechSynthesisReady = () => {
+    if (!synthRef.current) return false
+    
+    // Check if speech synthesis is available and not stuck
+    try {
+      // Chrome can get stuck in speaking/pending state even when not actually speaking
+      // We'll be lenient and allow it if it's been a while since last activity
+      return true
+    } catch (e) {
+      return false
+    }
+  }
+
   // Helper function to start playback from a specific position
   const startPlaybackFromPosition = async (position) => {
     if (!extractedText) return false
@@ -2080,9 +2219,10 @@ function App() {
       return false
     }
 
+    // TEMPORARILY: Use browser TTS for both languages (Google TTS disabled for debugging)
     // Use Google TTS for Spanish, browser TTS for English
     console.log('Starting playback, language:', langToUse, 'text length:', textToRead.length)
-    if (langToUse === 'es') {
+    if (false && langToUse === 'es') {
       // Use Google TTS for Spanish
       console.log('Using Google TTS for Spanish text')
       try {
@@ -2095,19 +2235,33 @@ function App() {
         return false
       }
     } else {
-      console.log('Using browser TTS for English text')
+      console.log('Using browser TTS for', langToUse === 'es' ? 'Spanish' : 'English', 'text')
       // Use browser TTS for English
       if (!synthRef.current) {
         setError('Text-to-speech is not available in your browser.')
         return false
       }
 
+      // Reset speech synthesis state to fix Chrome issues
+      await resetSpeechSynthesis()
+      
+      // Check if speech synthesis is ready
+      if (!isSpeechSynthesisReady()) {
+        setError('Speech synthesis is not ready. Please try again.')
+        return false
+      }
+
       // Create new utterance
       const utterance = new SpeechSynthesisUtterance(textToRead)
-      utterance.lang = 'en-US'
+      // Set language based on detected language (use Spanish voice for Spanish, English for English)
+      utterance.lang = langToUse === 'es' ? 'es-ES' : 'en-US'
       utterance.rate = playbackSpeed
       utterance.pitch = 1.0
       utterance.volume = 1.0
+
+      // Track if utterance actually starts (Chrome can silently reject)
+      let utteranceStarted = false
+      let utteranceStartTimeout = null
 
       // Track position using boundary events (fires when speaking each word)
       utterance.onboundary = (event) => {
@@ -2141,6 +2295,12 @@ function App() {
       }
 
       utterance.onstart = () => {
+        utteranceStarted = true
+        if (utteranceStartTimeout) {
+          clearTimeout(utteranceStartTimeout)
+          utteranceStartTimeout = null
+        }
+        
         setIsPlaying(true)
         // Ensure position is tracked
         currentPlaybackPositionRef.current = position
@@ -2165,6 +2325,11 @@ function App() {
         }
       }
       utterance.onend = () => {
+        if (utteranceStartTimeout) {
+          clearTimeout(utteranceStartTimeout)
+          utteranceStartTimeout = null
+        }
+        
         setIsPlaying(false)
         // Update position to end when finished
         currentPlaybackPositionRef.current = extractedText.length
@@ -2181,6 +2346,10 @@ function App() {
         }
       }
       utterance.onerror = (event) => {
+        if (utteranceStartTimeout) {
+          clearTimeout(utteranceStartTimeout)
+          utteranceStartTimeout = null
+        }
         // Ignore "interrupted" errors - these are expected when pausing/cancelling speech
         if (event.error === 'interrupted') {
           setIsPlaying(false)
@@ -2215,8 +2384,29 @@ function App() {
       }
 
       utteranceRef.current = utterance
-      synthRef.current.speak(utterance)
-      return true
+      
+      try {
+        synthRef.current.speak(utterance)
+        
+        // Chrome sometimes silently rejects utterances - check if it actually started
+        // Wait a bit to see if onstart fires
+        utteranceStartTimeout = setTimeout(() => {
+          if (!utteranceStarted && utteranceRef.current === utterance) {
+            console.warn('Utterance may have been rejected by browser (Chrome issue)')
+            setError('Speech synthesis failed to start. This can happen in Chrome. Try refreshing the page or using a different browser.')
+            setIsPlaying(false)
+            utteranceRef.current = null
+            clearReadingHighlight()
+          }
+        }, 500)
+        
+        return true
+      } catch (error) {
+        console.error('Error calling speech synthesis speak():', error)
+        setError('Error starting speech: ' + error.message)
+        utteranceRef.current = null
+        return false
+      }
     }
   }
 
@@ -2278,10 +2468,15 @@ function App() {
     if (positionToUse !== startPosition) {
       setStartPosition(positionToUse)
     }
-    const success = startPlaybackFromPosition(positionToUse)
-    if (!success) {
-      setError('No text to read from the selected position. Please click on a word in the PDF to set the start position.')
-    }
+    // Handle async call properly
+    startPlaybackFromPosition(positionToUse).then(success => {
+      if (!success) {
+        setError('No text to read from the selected position. Please click on a word in the PDF to set the start position.')
+      }
+    }).catch(error => {
+      console.error('Error starting playback:', error)
+      setError('Error starting playback: ' + error.message)
+    })
   }
 
   const handleStop = () => {
@@ -3391,20 +3586,39 @@ function App() {
 
       {/* Desktop Floating Controls Panel */}
       {pdfDoc && !isMobile && (
-        <div className="reader-controls-panel">
-            <div className="controls-panel-header">
-              <IconSpeaker size={18} />
-              <span>Text-to-Speech</span>
-              {isMobile && (
-                <button
-                  className="panel-close-btn"
-                  onClick={() => setControlsPanelExpanded(false)}
-                  aria-label="Close controls"
-                >
-                  <IconClose size={16} />
-                </button>
-              )}
+        <>
+          {isControlsPanelMinimized ? (
+            <div 
+              className={`reader-controls-panel-minimized ${isHoveringMinimizedPanel ? 'hovered' : ''}`}
+              onMouseEnter={() => setIsHoveringMinimizedPanel(true)}
+              onMouseLeave={() => setIsHoveringMinimizedPanel(false)}
+              onClick={() => setIsControlsPanelMinimized(false)}
+            >
+              <IconSpeaker size={16} />
             </div>
+          ) : (
+            <div className="reader-controls-panel">
+              <div className="controls-panel-header">
+                <button
+                  className="panel-minimize-btn"
+                  onClick={() => setIsControlsPanelMinimized(true)}
+                  aria-label="Minimize controls"
+                  title="Minimize"
+                >
+                  <IconMinimize size={12} />
+                </button>
+                <IconSpeaker size={18} />
+                <span>Text-to-Speech</span>
+                {isMobile && (
+                  <button
+                    className="panel-close-btn"
+                    onClick={() => setControlsPanelExpanded(false)}
+                    aria-label="Close controls"
+                  >
+                    <IconClose size={16} />
+                  </button>
+                )}
+              </div>
           
           <div className="controls-panel-content">
             <div className="control-group">
@@ -3568,6 +3782,8 @@ function App() {
             </div>
           )}
         </div>
+          )}
+        </>
       )}
     </div>
   )

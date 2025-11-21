@@ -226,6 +226,48 @@
   text-size-adjust: 100%;
 }
 
+/* Minimized Controls Panel */
+.reader-controls-panel-minimized {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  width: 40px;
+  height: 40px;
+  background: rgba(45, 45, 45, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 20px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(61, 61, 61, 0.6);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: auto;
+  touch-action: manipulation;
+  opacity: 0.4;
+}
+
+.reader-controls-panel-minimized:hover,
+.reader-controls-panel-minimized.hovered {
+  opacity: 1;
+  background: rgba(45, 45, 45, 0.95);
+  border-color: rgba(61, 61, 61, 0.8);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+  transform: scale(1.05);
+}
+
+.reader-controls-panel-minimized:active {
+  transform: scale(0.95);
+}
+
+.reader-controls-panel-minimized svg {
+  color: #e8eaed;
+  transition: color 0.2s ease;
+}
+
 @keyframes slideInUp {
   from {
     transform: translateY(20px);
@@ -242,11 +284,13 @@
   align-items: center;
   gap: 0.5rem;
   padding: 1rem 1.25rem;
+  padding-left: 2.5rem;
   background: #3d3d3d;
   border-bottom: 1px solid #4d4d4d;
   color: #e8eaed;
   font-size: 0.875rem;
   font-weight: 600;
+  position: relative;
 }
 
 .controls-panel-header svg {
@@ -1507,6 +1551,36 @@
   color: #4285f4;
   font-weight: bold;
   margin-left: 0.5rem;
+}
+
+.panel-minimize-btn {
+  position: absolute;
+  left: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: #9aa0a6;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  touch-action: manipulation;
+  padding: 0;
+  z-index: 1;
+}
+
+.panel-minimize-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e8eaed;
+}
+
+.panel-minimize-btn:active {
+  transform: translateY(-50%) scale(0.9);
 }
 
 .panel-close-btn {
