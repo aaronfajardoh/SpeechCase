@@ -517,10 +517,9 @@ function App() {
         return false
       }
 
-      // TEMPORARILY: Use browser TTS for both languages (Google TTS disabled for debugging)
       // Use Google TTS for Spanish, browser TTS for English
       console.log('Media Session: Starting playback, language:', langToUse, 'text length:', textToRead.length)
-      if (false && langToUse === 'es') {
+      if (langToUse === 'es') {
         // Use Google TTS for Spanish
         console.log('Media Session: Using Google TTS for Spanish text')
         try {
@@ -1328,12 +1327,20 @@ function App() {
             return Promise.resolve()
           }
           
-          // Double-check that audioRef is still null (might have been set by another playback)
-          if (audioRef.current) {
-            console.log('Audio ref already set, cancelling this chunk')
-            audio.pause()
-            audio.src = ''
-            return Promise.resolve()
+          // Double-check that audioRef is still null or is the previous chunk (might have been set by another playback)
+          // Allow transition from previous chunk to next chunk
+          if (audioRef.current && audioRef.current !== audio) {
+            // Only cancel if it's a different playback session, not a chunk transition
+            // Check if the previous audio is still playing (if it is, this might be a duplicate call)
+            const previousAudio = audioRef.current
+            if (previousAudio && !previousAudio.paused && previousAudio.currentTime < previousAudio.duration - 0.1) {
+              console.log('Audio ref already set to a different playing audio, cancelling this chunk')
+              audio.pause()
+              audio.src = ''
+              return Promise.resolve()
+            }
+            // Previous audio has ended, safe to replace
+            console.log('Replacing previous audio with next chunk')
           }
           
           audioRef.current = audio
@@ -1398,30 +1405,51 @@ function App() {
             audio.addEventListener('ended', () => {
               console.log(`Chunk ${chunkIndex + 1} of ${allChunks.length} ended`)
               
-              // Check if this audio is still the current one (might have been replaced)
-              if (audioRef.current !== audio) {
-                console.log('Audio was replaced, not playing next chunk')
-                resolve()
-                return
-              }
-              
+              // Update chunk index
               currentChunkIndexRef.current = chunkIndex + 1
               
               // Play next chunk if available and not cancelled
-              if (!isCancelledRef.current && chunkIndex + 1 < allChunks.length && audioRef.current === audio) {
+              if (!isCancelledRef.current && chunkIndex + 1 < allChunks.length) {
                 console.log(`Playing next chunk ${chunkIndex + 2} of ${allChunks.length}`)
+                
+                // Clear the audio ref temporarily to allow next chunk to set it
+                // But keep a reference to check if we should continue
+                const shouldContinue = audioRef.current === audio || !audioRef.current
+                
+                if (!shouldContinue) {
+                  console.log('Audio was replaced by another playback, stopping chunk chain')
+                  setIsPlaying(false)
+                  isPlayingRef.current = false
+                  setIsTTSLoading(false)
+                  clearReadingHighlight()
+                  if ('mediaSession' in navigator) {
+                    navigator.mediaSession.playbackState = 'paused'
+                  }
+                  resolve()
+                  return
+                }
+                
+                // Clear audioRef to allow next chunk to set it
+                audioRef.current = null
                 
                 // Check if next chunk is already preloaded
                 if (chunkCache.has(chunkIndex + 1)) {
                   // Next chunk is ready - play immediately (no pause!)
                   console.log(`Next chunk is preloaded, playing immediately`)
                   playChunk(chunkIndex + 1)
-                    .then(resolve)
+                    .then(() => {
+                      resolve()
+                    })
                     .catch((err) => {
                       console.error('Error playing next chunk:', err)
                       setIsPlaying(false)
                       isPlayingRef.current = false
+                      setIsTTSLoading(false)
                       setError('Error playing next audio chunk: ' + err.message)
+                      clearReadingHighlight()
+                      if ('mediaSession' in navigator) {
+                        navigator.mediaSession.playbackState = 'paused'
+                      }
                       resolve()
                     })
                 } else {
@@ -1433,15 +1461,30 @@ function App() {
                       setIsTTSLoading(false)
                       if (!isCancelledRef.current && chunkCache.has(chunkIndex + 1)) {
                         playChunk(chunkIndex + 1)
-                          .then(resolve)
+                          .then(() => {
+                            resolve()
+                          })
                           .catch((err) => {
                             console.error('Error playing next chunk:', err)
                             setIsPlaying(false)
                             isPlayingRef.current = false
+                            setIsTTSLoading(false)
                             setError('Error playing next audio chunk: ' + err.message)
+                            clearReadingHighlight()
+                            if ('mediaSession' in navigator) {
+                              navigator.mediaSession.playbackState = 'paused'
+                            }
                             resolve()
                           })
                       } else {
+                        // Cancelled or chunk not available
+                        setIsPlaying(false)
+                        isPlayingRef.current = false
+                        setIsTTSLoading(false)
+                        clearReadingHighlight()
+                        if ('mediaSession' in navigator) {
+                          navigator.mediaSession.playbackState = 'paused'
+                        }
                         resolve()
                       }
                     })
@@ -1451,12 +1494,16 @@ function App() {
                       setIsPlaying(false)
                       isPlayingRef.current = false
                       setError('Error loading next audio chunk: ' + err.message)
+                      clearReadingHighlight()
+                      if ('mediaSession' in navigator) {
+                        navigator.mediaSession.playbackState = 'paused'
+                      }
                       resolve()
                     })
                 }
               } else {
                 // All chunks done or cancelled
-                console.log('All chunks finished or cancelled')
+                console.log('All chunks finished or cancelled. Total chunks:', allChunks.length, 'Current index:', chunkIndex)
                 setIsPlaying(false)
                 isPlayingRef.current = false
                 setIsTTSLoading(false)
@@ -1474,21 +1521,75 @@ function App() {
             })
 
             audio.addEventListener('error', (event) => {
-              console.error('Audio playback error:', event, audio.error)
+              console.error(`Audio playback error for chunk ${chunkIndex + 1}:`, event, audio.error)
+              const errorMsg = audio.error ? `Code: ${audio.error.code}, Message: ${audio.error.message}` : 'Unknown error'
+              
               if (!isCancelledRef.current) {
-                const errorMsg = audio.error ? `Code: ${audio.error.code}, Message: ${audio.error.message}` : 'Unknown error'
-                setError('Error playing audio: ' + errorMsg)
-                setIsPlaying(false)
-                isPlayingRef.current = false
-                playbackStartTimeRef.current = null
-                clearReadingHighlight()
+                // Try to continue with next chunk if available, unless it's a critical error
+                const isCriticalError = audio.error && (audio.error.code === 4) // MEDIA_ELEMENT_ERROR: Format error
+                
+                if (!isCriticalError && chunkIndex + 1 < allChunks.length) {
+                  console.log(`Non-critical error, attempting to continue with next chunk...`)
+                  // Clear current audio ref
+                  if (audioRef.current === audio) {
+                    audioRef.current = null
+                  }
+                  // Try to play next chunk
+                  currentChunkIndexRef.current = chunkIndex + 1
+                  if (chunkCache.has(chunkIndex + 1)) {
+                    playChunk(chunkIndex + 1)
+                      .then(() => {
+                        console.log('Successfully continued playback after error')
+                        resolve()
+                      })
+                      .catch((err) => {
+                        console.error('Failed to continue playback after error:', err)
+                        setError('Error playing audio: ' + errorMsg + '. Could not continue playback.')
+                        setIsPlaying(false)
+                        isPlayingRef.current = false
+                        setIsTTSLoading(false)
+                        playbackStartTimeRef.current = null
+                        clearReadingHighlight()
+                        if ('mediaSession' in navigator) {
+                          navigator.mediaSession.playbackState = 'paused'
+                        }
+                        resolve()
+                      })
+                  } else {
+                    // Next chunk not ready, stop playback
+                    setError('Error playing audio: ' + errorMsg)
+                    setIsPlaying(false)
+                    isPlayingRef.current = false
+                    setIsTTSLoading(false)
+                    playbackStartTimeRef.current = null
+                    clearReadingHighlight()
+                    if ('mediaSession' in navigator) {
+                      navigator.mediaSession.playbackState = 'paused'
+                    }
+                    resolve()
+                  }
+                } else {
+                  // Critical error or no more chunks - stop playback
+                  setError('Error playing audio: ' + errorMsg)
+                  setIsPlaying(false)
+                  isPlayingRef.current = false
+                  setIsTTSLoading(false)
+                  playbackStartTimeRef.current = null
+                  clearReadingHighlight()
 
-                if ('mediaSession' in navigator) {
-                  navigator.mediaSession.playbackState = 'paused'
+                  if ('mediaSession' in navigator) {
+                    navigator.mediaSession.playbackState = 'paused'
+                  }
+                  resolve()
                 }
+              } else {
+                // Cancelled, just resolve
+                resolve()
               }
-              audioRef.current = null
-              reject(new Error(errorMsg || 'Audio playback error'))
+              
+              if (audioRef.current === audio) {
+                audioRef.current = null
+              }
             })
 
             // Start playing
@@ -2327,10 +2428,9 @@ function App() {
       return false
     }
 
-    // TEMPORARILY: Use browser TTS for both languages (Google TTS disabled for debugging)
     // Use Google TTS for Spanish, browser TTS for English
     console.log('Starting playback, language:', langToUse, 'text length:', textToRead.length)
-    if (false && langToUse === 'es') {
+    if (langToUse === 'es') {
       // Use Google TTS for Spanish
       console.log('Using Google TTS for Spanish text')
       try {
