@@ -204,6 +204,10 @@ function App() {
   const markedStartElementRef = useRef(null) // Track the element marked as start position
   const currentReadingElementRef = useRef(null) // Track the element currently being read
   const previousBoundaryPositionRef = useRef(null) // Track previous boundary position to highlight current word
+  const currentReadingPageRef = useRef(null) // Track the page currently being read to prevent jumping
+  const lastValidHighlightPositionRef = useRef(null) // Track last valid highlight position to prevent jumps
+  const lastHighlightedCharIndexRef = useRef(null) // Track the charIndex of the last highlighted element for continuity
+  const lastHighlightedElementRef = useRef(null) // Track the actual DOM element that was last highlighted
   const historyIndexRef = useRef(0) // Track current history index for undo/redo
   const textItemsRef = useRef([]) // Track text items for event handlers
   const audioRef = useRef(null) // Track audio element for Google TTS playback
@@ -1109,19 +1113,26 @@ function App() {
         audio.playbackRate = rate
         audioRef.current = audio
 
-        // Track position
-        const updatePosition = () => {
-          if (audio.currentTime && audio.duration && !isCancelledRef.current) {
-            const progress = audio.currentTime / audio.duration
-            const textLength = text.length
-            const estimatedPosition = startPosition + Math.floor(progress * textLength)
-            currentPlaybackPositionRef.current = estimatedPosition
-            lastBoundaryPositionRef.current = estimatedPosition
+          // Track position with improved accuracy
+          const updatePosition = () => {
+            if (audio.currentTime && audio.duration && !isCancelledRef.current) {
+              const progress = Math.min(1, Math.max(0, audio.currentTime / audio.duration))
+              const textLength = text.length
+              const estimatedPosition = Math.min(
+                startPosition + Math.floor(progress * textLength),
+                startPosition + textLength - 1
+              )
+              
+              // Clamp to valid range
+              const clampedPosition = Math.max(0, Math.min(estimatedPosition, extractedText.length - 1))
+              
+              currentPlaybackPositionRef.current = clampedPosition
+              lastBoundaryPositionRef.current = clampedPosition
 
-            const wordStart = findWordStart(extractedText, estimatedPosition)
-            highlightCurrentReading(wordStart)
+              const wordStart = findWordStart(extractedText, clampedPosition)
+              highlightCurrentReading(wordStart)
+            }
           }
-        }
 
         audio.addEventListener('timeupdate', updatePosition)
 
@@ -1131,6 +1142,11 @@ function App() {
           playbackStartTimeRef.current = Date.now()
           lastBoundaryPositionRef.current = startPosition
           previousBoundaryPositionRef.current = startPosition
+          
+          // Reset page tracking when starting new playback
+          currentReadingPageRef.current = null
+          lastValidHighlightPositionRef.current = null
+          
           highlightCurrentReading(startPosition)
 
           if ('mediaSession' in navigator) {
@@ -1360,21 +1376,28 @@ function App() {
           }
           const chunkTextLength = allChunks[chunkIndex].length
 
-          // Track position
+          // Track position with improved accuracy for chunks
           const updatePosition = () => {
             if (audio.currentTime && audio.duration && !isCancelledRef.current) {
-              const progress = audio.currentTime / audio.duration
+              const progress = Math.min(1, Math.max(0, audio.currentTime / audio.duration))
               const chunkEndPosition = chunkIndex < allChunks.length - 1
                 ? chunkStartPosition + chunkTextLength
-                : startPosition + text.length
+                : Math.min(startPosition + text.length, extractedText.length)
+              
+              // Calculate position within chunk, ensuring we don't exceed bounds
+              const positionInChunk = Math.floor(progress * chunkTextLength)
               const estimatedPosition = Math.min(
-                chunkStartPosition + Math.floor(progress * chunkTextLength),
-                chunkEndPosition
+                chunkStartPosition + positionInChunk,
+                chunkEndPosition - 1
               )
-              currentPlaybackPositionRef.current = estimatedPosition
-              lastBoundaryPositionRef.current = estimatedPosition
+              
+              // Clamp to valid range in extracted text
+              const clampedPosition = Math.max(0, Math.min(estimatedPosition, extractedText.length - 1))
+              
+              currentPlaybackPositionRef.current = clampedPosition
+              lastBoundaryPositionRef.current = clampedPosition
 
-              const wordStart = findWordStart(extractedText, estimatedPosition)
+              const wordStart = findWordStart(extractedText, clampedPosition)
               highlightCurrentReading(wordStart)
             }
           }
@@ -1388,6 +1411,11 @@ function App() {
               playbackStartTimeRef.current = Date.now()
               lastBoundaryPositionRef.current = startPosition
               previousBoundaryPositionRef.current = startPosition
+              
+              // Reset page tracking when starting new playback
+              currentReadingPageRef.current = null
+              lastValidHighlightPositionRef.current = null
+              
               highlightCurrentReading(startPosition)
 
               if ('mediaSession' in navigator) {
@@ -1876,6 +1904,11 @@ function App() {
     // This ensures the button stays visible when user scrolls away during playback
     if (!isPlayingRef.current) {
       setHasCurrentReadingPosition(false)
+      // Reset page tracking when playback stops
+      currentReadingPageRef.current = null
+      lastValidHighlightPositionRef.current = null
+      lastHighlightedCharIndexRef.current = null
+      lastHighlightedElementRef.current = null
     }
     // Don't reset previousBoundaryPositionRef here - it's used for tracking
   }
@@ -2061,78 +2094,248 @@ function App() {
     return visiblePage ? { pageNum: visiblePage, relativePosition } : null
   }
 
-  // Highlight the element currently being read
+  // Helper function to get text at a specific position range for validation
+  const getTextAtPosition = (text, startPos, length = 50) => {
+    if (!text || startPos < 0 || startPos >= text.length) return ''
+    const endPos = Math.min(startPos + length, text.length)
+    return text.substring(startPos, endPos).trim()
+  }
+
+  // Helper function to validate that an element's text matches expected text at position
+  const validateElementText = (element, expectedPosition, extractedText) => {
+    if (!element || !extractedText) return false
+    
+    // Get the element's text content
+    const elementText = element.textContent || element.innerText || ''
+    if (!elementText.trim()) return false
+    
+    // Get the expected text at this position (use a reasonable length for comparison)
+    const expectedText = getTextAtPosition(extractedText, expectedPosition, elementText.length + 20)
+    
+    // Check if element text appears in the expected text
+    // This handles cases where element might be a substring or word
+    const normalizedElementText = elementText.trim().toLowerCase()
+    const normalizedExpectedText = expectedText.toLowerCase()
+    
+    // Check if element text is found in expected text
+    if (normalizedExpectedText.includes(normalizedElementText)) {
+      return true
+    }
+    
+    // Also check if element text starts with expected text (for partial matches)
+    if (normalizedElementText.startsWith(normalizedExpectedText.substring(0, Math.min(10, normalizedExpectedText.length)))) {
+      return true
+    }
+    
+    return false
+  }
+
+  // Helper function to find the next element in sequence on a page
+  const findNextElementOnPage = (currentElement, pageNum) => {
+    if (!currentElement || !currentElement.isConnected) return null
+    
+    const textLayer = textLayerRefs.current[pageNum]
+    if (!textLayer) return null
+    
+    // Get all elements on this page sorted by their position in DOM (reading order)
+    const allElements = Array.from(textLayer.querySelectorAll('span[data-page="' + pageNum + '"]'))
+      .filter(el => el.isConnected)
+      .sort((a, b) => {
+        // Sort by charIndex to maintain reading order
+        const aIndex = parseInt(a.dataset.charIndex) || 0
+        const bIndex = parseInt(b.dataset.charIndex) || 0
+        return aIndex - bIndex
+      })
+    
+    // Find current element's index
+    const currentIndex = allElements.indexOf(currentElement)
+    if (currentIndex === -1) return null
+    
+    // Return next element
+    if (currentIndex < allElements.length - 1) {
+      return allElements[currentIndex + 1]
+    }
+    
+    return null // No next element on this page
+  }
+
+  // Highlight the element currently being read with ABSOLUTE sequential continuity
+  // Uses element-by-element progression instead of position matching
   const highlightCurrentReading = (position) => {
-    // Use requestAnimationFrame to ensure DOM is ready, especially after quick restarts
+    // Validate position is within bounds
+    if (!extractedText || position < 0 || position > extractedText.length) {
+      return
+    }
+
+    // Use requestAnimationFrame to ensure DOM is ready
     requestAnimationFrame(() => {
-      // Use ref to get latest textItems (important for event handlers)
-      const currentTextItems = textItemsRef.current
-      if (!currentTextItems || currentTextItems.length === 0) return
+      const currentPage = currentReadingPageRef.current
+      const lastElement = lastHighlightedElementRef.current
       
-      // Find all text items that contain this position (might have duplicates across pages)
-      const matchingItems = currentTextItems.filter(item => 
-        item.charIndex <= position && 
-        item.charIndex + item.str.length >= position
-      )
-
-      if (matchingItems.length === 0) return
-
-      // Prefer items that are currently visible in the viewport
-      let itemAtPosition = matchingItems.find(item => {
-        if (!item.element || !item.element.isConnected) return false
-        return isElementInViewport(item.element)
+      // CRITICAL: If we have a last highlighted element, ONLY move to the next sequential element
+      if (lastElement && lastElement.isConnected && currentPage !== null) {
+        // Verify last element is still on the current page
+        const lastElementPage = getElementPageNumber(lastElement)
+        if (lastElementPage === currentPage) {
+          // Find the next element in sequence on the current page
+          const nextElement = findNextElementOnPage(lastElement, currentPage)
+          
+          if (nextElement && nextElement.isConnected) {
+            // Get the charIndex of the next element
+            const nextCharIndex = parseInt(nextElement.dataset.charIndex)
+            
+            // Validate that position is at or past this next element
+            // This ensures we only advance when the audio has actually reached it
+            if (nextCharIndex !== null && !isNaN(nextCharIndex)) {
+              // Check if position is at or past the start of next element
+              if (position >= nextCharIndex) {
+                // Position has reached next element - highlight it
+                lastHighlightedElementRef.current = nextElement
+                lastHighlightedCharIndexRef.current = nextCharIndex
+                lastValidHighlightPositionRef.current = position
+                applyReadingHighlight(nextElement)
+                return
+              } else {
+                // Position hasn't reached next element yet - keep highlighting current element
+                if (lastElement.isConnected) {
+                  applyReadingHighlight(lastElement)
+                }
+                return
+              }
+            }
+          } else {
+            // No next element on current page - we've reached the end of the page
+            // Check if position has moved significantly forward (might be on next page)
+            if (lastValidHighlightPositionRef.current !== null) {
+              const positionDiff = position - lastValidHighlightPositionRef.current
+              // Only allow page transition if position has moved forward significantly
+              if (positionDiff < 50) {
+                // Position hasn't moved much - stay on current element
+                if (lastElement.isConnected) {
+                  applyReadingHighlight(lastElement)
+                }
+                return
+              }
+            }
+          }
+        }
+      }
+      
+      // Fallback: If we don't have a last element or need to find initial element
+      // Use position-based matching but with strict page locking
+      const currentTextItems = textItemsRef.current
+      if (!currentTextItems || currentTextItems.length === 0) {
+        return
+      }
+      
+      // Sort all text items by charIndex to maintain reading order
+      const sortedAllItems = [...currentTextItems].sort((a, b) => a.charIndex - b.charIndex)
+      
+      // Find all text items that contain this position
+      const matchingItems = sortedAllItems.filter(item => {
+        if (!item.element || !item.str || !item.element.isConnected) return false
+        return item.charIndex <= position && 
+               item.charIndex + item.str.length > position
       })
 
-      // If no visible item found, prefer the one with the highest charIndex (most specific match)
-      // This helps avoid matching items from different pages
-      if (!itemAtPosition) {
-        itemAtPosition = matchingItems.sort((a, b) => b.charIndex - a.charIndex)[0]
+      if (matchingItems.length === 0) {
+        return
       }
 
-      if (itemAtPosition && itemAtPosition.element) {
-        const element = itemAtPosition.element
+      let itemAtPosition = null
+      
+      // If we have a current page, ONLY use items on that page
+      if (currentPage !== null) {
+        const itemsOnCurrentPage = matchingItems.filter(item => {
+          const elementPage = getElementPageNumber(item.element)
+          return elementPage === currentPage
+        })
         
-        // Check if element is still in DOM (might have been re-rendered)
-        if (!element.isConnected) {
-          // Element was removed from DOM, try to find it again
-          const pageNum = itemAtPosition.page
-          const textLayer = textLayerRefs.current[pageNum]
-          if (textLayer) {
-            const newElement = textLayer.querySelector(`[data-char-index="${itemAtPosition.charIndex}"][data-page="${pageNum}"]`)
-            if (newElement) {
-              // Update the reference
-              itemAtPosition.element = newElement
-              currentTextItems.forEach(item => {
-                if (item.charIndex === itemAtPosition.charIndex && item.page === pageNum) {
-                  item.element = newElement
-                }
+        if (itemsOnCurrentPage.length > 0) {
+          // Use the first item on current page (closest match)
+          itemAtPosition = itemsOnCurrentPage[0]
+        } else {
+          // No items on current page match this position
+          // Check if we've exhausted the current page
+          const allItemsOnCurrentPage = sortedAllItems.filter(item => {
+            const elementPage = getElementPageNumber(item.element)
+            return elementPage === currentPage
+          })
+          
+          if (allItemsOnCurrentPage.length > 0) {
+            const lastItemOnPage = allItemsOnCurrentPage[allItemsOnCurrentPage.length - 1]
+            const lastCharIndexOnPage = lastItemOnPage.charIndex + lastItemOnPage.str.length
+            
+            // Only allow page transition if position is well past the end of current page
+            if (position > lastCharIndexOnPage + 100) {
+              // Find items from the immediate next page only
+              const nextPage = currentPage + 1
+              const itemsOnNextPage = matchingItems.filter(item => {
+                const elementPage = getElementPageNumber(item.element)
+                return elementPage === nextPage
               })
-              // Use the new element
-              applyReadingHighlight(newElement)
+              
+              if (itemsOnNextPage.length > 0) {
+                itemAtPosition = itemsOnNextPage.sort((a, b) => a.charIndex - b.charIndex)[0]
+              }
+            } else {
+              // Position hasn't moved past current page - don't highlight anything
               return
             }
           }
-          return
         }
-        
-        // Verify the element's page matches the item's page
-        const elementPage = getElementPageNumber(element)
-        if (elementPage !== null && elementPage !== itemAtPosition.page) {
-          // Page mismatch - element might be from wrong page, try to find correct one
-          const textLayer = textLayerRefs.current[itemAtPosition.page]
-          if (textLayer) {
-            const correctElement = textLayer.querySelector(`[data-char-index="${itemAtPosition.charIndex}"][data-page="${itemAtPosition.page}"]`)
-            if (correctElement) {
-              itemAtPosition.element = correctElement
-              applyReadingHighlight(correctElement)
-              return
-            }
-          }
-          return
-        }
-        
-        applyReadingHighlight(element)
+      } else {
+        // No current page - this is the first highlight
+        // Use the first matching item (will establish the page)
+        itemAtPosition = matchingItems[0]
       }
+
+      // If still no item found, return early
+      if (!itemAtPosition || !itemAtPosition.element) {
+        return
+      }
+
+      const element = itemAtPosition.element
+      const elementPage = getElementPageNumber(element)
+      
+      // CRITICAL: Final validation - reject any page jumps that aren't to immediate next page
+      if (currentPage !== null && elementPage !== null) {
+        const pageDiff = elementPage - currentPage
+        if (pageDiff > 1) {
+          // Trying to jump more than one page - REJECT
+          return
+        }
+        if (pageDiff < 0) {
+          // Trying to jump backwards - REJECT
+          return
+        }
+      }
+      
+      // Verify element is still in DOM
+      if (!element.isConnected) {
+        // Try to find it again
+        const pageNum = itemAtPosition.page
+        const textLayer = textLayerRefs.current[pageNum]
+        if (textLayer) {
+          const newElement = textLayer.querySelector(`[data-char-index="${itemAtPosition.charIndex}"][data-page="${pageNum}"]`)
+          if (newElement && newElement.isConnected) {
+            // Update tracking
+            currentReadingPageRef.current = pageNum
+            lastValidHighlightPositionRef.current = position
+            lastHighlightedCharIndexRef.current = itemAtPosition.charIndex
+            lastHighlightedElementRef.current = newElement
+            applyReadingHighlight(newElement)
+          }
+        }
+        return
+      }
+      
+      // All checks passed - update tracking and highlight
+      currentReadingPageRef.current = elementPage || itemAtPosition.page
+      lastValidHighlightPositionRef.current = position
+      lastHighlightedCharIndexRef.current = itemAtPosition.charIndex
+      lastHighlightedElementRef.current = element
+      applyReadingHighlight(element)
     })
   }
 
@@ -2476,7 +2679,11 @@ function App() {
         if (event.name === 'word' || event.name === 'sentence') {
           // Calculate the character position based on the text being spoken
           // event.charIndex is relative to the utterance text, so add the start position
-          const absolutePosition = position + event.charIndex
+          let absolutePosition = position + event.charIndex
+          
+          // Clamp to valid range
+          absolutePosition = Math.max(0, Math.min(absolutePosition, extractedText.length - 1))
+          
           currentPlaybackPositionRef.current = absolutePosition
           lastBoundaryPositionRef.current = absolutePosition
           
@@ -2488,14 +2695,18 @@ function App() {
           if (previousBoundaryPositionRef.current !== null && previousBoundaryPositionRef.current !== position) {
             // Highlight the word at the previous boundary (the one we were just speaking)
             // Find the start of that word
-            positionToHighlight = findWordStart(extractedText, previousBoundaryPositionRef.current)
+            const prevPosition = Math.max(0, Math.min(previousBoundaryPositionRef.current, extractedText.length - 1))
+            positionToHighlight = findWordStart(extractedText, prevPosition)
           } else {
             // First boundary or no previous position - highlight the starting word
             positionToHighlight = findWordStart(extractedText, position)
           }
           
-          // Highlight the word currently being read
-          highlightCurrentReading(positionToHighlight)
+          // Validate position is reasonable before highlighting
+          if (positionToHighlight >= 0 && positionToHighlight < extractedText.length) {
+            // Highlight the word currently being read
+            highlightCurrentReading(positionToHighlight)
+          }
           
           // Update previous position for next boundary event
           previousBoundaryPositionRef.current = absolutePosition
@@ -2516,6 +2727,12 @@ function App() {
         playbackStartTimeRef.current = Date.now()
         lastBoundaryPositionRef.current = position
         previousBoundaryPositionRef.current = position // Initialize previous position
+        
+        // Reset page tracking when starting new playback
+        currentReadingPageRef.current = null
+        lastValidHighlightPositionRef.current = null
+        lastHighlightedCharIndexRef.current = null
+        lastHighlightedElementRef.current = null
         
         // Highlight the starting position
         highlightCurrentReading(position)
@@ -2702,10 +2919,11 @@ function App() {
         }
         
         setIsPlaying(false)
+        isPlayingRef.current = false
         playbackStartTimeRef.current = null
         // Keep currentPlaybackPositionRef at current value (don't reset)
         
-        // Clear the reading highlight
+        // Clear the reading highlight (this will reset page tracking since isPlayingRef is false)
         clearReadingHighlight()
         
         // Update Media Session metadata
