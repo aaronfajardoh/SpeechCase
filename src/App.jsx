@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import * as pdfjsLib from 'pdfjs-dist'
 import { PDFDocument, rgb } from 'pdf-lib'
 import './App.css'
@@ -228,6 +228,7 @@ function App() {
   const isProgrammaticScrollRef = useRef(false) // Track if scroll is programmatic (from our code) vs manual
   const lastProgrammaticScrollTimeRef = useRef(0) // Track when we last scrolled programmatically
   const pendingScrollTimeoutRef = useRef(null) // Track pending scroll timeout to cancel if needed
+  const scrollPositionBeforeZoomRef = useRef(null) // Store scroll position before zoom to restore after re-render
 
   // Detect mobile device
   useEffect(() => {
@@ -796,6 +797,65 @@ function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageData, interactionMode])
+
+  // Restore scroll position immediately when pageData is set (e.g., after zoom)
+  // Use useLayoutEffect to set scroll position synchronously before browser paints
+  // This prevents the visible jump to a different page
+  useLayoutEffect(() => {
+    if (scrollPositionBeforeZoomRef.current && pageData.length > 0) {
+      const scrollPos = scrollPositionBeforeZoomRef.current
+      const pdfViewer = document.querySelector('.pdf-viewer-container')
+      if (!pdfViewer) return
+
+      // Calculate target scroll position based on pageData viewport heights
+      // This works even before pages are fully rendered
+      // Account for padding (2rem = 32px) and gap between pages (1.5rem = 24px)
+      const PAGE_GAP = 24 // 1.5rem in pixels
+      const CONTAINER_PADDING = 32 // 2rem in pixels
+      
+      let cumulativeHeight = CONTAINER_PADDING // Start with top padding
+      let targetPageData = null
+      
+      for (const pageInfo of pageData) {
+        if (pageInfo.pageNum === scrollPos.pageNum) {
+          targetPageData = pageInfo
+          break
+        }
+        // Add height of previous page plus gap
+        cumulativeHeight += pageInfo.viewport.height + PAGE_GAP
+      }
+
+      if (targetPageData) {
+        // Calculate target scroll position
+        const pageHeight = targetPageData.viewport.height
+        const targetScrollTop = cumulativeHeight + (scrollPos.relativePosition * pageHeight) - (pdfViewer.clientHeight / 2)
+        
+        // Set scroll position immediately (before browser paints)
+        pdfViewer.scrollTop = Math.max(0, targetScrollTop)
+        
+        // Mark that we've done the initial restore
+        // We'll fine-tune after rendering completes
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageData.length])
+
+  // Fine-tune scroll position after all pages are fully rendered
+  // This ensures accuracy using actual DOM measurements
+  useEffect(() => {
+    if (scrollPositionBeforeZoomRef.current && pageData.length > 0 && renderedPages.length === pageData.length) {
+      // Small delay to ensure all layouts are complete
+      const timeoutId = setTimeout(() => {
+        if (scrollPositionBeforeZoomRef.current) {
+          restoreScrollPosition()
+          // Clear after fine-tuning
+          scrollPositionBeforeZoomRef.current = null
+        }
+      }, 50)
+      return () => clearTimeout(timeoutId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renderedPages.length, pageData.length])
 
   // Re-render text layers when window is resized (to fix scaling on mobile)
   useEffect(() => {
@@ -1845,6 +1905,61 @@ function App() {
     return null
   }
 
+  // Get the currently visible page and relative scroll position within it
+  const getCurrentScrollPosition = () => {
+    const pdfViewer = document.querySelector('.pdf-viewer-container')
+    if (!pdfViewer) return null
+
+    const scrollTop = pdfViewer.scrollTop
+    const viewportHeight = pdfViewer.clientHeight
+    const centerY = scrollTop + viewportHeight / 2
+
+    // Find which page is at the center of the viewport
+    let visiblePage = null
+    let relativePosition = 0
+
+    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+      const pageElement = document.getElementById(`page-${pageNum}`)
+      if (!pageElement) continue
+
+      const pageRect = pageElement.getBoundingClientRect()
+      const containerRect = pdfViewer.getBoundingClientRect()
+      const pageTop = pageRect.top - containerRect.top + pdfViewer.scrollTop
+      const pageBottom = pageTop + pageRect.height
+
+      // Check if center of viewport is within this page
+      if (centerY >= pageTop && centerY <= pageBottom) {
+        visiblePage = pageNum
+        // Calculate relative position (0 = top of page, 1 = bottom of page)
+        relativePosition = (centerY - pageTop) / pageRect.height
+        break
+      }
+    }
+
+    // If no page found at center, find the first visible page
+    if (!visiblePage) {
+      for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+        const pageElement = document.getElementById(`page-${pageNum}`)
+        if (!pageElement) continue
+
+        const pageRect = pageElement.getBoundingClientRect()
+        const containerRect = pdfViewer.getBoundingClientRect()
+        const pageTop = pageRect.top - containerRect.top + pdfViewer.scrollTop
+        const pageBottom = pageTop + pageRect.height
+
+        // Check if any part of the page is visible
+        if (scrollTop < pageBottom && scrollTop + viewportHeight > pageTop) {
+          visiblePage = pageNum
+          // Calculate relative position based on top of viewport
+          relativePosition = Math.max(0, Math.min(1, (scrollTop - pageTop) / pageRect.height))
+          break
+        }
+      }
+    }
+
+    return visiblePage ? { pageNum: visiblePage, relativePosition } : null
+  }
+
   // Highlight the element currently being read
   const highlightCurrentReading = (position) => {
     // Use requestAnimationFrame to ensure DOM is ready, especially after quick restarts
@@ -1990,28 +2105,21 @@ function App() {
     
     // Always start reading immediately from the new position
     if (extractedText) {
-      const delay = wasPlaying ? 100 : 0
-      setTimeout(() => {
-        // Ensure speech is fully stopped before restarting (for browser TTS)
-        if (wasPlaying && synthRef.current && synthRef.current.speaking) {
-          synthRef.current.cancel()
-          setTimeout(() => {
-            // Reset boundary tracking before restart
-            previousBoundaryPositionRef.current = null
-            startPlaybackFromPosition(wordStart)
-          }, 50)
-          return
-        }
-        
-        // Reset boundary tracking before starting
-        previousBoundaryPositionRef.current = null
-        
-        // Start playback from the new position
-        const success = startPlaybackFromPosition(wordStart)
-        if (!success) {
-          setError('No text to read from the selected position.')
-        }
-      }, delay)
+      // Reset boundary tracking before starting
+      previousBoundaryPositionRef.current = null
+      
+      // Start playback immediately - browser TTS will handle cancellation internally
+      // Use requestAnimationFrame to ensure DOM updates are complete, but start immediately
+      requestAnimationFrame(() => {
+        startPlaybackFromPosition(wordStart).then(success => {
+          if (!success) {
+            setError('No text to read from the selected position.')
+          }
+        }).catch(error => {
+          console.error('Error starting playback:', error)
+          setError('Error starting playback: ' + error.message)
+        })
+      })
     }
   }
 
@@ -2173,8 +2281,8 @@ function App() {
       if (window.speechSynthesis) {
         // Cancel all pending utterances
         window.speechSynthesis.cancel()
-        // Small delay to let Chrome process the cancellation
-        return new Promise(resolve => setTimeout(resolve, 100))
+        // Minimal delay to let Chrome process the cancellation (reduced for faster response)
+        return new Promise(resolve => setTimeout(resolve, 10))
       }
     } catch (e) {
       console.warn('Error resetting speech synthesis:', e)
@@ -2659,6 +2767,66 @@ function App() {
     if (pageElement) {
       pageElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
       setCurrentPage(pageNum)
+    }
+  }
+
+  // Zoom handlers that preserve scroll position
+  const handleZoomIn = () => {
+    // Save current scroll position before zooming
+    const scrollPos = getCurrentScrollPosition()
+    if (scrollPos) {
+      scrollPositionBeforeZoomRef.current = scrollPos
+    }
+    setPageScale(Math.min(3.0, pageScale + 0.25))
+  }
+
+  const handleZoomOut = () => {
+    // Save current scroll position before zooming
+    const scrollPos = getCurrentScrollPosition()
+    if (scrollPos) {
+      scrollPositionBeforeZoomRef.current = scrollPos
+    }
+    setPageScale(Math.max(0.5, pageScale - 0.25))
+  }
+
+  // Restore scroll position after pages are re-rendered
+  const restoreScrollPosition = () => {
+    const scrollPos = scrollPositionBeforeZoomRef.current
+    if (!scrollPos) return
+
+    const pdfViewer = document.querySelector('.pdf-viewer-container')
+    if (!pdfViewer) return
+
+    const pageElement = document.getElementById(`page-${scrollPos.pageNum}`)
+    if (!pageElement) {
+      // Page element doesn't exist yet, try again later
+      return
+    }
+
+    // Get page dimensions - use getBoundingClientRect for accurate measurements
+    const pageRect = pageElement.getBoundingClientRect()
+    const containerRect = pdfViewer.getBoundingClientRect()
+    
+    // Calculate page position relative to container
+    const pageTop = pageRect.top - containerRect.top + pdfViewer.scrollTop
+    const pageHeight = pageRect.height
+
+    // If page height is 0 or invalid, it's not laid out yet - skip for now
+    if (pageHeight <= 0) {
+      return
+    }
+
+    // Calculate target scroll position based on relative position
+    // Center the target position in the viewport
+    const targetScrollTop = pageTop + (scrollPos.relativePosition * pageHeight) - (pdfViewer.clientHeight / 2)
+
+    // Set scroll position immediately (no smooth scrolling to avoid visible animation)
+    pdfViewer.scrollTop = targetScrollTop
+
+    // Only clear the saved position if we successfully scrolled
+    // This allows the fine-tuning effect to run if needed
+    if (Math.abs(pdfViewer.scrollTop - targetScrollTop) < 10) {
+      scrollPositionBeforeZoomRef.current = null
     }
   }
 
@@ -3373,7 +3541,7 @@ function App() {
         <div className="toolbar-right">
           <div className="zoom-controls">
             <button
-              onClick={() => setPageScale(Math.max(0.5, pageScale - 0.25))}
+              onClick={handleZoomOut}
               className="btn-zoom"
               disabled={pageScale <= 0.5}
               title="Zoom out"
@@ -3382,7 +3550,7 @@ function App() {
             </button>
             <span className="zoom-level">{Math.round(pageScale * 100)}%</span>
             <button
-              onClick={() => setPageScale(Math.min(3.0, pageScale + 0.25))}
+              onClick={handleZoomIn}
               className="btn-zoom"
               disabled={pageScale >= 3.0}
               title="Zoom in"
