@@ -1889,7 +1889,9 @@ function App() {
       span.addEventListener('click', (e) => {
         if (interactionMode === 'read') {
           e.preventDefault()
-          handleWordClick(textItem.charIndex, item.str)
+          // Get the exact character position within the span from the click
+          const exactCharIndex = getExactCharIndexFromClick(e, span, textItem.charIndex)
+          handleWordClick(exactCharIndex, item.str)
         }
         // In highlight mode, let default text selection work
       })
@@ -2401,11 +2403,12 @@ function App() {
       }, 1200)
     }
     
-    // Find and mark the clicked word (use ref to get latest textItems)
+    // Find and mark the clicked word using wordStart (not the original charIndex)
+    // This ensures we mark the exact word that was calculated, not the span that was clicked
     const currentTextItems = textItemsRef.current.length > 0 ? textItemsRef.current : textItems
     const clickedItem = currentTextItems.find(item => 
-      item.charIndex <= charIndex && 
-      item.charIndex + item.str.length >= charIndex
+      item.charIndex <= wordStart && 
+      item.charIndex + item.str.length >= wordStart
     )
     if (clickedItem && clickedItem.element) {
       markStartPosition(clickedItem.element)
@@ -2478,6 +2481,56 @@ function App() {
     }
   }, [startPosition, textItems])
 
+  // Get the exact character index from a click event within a span
+  const getExactCharIndexFromClick = (event, span, spanCharIndex) => {
+    const textNode = span.firstChild
+    if (!textNode || textNode.nodeType !== Node.TEXT_NODE) {
+      // Fallback: use the span's start index
+      return spanCharIndex
+    }
+    
+    // Try to get the character position at the click point
+    let range = null
+    if (document.caretRangeFromPoint) {
+      // Modern browsers
+      range = document.caretRangeFromPoint(event.clientX, event.clientY)
+    } else if (document.caretPositionFromPoint) {
+      // Firefox
+      const caretPos = document.caretPositionFromPoint(event.clientX, event.clientY)
+      if (caretPos) {
+        range = document.createRange()
+        range.setStart(caretPos.offsetNode, caretPos.offset)
+        range.setEnd(caretPos.offsetNode, caretPos.offset)
+      }
+    } else {
+      // Fallback: try to use selection if available
+      const selection = window.getSelection()
+      if (selection.rangeCount > 0) {
+        range = selection.getRangeAt(0)
+      }
+    }
+    
+    if (range && span.contains(range.startContainer)) {
+      // Calculate offset within the span's text node
+      let offset = 0
+      if (range.startContainer === textNode) {
+        offset = range.startOffset
+      } else if (span.contains(range.startContainer)) {
+        // If the range starts in a child node, calculate the offset
+        const spanRange = document.createRange()
+        spanRange.selectNodeContents(span)
+        spanRange.setEnd(range.startContainer, range.startOffset)
+        offset = spanRange.toString().length
+      }
+      
+      // Return the exact character index
+      return spanCharIndex + Math.min(offset, textNode.textContent.length)
+    }
+    
+    // Fallback: use the span's start index
+    return spanCharIndex
+  }
+
   const findWordStart = (text, position) => {
     if (position <= 0) return 0
     if (position >= text.length) return text.length
@@ -2493,26 +2546,15 @@ function App() {
       return start
     }
     
-    // We're at whitespace - prefer the word BEFORE this position if it's close
-    // This helps avoid jumping ahead while still staying current
-    let wordBefore = start - 1
-    while (wordBefore >= 0 && wordBefore > start - 10 && /\s/.test(text[wordBefore])) {
-      wordBefore--
-    }
-    
-    // Only use word before if it's very close (within 10 chars) to avoid lag
-    if (wordBefore >= 0 && wordBefore > start - 10 && /\S/.test(text[wordBefore])) {
-      // Found a word before that's close - find its start
-      start = wordBefore
-      while (start > 0 && /\S/.test(text[start - 1])) {
-        start--
-      }
-      return start
-    }
-    
-    // If no close word before, find the next word (we're at the start of a new word)
+    // We're at whitespace - find the next word (don't go backwards)
+    // This ensures we mark the word the user actually clicked on
     while (start < text.length && /\s/.test(text[start])) {
       start++
+    }
+    
+    // Now find the start of this word
+    while (start > 0 && /\S/.test(text[start - 1])) {
+      start--
     }
     
     return start
