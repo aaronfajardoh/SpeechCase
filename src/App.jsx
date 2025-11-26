@@ -1854,49 +1854,86 @@ function App() {
     // Build text position mapping
     const pageTextItems = []
     let charIndex = 0
+    let isFirstItem = true
 
     textContent.items.forEach((item) => {
       const tx = pdfjsLib.Util.transform(viewport.transform, item.transform)
       const angle = Math.atan2(tx[1], tx[0])
       const fontHeight = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3])
+      const fontSize = (fontHeight * scaleY)
+      const fontFamily = item.fontName
+      const baseX = tx[4] * scaleX
+      const baseY = (tx[5] - fontHeight) * scaleY
       
-      const span = document.createElement('span')
-      span.textContent = item.str
-      span.style.position = 'absolute'
-      // Scale positions to match canvas display size
-      span.style.left = (tx[4] * scaleX) + 'px'
-      span.style.top = ((tx[5] - fontHeight) * scaleY) + 'px'
-      span.style.fontSize = (fontHeight * scaleY) + 'px'
-      span.style.fontFamily = item.fontName
-      span.style.transform = `rotate(${angle}rad)`
-      span.style.color = 'transparent'
-      span.style.cursor = interactionMode === 'highlight' ? 'text' : 'pointer'
-      span.style.userSelect = interactionMode === 'highlight' ? 'text' : 'none'
-      span.style.whiteSpace = 'pre'
-      span.dataset.page = pageNum
-      span.dataset.charIndex = pageCharOffset + charIndex
-      
-      // Store text item with position info
-      const textItem = {
-        str: item.str,
-        page: pageNum,
-        charIndex: pageCharOffset + charIndex,
-        element: span
+      // Account for space between items (extractedText joins items with ' ')
+      // The first item doesn't have a preceding space, but subsequent items do
+      if (!isFirstItem) {
+        charIndex += 1 // Add space between items
       }
-      pageTextItems.push(textItem)
+      isFirstItem = false
       
-      // Add click handler - behavior depends on mode
-      span.addEventListener('click', (e) => {
-        if (interactionMode === 'read') {
-          e.preventDefault()
-          // Get the exact character position within the span from the click
-          const exactCharIndex = getExactCharIndexFromClick(e, span, textItem.charIndex)
-          handleWordClick(exactCharIndex, item.str)
+      // Split the text item into words (preserving spaces and punctuation for seamless highlighting)
+      // This regex splits on word boundaries but keeps the separators
+      const words = item.str.split(/(\s+|[^\w\s])/g).filter(w => w.length > 0)
+      
+      let currentX = baseX
+      let itemCharIndex = pageCharOffset + charIndex
+      let textBeforeCurrentWord = ''
+      
+      words.forEach((word) => {
+        const span = document.createElement('span')
+        span.textContent = word
+        span.style.position = 'absolute'
+        // Calculate x position by measuring text width before this word
+        const wordX = baseX + measureTextWidth(textBeforeCurrentWord, fontFamily, fontSize)
+        
+        span.style.left = wordX + 'px'
+        span.style.top = baseY + 'px'
+        span.style.fontSize = fontSize + 'px'
+        span.style.fontFamily = fontFamily
+        span.style.transform = `rotate(${angle}rad)`
+        span.style.color = 'transparent'
+        span.style.cursor = interactionMode === 'highlight' ? 'text' : 'pointer'
+        span.style.userSelect = interactionMode === 'highlight' ? 'text' : 'none'
+        span.style.whiteSpace = 'pre'
+        span.dataset.page = pageNum
+        span.dataset.charIndex = itemCharIndex
+        
+        // Store text item with position info
+        const textItem = {
+          str: word,
+          page: pageNum,
+          charIndex: itemCharIndex,
+          element: span
         }
-        // In highlight mode, let default text selection work
-      })
+        pageTextItems.push(textItem)
+        
+        // Add click handler - behavior depends on mode
+        span.addEventListener('click', (e) => {
+          if (interactionMode === 'read') {
+            e.preventDefault()
+            // For word-level spans, pass both the charIndex and the element
+            // so we can mark it directly without searching
+            if (/\S/.test(word)) {
+              // It's a word - use its start position and element directly
+              handleWordClick(textItem.charIndex, word, textItem.element)
+            } else {
+              // It's whitespace/punctuation - find the next word
+              const nextWordStart = findWordStart(extractedText, textItem.charIndex + word.length)
+              handleWordClick(nextWordStart, word)
+            }
+          }
+          // In highlight mode, let default text selection work
+        })
 
-      textLayerDiv.appendChild(span)
+        textLayerDiv.appendChild(span)
+        
+        // Update position for next word
+        textBeforeCurrentWord += word
+        itemCharIndex += word.length
+        currentX = wordX + measureTextWidth(word, fontFamily, fontSize)
+      })
+      
       charIndex += item.str.length
     })
 
@@ -2345,9 +2382,27 @@ function App() {
     applyReadingHighlight(element, isPageTransition)
   }
 
-  const handleWordClick = (charIndex, word) => {
-    // Find the start of the word in the full text
-    const wordStart = findWordStart(extractedText, charIndex)
+  const handleWordClick = (charIndex, word, clickedElement = null) => {
+    // Since we now have word-level spans, charIndex should already be at the word start
+    // Only call findWordStart if we clicked on whitespace/punctuation
+    let wordStart = charIndex
+    
+    // If we clicked on whitespace/punctuation, find the next word
+    // Otherwise, charIndex is already at the word start, so use it directly
+    if (extractedText && charIndex < extractedText.length && /\s/.test(extractedText[charIndex])) {
+      // Clicked on whitespace - find the next word
+      wordStart = findWordStart(extractedText, charIndex)
+    } else if (extractedText && charIndex < extractedText.length && /\S/.test(extractedText[charIndex])) {
+      // Clicked on a word - ensure we're at the start (charIndex should already be correct)
+      // Only go backwards if we're not already at a word boundary
+      if (charIndex > 0 && /\S/.test(extractedText[charIndex - 1])) {
+        // We're in the middle of a word, find the start
+        wordStart = findWordStart(extractedText, charIndex)
+      } else {
+        // We're already at a word start, use charIndex directly
+        wordStart = charIndex
+      }
+    }
     
     // If playback is currently happening, stop it first
     const wasPlaying = isPlayingRef.current
@@ -2403,15 +2458,33 @@ function App() {
       }, 1200)
     }
     
-    // Find and mark the clicked word using wordStart (not the original charIndex)
-    // This ensures we mark the exact word that was calculated, not the span that was clicked
-    const currentTextItems = textItemsRef.current.length > 0 ? textItemsRef.current : textItems
-    const clickedItem = currentTextItems.find(item => 
-      item.charIndex <= wordStart && 
-      item.charIndex + item.str.length >= wordStart
-    )
-    if (clickedItem && clickedItem.element) {
-      markStartPosition(clickedItem.element)
+    // Mark the clicked word - use the clicked element directly if provided, otherwise search
+    if (clickedElement && clickedElement.isConnected) {
+      // Use the clicked element directly - this is the most accurate
+      markStartPosition(clickedElement)
+    } else {
+      // Fallback: find the item that contains wordStart
+      const currentTextItems = textItemsRef.current.length > 0 ? textItemsRef.current : textItems
+      // Find the item that starts at or before wordStart and contains wordStart
+      const clickedItem = currentTextItems.find(item => 
+        item.charIndex <= wordStart && 
+        item.charIndex + item.str.length > wordStart
+      )
+      
+      // If no exact match, find the item that starts closest to wordStart
+      if (!clickedItem) {
+        const sortedItems = currentTextItems
+          .filter(item => item.charIndex <= wordStart)
+          .sort((a, b) => b.charIndex - a.charIndex)
+        if (sortedItems.length > 0) {
+          const closestItem = sortedItems[0]
+          if (closestItem && closestItem.element) {
+            markStartPosition(closestItem.element)
+          }
+        }
+      } else if (clickedItem && clickedItem.element) {
+        markStartPosition(clickedItem.element)
+      }
     }
     
     // Always start reading immediately from the new position
@@ -2552,11 +2625,8 @@ function App() {
       start++
     }
     
-    // Now find the start of this word
-    while (start > 0 && /\S/.test(text[start - 1])) {
-      start--
-    }
-    
+    // If we found a word, return its start position
+    // (start is already at the beginning of the word after skipping whitespace)
     return start
   }
 
