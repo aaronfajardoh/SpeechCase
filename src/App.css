@@ -901,6 +901,7 @@
   white-space: pre;
   cursor: text;
   transform-origin: 0% 0%;
+  display: inline-block;
   /* Ensure spans scale properly and maintain highlighting */
   will-change: transform;
   backface-visibility: hidden;
@@ -920,10 +921,8 @@
 }
 
 .current-reading-marker {
-  background-color: rgba(34, 197, 94, 0.3) !important;
-  border-bottom: 2px solid #22c55e !important;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.4) !important;
-  transition: background-color 0.15s ease, border-bottom-color 0.15s ease, box-shadow 0.15s ease;
+  /* Remove direct background - we use overlay instead */
+  position: relative;
   z-index: 3;
   /* Ensure marker persists and scales correctly */
   will-change: auto;
@@ -931,6 +930,301 @@
   -webkit-transform: translateZ(0);
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
+}
+
+/* Organic green haze overlay for reading highlight */
+.reading-haze-overlay {
+  position: absolute;
+  pointer-events: none;
+  z-index: 2;
+  /* Create organic, amorphous shape using border-radius */
+  border-radius: 50% 40% 60% 30% / 60% 30% 70% 40%;
+  /* Use multiple radial gradients for richer, more magical haze effect (another 20% more transparent) */
+  background: 
+    radial-gradient(
+      ellipse 120% 100% at 50% 50%,
+      rgba(34, 197, 94, 0.256) 0%,
+      rgba(34, 197, 94, 0.179) 25%,
+      rgba(34, 197, 94, 0.115) 45%,
+      rgba(34, 197, 94, 0.064) 65%,
+      rgba(34, 197, 94, 0.032) 80%,
+      rgba(34, 197, 94, 0.013) 90%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 80% 90% at 50% 50%,
+      rgba(34, 197, 94, 0.096) 0%,
+      rgba(34, 197, 94, 0.051) 40%,
+      transparent 70%
+    );
+  /* Add subtle glow for magical effect with multiple layers (another 20% more transparent) */
+  box-shadow: 
+    0 0 25px rgba(34, 197, 94, 0.16),
+    0 0 50px rgba(34, 197, 94, 0.096),
+    0 0 75px rgba(34, 197, 94, 0.051),
+    inset 0 0 40px rgba(34, 197, 94, 0.077);
+  /* Smooth fade in/out transitions (25% slower) */
+  opacity: 0;
+  animation: hazeFadeIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  /* Ensure smooth rendering */
+  will-change: opacity, transform, background;
+  transform: translateZ(0) scale(1);
+  -webkit-transform: translateZ(0) scale(1);
+  transform-origin: center center;
+  -webkit-transform-origin: center center;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  /* Prevent clipping */
+  overflow: visible;
+}
+
+/* Fade out animation for when moving to next word (increased by 40% for even slower fade) */
+.reading-haze-overlay.fade-out {
+  animation: hazeFadeOut 4.984s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards !important;
+  transform-origin: center center !important;
+  -webkit-transform-origin: center center !important;
+}
+
+/* Keyframe animations for smooth fade transitions */
+@keyframes hazeFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateZ(0);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateZ(0);
+  }
+}
+
+@keyframes hazeFadeOut {
+  0% {
+    opacity: 1;
+    transform: scale(1) translateZ(0);
+    background: 
+      radial-gradient(
+        ellipse 120% 100% at 50% 50%,
+        rgba(34, 197, 94, 0.256) 0%,
+        rgba(34, 197, 94, 0.179) 25%,
+        rgba(34, 197, 94, 0.115) 45%,
+        rgba(34, 197, 94, 0.064) 65%,
+        rgba(34, 197, 94, 0.032) 80%,
+        rgba(34, 197, 94, 0.013) 90%,
+        transparent 100%
+      ),
+      radial-gradient(
+        ellipse 80% 90% at 50% 50%,
+        rgba(34, 197, 94, 0.096) 0%,
+        rgba(34, 197, 94, 0.051) 40%,
+        transparent 70%
+      );
+  }
+  15% {
+    opacity: 0.75;
+    transform: scale(0.865) translateZ(0);
+    background: 
+      radial-gradient(
+        ellipse 120% 100% at 50% 50%,
+        rgba(34, 197, 94, 0.05) 0%,
+        rgba(34, 197, 94, 0.12) 25%,
+        rgba(34, 197, 94, 0.09) 45%,
+        rgba(34, 197, 94, 0.06) 65%,
+        rgba(34, 197, 94, 0.03) 80%,
+        rgba(34, 197, 94, 0.01) 90%,
+        transparent 100%
+      ),
+      radial-gradient(
+        ellipse 80% 90% at 50% 50%,
+        rgba(34, 197, 94, 0.02) 0%,
+        rgba(34, 197, 94, 0.035) 40%,
+        transparent 70%
+      );
+  }
+  30% {
+    opacity: 0.5;
+    transform: scale(0.73) translateZ(0);
+    background: 
+      radial-gradient(
+        ellipse 120% 100% at 50% 50%,
+        rgba(34, 197, 94, 0.01) 0%,
+        rgba(34, 197, 94, 0.07) 25%,
+        rgba(34, 197, 94, 0.06) 45%,
+        rgba(34, 197, 94, 0.04) 65%,
+        rgba(34, 197, 94, 0.02) 80%,
+        rgba(34, 197, 94, 0.008) 90%,
+        transparent 100%
+      ),
+      radial-gradient(
+        ellipse 80% 90% at 50% 50%,
+        rgba(34, 197, 94, 0.005) 0%,
+        rgba(34, 197, 94, 0.025) 40%,
+        transparent 70%
+      );
+  }
+  45% {
+    opacity: 0.3;
+    transform: scale(0.595) translateZ(0);
+    background: 
+      radial-gradient(
+        ellipse 120% 100% at 50% 50%,
+        transparent 0%,
+        rgba(34, 197, 94, 0.035) 25%,
+        rgba(34, 197, 94, 0.03) 45%,
+        rgba(34, 197, 94, 0.02) 65%,
+        rgba(34, 197, 94, 0.01) 80%,
+        rgba(34, 197, 94, 0.004) 90%,
+        transparent 100%
+      ),
+      radial-gradient(
+        ellipse 80% 90% at 50% 50%,
+        transparent 0%,
+        rgba(34, 197, 94, 0.012) 40%,
+        transparent 70%
+      );
+  }
+  60% {
+    opacity: 0.15;
+    transform: scale(0.46) translateZ(0);
+    background: 
+      radial-gradient(
+        ellipse 120% 100% at 50% 50%,
+        transparent 0%,
+        rgba(34, 197, 94, 0.018) 25%,
+        rgba(34, 197, 94, 0.015) 45%,
+        rgba(34, 197, 94, 0.01) 65%,
+        rgba(34, 197, 94, 0.005) 80%,
+        rgba(34, 197, 94, 0.002) 90%,
+        transparent 100%
+      ),
+      radial-gradient(
+        ellipse 80% 90% at 50% 50%,
+        transparent 0%,
+        rgba(34, 197, 94, 0.006) 40%,
+        transparent 70%
+      );
+  }
+  75% {
+    opacity: 0.08;
+    transform: scale(0.325) translateZ(0);
+    background: 
+      radial-gradient(
+        ellipse 120% 100% at 50% 50%,
+        transparent 0%,
+        transparent 10%,
+        rgba(34, 197, 94, 0.012) 20%,
+        rgba(34, 197, 94, 0.008) 35%,
+        rgba(34, 197, 94, 0.004) 50%,
+        rgba(34, 197, 94, 0.001) 65%,
+        rgba(34, 197, 94, 0.0003) 80%,
+        transparent 100%
+      ),
+      radial-gradient(
+        ellipse 80% 90% at 50% 50%,
+        transparent 0%,
+        transparent 15%,
+        rgba(34, 197, 94, 0.004) 30%,
+        transparent 60%
+      );
+  }
+  85% {
+    opacity: 0.04;
+    transform: scale(0.235) translateZ(0);
+    background: 
+      radial-gradient(
+        ellipse 120% 100% at 50% 50%,
+        transparent 0%,
+        transparent 15%,
+        rgba(34, 197, 94, 0.006) 25%,
+        rgba(34, 197, 94, 0.004) 40%,
+        rgba(34, 197, 94, 0.002) 55%,
+        rgba(34, 197, 94, 0.0005) 70%,
+        rgba(34, 197, 94, 0.0001) 85%,
+        transparent 100%
+      ),
+      radial-gradient(
+        ellipse 80% 90% at 50% 50%,
+        transparent 0%,
+        transparent 20%,
+        rgba(34, 197, 94, 0.002) 35%,
+        transparent 65%
+      );
+  }
+  92% {
+    opacity: 0.02;
+    transform: scale(0.172) translateZ(0);
+    background: 
+      radial-gradient(
+        ellipse 120% 100% at 50% 50%,
+        transparent 0%,
+        transparent 26%,
+        rgba(34, 197, 94, 0.003) 35%,
+        rgba(34, 197, 94, 0.002) 50%,
+        rgba(34, 197, 94, 0.001) 65%,
+        rgba(34, 197, 94, 0.0002) 75%,
+        transparent 100%
+      ),
+      radial-gradient(
+        ellipse 80% 90% at 50% 50%,
+        transparent 0%,
+        transparent 27%,
+        rgba(34, 197, 94, 0.001) 42%,
+        transparent 58%
+      );
+  }
+  96% {
+    opacity: 0.01;
+    transform: scale(0.136) translateZ(0);
+    background: 
+      radial-gradient(
+        ellipse 120% 100% at 50% 50%,
+        transparent 0%,
+        transparent 33%,
+        rgba(34, 197, 94, 0.0015) 42%,
+        rgba(34, 197, 94, 0.001) 50%,
+        rgba(34, 197, 94, 0.0005) 58%,
+        rgba(34, 197, 94, 0.0002) 68%,
+        transparent 100%
+      ),
+      radial-gradient(
+        ellipse 80% 90% at 50% 50%,
+        transparent 0%,
+        transparent 31%,
+        rgba(34, 197, 94, 0.0005) 42%,
+        transparent 54%
+      );
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.1) translateZ(0);
+    background: 
+      radial-gradient(
+        ellipse 120% 100% at 50% 50%,
+        transparent 0%,
+        transparent 100%
+      ),
+      radial-gradient(
+        ellipse 80% 90% at 50% 50%,
+        transparent 0%,
+        transparent 100%
+      );
+  }
+}
+
+/* Subtle pulsing animation for active reading (25% slower) */
+.reading-haze-overlay.active {
+  animation: hazeFadeIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards,
+             hazePulse 2.5s ease-in-out infinite;
+}
+
+@keyframes hazePulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1) translateZ(0);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.02) translateZ(0);
+  }
 }
 
 .highlight-layer {
@@ -1032,6 +1326,7 @@
   background: #5f6368;
   outline: none;
   -webkit-appearance: none;
+  appearance: none;
   cursor: pointer;
   pointer-events: auto;
   touch-action: pan-x;

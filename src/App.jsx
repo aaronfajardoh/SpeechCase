@@ -208,6 +208,7 @@ function App() {
   const lastValidHighlightPositionRef = useRef(null) // Track last valid highlight position to prevent jumps
   const lastHighlightedCharIndexRef = useRef(null) // Track the charIndex of the last highlighted element for continuity
   const lastHighlightedElementRef = useRef(null) // Track the actual DOM element that was last highlighted
+  const currentHazeOverlayRef = useRef(null) // Track the current haze overlay element
   const historyIndexRef = useRef(0) // Track current history index for undo/redo
   const textItemsRef = useRef([]) // Track text items for event handlers
   const audioRef = useRef(null) // Track audio element for Google TTS playback
@@ -1872,9 +1873,31 @@ function App() {
       }
       isFirstItem = false
       
-      // Split the text item into words (preserving spaces and punctuation for seamless highlighting)
-      // This regex splits on word boundaries but keeps the separators
-      const words = item.str.split(/(\s+|[^\w\s])/g).filter(w => w.length > 0)
+      // Split the text item into words and spaces
+      // Group consecutive word characters together as words
+      // Keep spaces and punctuation as separate segments for seamless highlighting
+      const words = []
+      let currentWord = ''
+      for (let i = 0; i < item.str.length; i++) {
+        const char = item.str[i]
+        if (/\w/.test(char)) {
+          // Word character - add to current word
+          currentWord += char
+        } else {
+          // Non-word character (space, punctuation, etc.)
+          // First, save any accumulated word
+          if (currentWord.length > 0) {
+            words.push(currentWord)
+            currentWord = ''
+          }
+          // Add the non-word character as its own segment
+          words.push(char)
+        }
+      }
+      // Don't forget the last word if there's no trailing punctuation
+      if (currentWord.length > 0) {
+        words.push(currentWord)
+      }
       
       let currentX = baseX
       let itemCharIndex = pageCharOffset + charIndex
@@ -1896,6 +1919,8 @@ function App() {
         span.style.cursor = interactionMode === 'highlight' ? 'text' : 'pointer'
         span.style.userSelect = interactionMode === 'highlight' ? 'text' : 'none'
         span.style.whiteSpace = 'pre'
+        // Ensure the span displays as inline-block so background covers full width
+        span.style.display = 'inline-block'
         span.dataset.page = pageNum
         span.dataset.charIndex = itemCharIndex
         
@@ -1979,8 +2004,110 @@ function App() {
     markedStartElementRef.current = element
   }
 
+  // Helper function to find all spans that belong to the current word
+  const findWordSpans = (position) => {
+    if (!extractedText || position < 0 || position >= extractedText.length) {
+      return []
+    }
+
+    // Find word boundaries
+    let wordStart = position
+    let wordEnd = position
+
+    // Find start of word
+    while (wordStart > 0 && /\S/.test(extractedText[wordStart - 1])) {
+      wordStart--
+    }
+
+    // Find end of word
+    while (wordEnd < extractedText.length && /\S/.test(extractedText[wordEnd])) {
+      wordEnd++
+    }
+
+    // Get all text items that overlap with this word
+    const currentTextItems = textItemsRef.current
+    if (!currentTextItems || currentTextItems.length === 0) {
+      return []
+    }
+
+    const wordSpans = []
+    currentTextItems.forEach(item => {
+      if (!item.element || !item.element.isConnected) return
+      
+      const itemStart = item.charIndex
+      const itemEnd = item.charIndex + item.str.length
+      
+      // Check if this item overlaps with the word
+      if (itemStart < wordEnd && itemEnd > wordStart) {
+        wordSpans.push(item.element)
+      }
+    })
+
+    return wordSpans
+  }
+
+  // Helper function to get bounding box for multiple elements relative to their container
+  const getCombinedBoundingBox = (elements) => {
+    if (elements.length === 0) return null
+
+    // Find the common container (text layer or page wrapper)
+    const firstElement = elements[0]
+    if (!firstElement || !firstElement.isConnected) return null
+
+    const container = firstElement.closest('.text-layer') || firstElement.closest('.pdf-canvas-wrapper') || firstElement.closest('.pdf-page-wrapper')
+    if (!container) return null
+
+    const containerRect = container.getBoundingClientRect()
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+
+    elements.forEach(element => {
+      if (!element.isConnected) return
+      const rect = element.getBoundingClientRect()
+      
+      // Calculate position relative to container
+      const relativeX = rect.left - containerRect.left
+      const relativeY = rect.top - containerRect.top
+
+      minX = Math.min(minX, relativeX)
+      minY = Math.min(minY, relativeY)
+      maxX = Math.max(maxX, relativeX + rect.width)
+      maxY = Math.max(maxY, relativeY + rect.height)
+    })
+
+    if (minX === Infinity) return null
+
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+      container: container
+    }
+  }
+
   // Clear the current reading position highlight
   const clearReadingHighlight = () => {
+    // Fade out the previous haze overlay
+    if (currentHazeOverlayRef.current) {
+      const overlay = currentHazeOverlayRef.current
+      if (overlay.isConnected) {
+        // Remove active class to stop the pulse animation
+        overlay.classList.remove('active')
+        // Add fade-out class to start the fade animation
+        overlay.classList.add('fade-out')
+        // Remove overlay after fade animation completes (increased by 40%, so 4984ms)
+        setTimeout(() => {
+          if (overlay.isConnected && overlay.parentNode) {
+            overlay.parentNode.removeChild(overlay)
+          }
+        }, 4984)
+      }
+      currentHazeOverlayRef.current = null
+    }
+
     if (currentReadingElementRef.current) {
       const element = currentReadingElementRef.current
       // Check if element is still in DOM before trying to modify it
@@ -1989,15 +2116,10 @@ function App() {
         if (element.classList.contains('start-position-marker')) {
           // If it's also the start marker, just remove reading-specific styles (green glow)
           // Keep the blue background and border
-          element.style.removeProperty('box-shadow')
           element.classList.remove('current-reading-marker')
         } else {
           // If it's NOT the start marker, remove all reading highlight styles
           // This won't affect the blue start marker which is on a different element
-          element.style.removeProperty('background-color')
-          element.style.removeProperty('border-bottom')
-          element.style.removeProperty('border-bottom-color')
-          element.style.removeProperty('box-shadow')
           element.classList.remove('current-reading-marker')
         }
       }
@@ -2028,24 +2150,60 @@ function App() {
       isPageTransition = elementPage !== null && elementPage !== previousPage
     }
     
+    // Get the character index of the current element
+    const charIndex = element.dataset.charIndex ? parseInt(element.dataset.charIndex) : null
+    if (charIndex === null) {
+      // Fallback to old behavior if no charIndex
+      clearReadingHighlight()
+      element.classList.add('current-reading-marker')
+      currentReadingElementRef.current = element
+      setHasCurrentReadingPosition(true)
+      return
+    }
+
+    // Find all spans that belong to the current word
+    const wordSpans = findWordSpans(charIndex)
+    
+    // Clear previous highlight with fade transition
     clearReadingHighlight()
     
-    // Apply reading highlight (green) - this should coexist with blue start marker
-    if (element.classList.contains('start-position-marker')) {
-      // If this element is ALSO the start marker, add green glow on top of blue
-      // The blue background and border are already there, just add green glow
-      element.style.setProperty('box-shadow', '0 0 8px rgba(34, 197, 94, 0.8), 0 0 12px rgba(34, 197, 94, 0.6)', 'important')
-    } else {
-      // If this is a different element, apply full green highlight
-      // This won't affect the blue start marker which is on a different element
-      element.style.setProperty('background-color', 'rgba(34, 197, 94, 0.4)', 'important')
-      element.style.setProperty('border-bottom', '2px solid #22c55e', 'important')
-      element.style.setProperty('border-bottom-color', '#22c55e', 'important')
-      element.style.setProperty('box-shadow', '0 0 8px rgba(34, 197, 94, 0.5)', 'important')
-    }
-    element.classList.add('current-reading-marker')
+    // Add class to all word spans for tracking
+    wordSpans.forEach(span => {
+      span.classList.add('current-reading-marker')
+    })
     currentReadingElementRef.current = element
     setHasCurrentReadingPosition(true)
+
+    // Create organic haze overlay for the word
+    if (wordSpans.length > 0) {
+      const boundingBox = getCombinedBoundingBox(wordSpans)
+      if (boundingBox && boundingBox.container) {
+        // Create haze overlay element
+        const overlay = document.createElement('div')
+        overlay.className = 'reading-haze-overlay active'
+        
+        // Calculate padding to make the haze extend beyond the word (reduced by another 20% for smaller height)
+        const padding = Math.max(boundingBox.height * 0.512, 7)
+        const hazeWidth = boundingBox.width + padding * 2
+        const hazeHeight = boundingBox.height + padding * 2
+        
+        // Position the overlay relative to container
+        overlay.style.position = 'absolute'
+        overlay.style.left = (boundingBox.x - padding) + 'px'
+        overlay.style.top = (boundingBox.y - padding) + 'px'
+        overlay.style.width = hazeWidth + 'px'
+        overlay.style.height = hazeHeight + 'px'
+        
+        // Add some organic variation to the shape for more natural look
+        const variation = Math.random() * 15 - 7.5 // -7.5 to 7.5
+        overlay.style.borderRadius = `${50 + variation}% ${40 + variation}% ${60 - variation}% ${30 - variation}% / ${60 + variation}% ${30 - variation}% ${70 + variation}% ${40 - variation}%`
+        
+        // Append to container
+        boundingBox.container.appendChild(overlay)
+        
+        currentHazeOverlayRef.current = overlay
+      }
+    }
     
     // Scroll the element into view if auto-scroll is enabled
     // Use ref to check current state synchronously (not stale closure)
