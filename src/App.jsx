@@ -2479,16 +2479,29 @@ function App() {
 
   // Highlight the element currently being read - ensure exact match with TTS position
   const highlightCurrentReading = (position) => {
+    // DIAGNOSTIC: Enable logging for debugging
+    const ENABLE_DIAGNOSTIC_LOGGING = true
+    const log = ENABLE_DIAGNOSTIC_LOGGING ? console.log : () => {}
+    
+    log('=== HIGHLIGHT CURRENT READING ===')
+    log('Position:', position)
+    log('Last highlighted charIndex:', lastHighlightedCharIndexRef.current)
+    log('Last highlighted position:', lastValidHighlightPositionRef.current)
+    
     // Validate position is within bounds
     if (!extractedText || position < 0 || position > extractedText.length) {
+      log('❌ Position out of bounds')
       return
     }
 
     // Execute immediately - no delays
     const currentTextItems = textItemsRef.current
     if (!currentTextItems || currentTextItems.length === 0) {
+      log('❌ No text items available')
       return
     }
+    
+    log('Total text items:', currentTextItems.length)
     
     // Validate position against last known position to prevent large jumps
     if (lastValidHighlightPositionRef.current !== null) {
@@ -2532,6 +2545,7 @@ function App() {
     }
     
     const targetWord = extractedText.substring(targetWordStart, targetWordEnd)
+    log('Target word:', `"${targetWord}"`, `(charIndex range: ${targetWordStart}-${targetWordEnd})`)
     
     // Find ALL elements that contain this position (might be duplicates across pages)
     const matchingItems = sortedAllItems.filter(item => {
@@ -2542,7 +2556,14 @@ function App() {
              item.charIndex + item.str.length > position
     })
 
+    log('Initial matching items:', matchingItems.length)
+    matchingItems.forEach((item, idx) => {
+      const page = getElementPageNumber(item.element)
+      log(`  [${idx}] "${item.str}" at charIndex ${item.charIndex}, page ${page}`)
+    })
+
     if (matchingItems.length === 0) {
+      log('❌ No matching items found')
       return
     }
 
@@ -2557,39 +2578,111 @@ function App() {
       
       // Only apply strict filtering if we're matching the SAME word (duplicate word scenario)
       if (lastWord === targetWordNormalized && lastWord.length > 0) {
-        // Find all items that match the target word and are forward from last highlighted
-        const forwardWordMatches = matchingItems.filter(item => {
-          const itemWord = normalizeWord(item.str)
+        log('🔴 DUPLICATE WORD DETECTED:', `"${lastWord}"`)
+        log('Last word charIndex:', lastHighlightedCharIndexRef.current)
+        log('Current position:', position)
+        
+        // CRITICAL: First check if position is within the last highlighted word's range
+        // If so, we're continuing to read the same word - use it, don't look for next instance
+        const lastWordEnd = lastHighlightedCharIndexRef.current + (lastHighlightedElementRef.current.textContent || '').length
+        if (position >= lastHighlightedCharIndexRef.current && position < lastWordEnd) {
+          log('✅ Position is within last word range - continuing same word, skipping duplicate filtering')
+          // Use the matching items that are at the same position
+          const samePositionMatches = matchingItems.filter(item => 
+            item.charIndex === lastHighlightedCharIndexRef.current
+          )
+          if (samePositionMatches.length > 0) {
+            matchingItems.length = 0
+            matchingItems.push(...samePositionMatches)
+            // Skip the rest of duplicate word filtering - we're continuing the same word
+          }
+          // If no same position matches, fall through to duplicate logic below
+        }
+        
+        // Only apply duplicate filtering if position is NOT within the last word's range
+        // This means we've moved past the last word and might be matching a later instance
+        const lastWordEndCheck = lastHighlightedCharIndexRef.current + (lastHighlightedElementRef.current.textContent || '').length
+        if (position < lastHighlightedCharIndexRef.current || position >= lastWordEndCheck) {
+          log('⚠️ Position is outside last word range - applying duplicate word filtering')
           
-          // Must match the word AND be forward from last highlighted
-          return itemWord === targetWordNormalized && 
-                 item.charIndex > lastHighlightedCharIndexRef.current
+          // CRITICAL: For duplicate words, IGNORE the position entirely and just select the IMMEDIATE next word
+          // The TTS position calculation is unreliable for duplicate words and might point to later instances
+          const lastElementPage = getElementPageNumber(lastHighlightedElementRef.current)
+          log('Last element page:', lastElementPage)
+          
+          // Find ALL items that match the target word and are forward from last highlighted (ignore position)
+          const allForwardWordMatches = sortedAllItems.filter(item => {
+          if (!item.element || !item.element.isConnected) return false
+          const itemWord = normalizeWord(item.str)
+          if (itemWord !== targetWordNormalized) return false
+          if (item.charIndex <= lastHighlightedCharIndexRef.current) return false
+          
+          // Only consider items on the same page (prevent cross-page jumps)
+          if (lastElementPage !== null) {
+            const itemPage = getElementPageNumber(item.element)
+            if (itemPage !== lastElementPage) return false
+          }
+          
+          return true
         })
         
-        if (forwardWordMatches.length > 0) {
-          // Select the NEXT instance (smallest charIndex that's forward)
-          const nextInstance = forwardWordMatches.sort((a, b) => a.charIndex - b.charIndex)[0]
-          // Use only this instance for matching
-          const filteredMatchingItems = [nextInstance]
+        log('All forward word matches:', allForwardWordMatches.length)
+        allForwardWordMatches.forEach((item, idx) => {
+          const page = getElementPageNumber(item.element)
+          const distance = item.charIndex - lastHighlightedCharIndexRef.current
+          log(`  [${idx}] "${item.str}" at charIndex ${item.charIndex}, page ${page}, distance: ${distance}`)
+        })
+        
+        if (allForwardWordMatches.length > 0) {
+          // Find the IMMEDIATE next word (no items between)
+          const immediateNextMatches = allForwardWordMatches.filter(item => {
+            const itemsBetween = sortedAllItems.filter(i => {
+              if (!i.element || !i.element.isConnected) return false
+              const iPage = getElementPageNumber(i.element)
+              if (lastElementPage !== null && iPage !== lastElementPage) return false
+              return i.charIndex > lastHighlightedCharIndexRef.current && 
+                     i.charIndex < item.charIndex
+            })
+            return itemsBetween.length === 0
+          })
           
-          // Replace matchingItems with the filtered list
-          // This ensures we only match the next instance, not later ones
-          matchingItems.length = 0
-          matchingItems.push(...filteredMatchingItems)
+          log('Immediate next matches (no items between):', immediateNextMatches.length)
+          immediateNextMatches.forEach((item, idx) => {
+            const page = getElementPageNumber(item.element)
+            log(`  [${idx}] "${item.str}" at charIndex ${item.charIndex}, page ${page}`)
+          })
+          
+          if (immediateNextMatches.length > 0) {
+            // Select the immediate next instance (smallest charIndex) - IGNORE position
+            const nextInstance = immediateNextMatches.sort((a, b) => a.charIndex - b.charIndex)[0]
+            log('✅ Selected immediate next:', `"${nextInstance.str}" at charIndex ${nextInstance.charIndex}`)
+            matchingItems.length = 0
+            matchingItems.push(nextInstance)
+          } else {
+            // CRITICAL: For duplicate words, if there's no immediate next, we MUST reject
+            // Using "closest forward" would jump to a later instance, which is wrong
+            log('❌ No immediate next match for duplicate word - rejecting to prevent jump')
+            return
+          }
         } else {
+          log('⚠️ No forward matches for duplicate word')
           // No forward matches for duplicate word - check if same position (continuing same word)
           const samePositionMatches = matchingItems.filter(item => 
             item.charIndex === lastHighlightedCharIndexRef.current
           )
           if (samePositionMatches.length > 0) {
-            // Same position - might be continuing the same word, use it
+            log('✅ Same position match (continuing word)')
             matchingItems.length = 0
             matchingItems.push(...samePositionMatches)
           } else {
             // No valid forward match for duplicate word - reject to prevent jumping
+            log('❌ Rejecting - no valid forward match for duplicate word')
             return
           }
         }
+        } // End of duplicate word filtering (only if position outside last word range)
+      } else {
+        log('✅ Different word - allowing normal progression')
       }
       // If target word is different from last word, allow normal progression (no filtering needed)
     }
@@ -3097,18 +3190,39 @@ function App() {
     }
     
     if (!itemAtPosition || !itemAtPosition.element) {
+      log('❌ No item selected')
       return
     }
 
     const element = itemAtPosition.element
+    const selectedPage = getElementPageNumber(element)
+    log('📌 FINAL SELECTION:')
+    log(`  Word: "${itemAtPosition.str}"`)
+    log(`  charIndex: ${itemAtPosition.charIndex}`)
+    log(`  Page: ${selectedPage}`)
+    log(`  Position in word: ${position - itemAtPosition.charIndex}`)
+    
+    // Show what text is around this position
+    const contextStart = Math.max(0, itemAtPosition.charIndex - 30)
+    const contextEnd = Math.min(extractedText.length, itemAtPosition.charIndex + itemAtPosition.str.length + 30)
+    const context = extractedText.substring(contextStart, contextEnd)
+    log(`  Context: "...${context}..."`)
     
     // CRITICAL: Before final validation, check if there are any items between last and current
     // This ensures we're selecting the NEXT word, not skipping ahead to a later instance
-    if (lastHighlightedCharIndexRef.current !== null) {
+    if (lastHighlightedCharIndexRef.current !== null && lastHighlightedElementRef.current !== null) {
       const lastCharIndex = lastHighlightedCharIndexRef.current
       const currentCharIndex = itemAtPosition.charIndex
       const lastElementPage = getElementPageNumber(lastHighlightedElementRef.current)
       const currentElementPage = getElementPageNumber(element)
+      
+      // Get the current and last words for duplicate detection
+      const currentElementText = element.textContent || ''
+      const lastElementText = lastHighlightedElementRef.current.textContent || ''
+      const normalizeWord = (text) => text.trim().toLowerCase().replace(/[^\w]/g, '')
+      const currentWord = normalizeWord(currentElementText)
+      const lastWord = normalizeWord(lastElementText)
+      const isDuplicateWord = currentWord === lastWord && currentWord.length > 0
       
       // Check if there are any items between last highlighted and current selection
       const itemsBetween = sortedAllItems.filter(item => {
@@ -3125,47 +3239,86 @@ function App() {
         }
       })
       
-       // If we're on the same page and skipping items, check if we should use the immediate next item
-       // Only be strict if we're matching the SAME word (duplicate word scenario)
-       if (lastElementPage === currentElementPage && lastElementPage !== null && itemsBetween.length > 0) {
-         // Get the current word being matched
-         const currentElementText = element.textContent || ''
-         const lastElementText = lastHighlightedElementRef.current.textContent || ''
-         const normalizeWord = (text) => text.trim().toLowerCase().replace(/[^\w]/g, '')
-         const currentWord = normalizeWord(currentElementText)
-         const lastWord = normalizeWord(lastElementText)
-         
-         // Only enforce strict sequential progression if we're matching the SAME word
-         if (currentWord === lastWord && currentWord.length > 0) {
-           // Find the immediate next word after last highlighted
-           const immediateNextItem = itemsBetween.sort((a, b) => a.charIndex - b.charIndex)[0]
-           
-           // Check if the immediate next item also matches the position
-           const immediateNextMatches = immediateNextItem.charIndex <= position && 
-                                        immediateNextItem.charIndex + immediateNextItem.str.length > position
-           
-           if (immediateNextMatches) {
-             // The immediate next word also matches - we should use that instead!
-             itemAtPosition = immediateNextItem
-             // Update element reference
-             const elementPage = getElementPageNumber(immediateNextItem.element)
-             const isPageTransition = currentReadingPageRef.current !== null && 
-                                     elementPage !== null && 
-                                     elementPage !== currentReadingPageRef.current
-             currentReadingPageRef.current = elementPage || immediateNextItem.page
-             lastValidHighlightPositionRef.current = position
-             lastHighlightedCharIndexRef.current = immediateNextItem.charIndex
-             lastHighlightedElementRef.current = immediateNextItem.element
-             applyReadingHighlight(immediateNextItem.element, isPageTransition)
-             return
-           } else {
-             // Immediate next item doesn't match position, but we're skipping it for same word
-             // This is suspicious - reject to prevent jumping to later instances
-             return
-           }
-         }
-         // If different word, allow normal progression (position might have advanced past some items)
-       }
+      // CRITICAL: For duplicate words, we MUST use the immediate next word (no items between)
+      // IGNORE position entirely for duplicate words - just use sequential progression
+      if (isDuplicateWord && itemsBetween.length > 0) {
+        log('🔴 DUPLICATE WORD - Items between detected:', itemsBetween.length)
+        itemsBetween.forEach((item, idx) => {
+          log(`  [${idx}] "${item.str}" at charIndex ${item.charIndex}`)
+        })
+        
+        // For duplicate words, we completely ignore position and just use the immediate next word
+        // Find the immediate next word after last highlighted
+        const immediateNextItem = itemsBetween.sort((a, b) => a.charIndex - b.charIndex)[0]
+        log('✅ Using immediate next item:', `"${immediateNextItem.str}" at charIndex ${immediateNextItem.charIndex}`)
+        
+        // For duplicate words, ALWAYS use immediate next, regardless of position
+        itemAtPosition = immediateNextItem
+        // Update element reference
+        const elementPage = getElementPageNumber(immediateNextItem.element)
+        const isPageTransition = currentReadingPageRef.current !== null && 
+                                elementPage !== null && 
+                                elementPage !== currentReadingPageRef.current
+        currentReadingPageRef.current = elementPage || immediateNextItem.page
+        lastValidHighlightPositionRef.current = position
+        lastHighlightedCharIndexRef.current = immediateNextItem.charIndex
+        lastHighlightedElementRef.current = immediateNextItem.element
+        applyReadingHighlight(immediateNextItem.element, isPageTransition)
+        return
+      }
+      
+      // For duplicate words, if we're NOT skipping items, verify we're using the immediate next word
+      if (isDuplicateWord && itemsBetween.length === 0) {
+        // No items between - check if current selection is actually the immediate next
+        // Find what should be the immediate next word
+        const shouldBeNext = sortedAllItems
+          .filter(i => {
+            if (!i.element || !i.element.isConnected) return false
+            const iPage = getElementPageNumber(i.element)
+            if (lastElementPage !== null && iPage !== lastElementPage) return false
+            return i.charIndex > lastCharIndex
+          })
+          .sort((a, b) => a.charIndex - b.charIndex)[0]
+        
+        if (shouldBeNext && shouldBeNext.charIndex < currentCharIndex) {
+          // We're not using the immediate next - use it instead
+          itemAtPosition = shouldBeNext
+          const elementPage = getElementPageNumber(shouldBeNext.element)
+          const isPageTransition = currentReadingPageRef.current !== null && 
+                                  elementPage !== null && 
+                                  elementPage !== currentReadingPageRef.current
+          currentReadingPageRef.current = elementPage || shouldBeNext.page
+          lastValidHighlightPositionRef.current = position
+          lastHighlightedCharIndexRef.current = shouldBeNext.charIndex
+          lastHighlightedElementRef.current = shouldBeNext.element
+          applyReadingHighlight(shouldBeNext.element, isPageTransition)
+          return
+        }
+      }
+      
+      // If we're on the same page and skipping items (but not duplicate word), check if we should use immediate next
+      if (lastElementPage === currentElementPage && lastElementPage !== null && itemsBetween.length > 0 && !isDuplicateWord) {
+        // For different words, check if immediate next also matches position
+        const immediateNextItem = itemsBetween.sort((a, b) => a.charIndex - b.charIndex)[0]
+        const immediateNextMatches = immediateNextItem.charIndex <= position && 
+                                    immediateNextItem.charIndex + immediateNextItem.str.length > position
+        
+        if (immediateNextMatches) {
+          // Use immediate next if it matches
+          itemAtPosition = immediateNextItem
+          const elementPage = getElementPageNumber(immediateNextItem.element)
+          const isPageTransition = currentReadingPageRef.current !== null && 
+                                  elementPage !== null && 
+                                  elementPage !== currentReadingPageRef.current
+          currentReadingPageRef.current = elementPage || immediateNextItem.page
+          lastValidHighlightPositionRef.current = position
+          lastHighlightedCharIndexRef.current = immediateNextItem.charIndex
+          lastHighlightedElementRef.current = immediateNextItem.element
+          applyReadingHighlight(immediateNextItem.element, isPageTransition)
+          return
+        }
+        // If immediate next doesn't match, allow normal progression (position might have advanced)
+      }
       
       // If we're transitioning pages, ensure we've actually read past the last page
       if (lastElementPage !== null && currentElementPage !== null && lastElementPage !== currentElementPage) {
@@ -3871,74 +4024,153 @@ function App() {
       // Track position using boundary events (fires when speaking each word)
       utterance.onboundary = (event) => {
         if (event.name === 'word' || event.name === 'sentence') {
-          // Calculate the character position based on the text being spoken
-          // event.charIndex is relative to the utterance text (textToRead), so we need to account for trimming
-          // The utterance text starts at 'position' in extractedText, but was trimmed
-          // So we need to find where textToRead actually starts in extractedText
+          // ELEGANT SOLUTION: Don't trust TTS position data - use it only to identify the word being spoken
+          // Then find the next matching word in our sequential textItems array
           
-          // Find the actual start position accounting for trimming
-          // textToRead = extractedText.substring(position).trim()
-          // So we need to find where the trimmed text starts
-          const textAfterPosition = extractedText.substring(position)
-          const trimmedStart = textAfterPosition.length - textToRead.length
-          const actualStartPosition = position + trimmedStart
+          const normalizeWord = (str) => str.trim().toLowerCase().replace(/[^\w]/g, '')
           
-          // event.charIndex is relative to textToRead (the utterance text)
-          // Add the actual start position to get absolute position
-          let absolutePosition = actualStartPosition + event.charIndex
+          // Extract the word being spoken from textToRead
+          const getWordAt = (text, pos) => {
+            if (pos < 0 || pos >= text.length) return null
+            let start = pos
+            let end = pos
+            while (start > 0 && /\S/.test(text[start - 1])) start--
+            while (end < text.length && /\S/.test(text[end])) end++
+            return text.substring(start, end)
+          }
           
-          // Validate that the character at event.charIndex in textToRead matches
-          // the character at absolutePosition in extractedText
-          if (event.charIndex >= 0 && event.charIndex < textToRead.length &&
-              absolutePosition >= 0 && absolutePosition < extractedText.length) {
-            const utteranceChar = textToRead[event.charIndex]
-            const extractedChar = extractedText[absolutePosition]
-            
-            // If characters don't match (and aren't both whitespace), adjust position
-            if (utteranceChar !== extractedChar && !(/\s/.test(utteranceChar) && /\s/.test(extractedChar))) {
-              // Try to find the correct position by searching for the character
-              // Look for the character in a small window around the estimated position
-              const searchWindow = 50
-              const searchStart = Math.max(0, absolutePosition - searchWindow)
-              const searchEnd = Math.min(extractedText.length, absolutePosition + searchWindow)
-              const searchText = extractedText.substring(searchStart, searchEnd)
-              const localIndex = searchText.indexOf(utteranceChar, event.charIndex < searchWindow ? event.charIndex : 0)
-              
-              if (localIndex !== -1) {
-                absolutePosition = searchStart + localIndex
-              } else {
-                // If we can't find a match, use the estimated position but validate it
-                // The mismatch might be due to normalization, so we'll proceed with caution
+          // Get the word being spoken (this is reliable - TTS correctly identifies words)
+          const spokenWord = getWordAt(textToRead, event.charIndex)
+          if (!spokenWord) {
+            return // Invalid event
+          }
+          
+          const spokenWordNormalized = normalizeWord(spokenWord)
+          if (!spokenWordNormalized) {
+            return // Empty word
+          }
+          
+          // Find the next matching word in our textItems array (forward from last highlighted)
+          const textItems = textItemsRef.current
+          if (!textItems || textItems.length === 0) {
+            return
+          }
+          
+          // Get the starting point: last highlighted charIndex, or start of textToRead
+          const startCharIndex = lastHighlightedCharIndexRef.current !== null 
+            ? lastHighlightedCharIndexRef.current 
+            : position
+          
+          // Find the immediate next WORD item (ignore spaces/punctuation)
+          // Then check if it matches the spoken word
+          const allForwardWordItems = textItems
+            .filter(item => {
+              if (!item.element || !item.element.isConnected || !item.str) return false
+              if (item.charIndex <= startCharIndex) return false
+              // Only consider word items (not spaces/punctuation)
+              return /\S/.test(item.str) && normalizeWord(item.str).length > 0
+            })
+            .sort((a, b) => a.charIndex - b.charIndex)
+          
+          if (allForwardWordItems.length === 0) {
+            return // No forward word items
+          }
+          
+          // The immediate next word is the first one
+          const immediateNextWordItem = allForwardWordItems[0]
+          const immediateNextWordNormalized = normalizeWord(immediateNextWordItem.str)
+          
+          // Check if the spoken word matches the immediate next word
+          let nextMatchingItem = null
+          if (immediateNextWordNormalized === spokenWordNormalized) {
+            // Perfect match - use the immediate next word
+            nextMatchingItem = immediateNextWordItem
+          }
+          
+          // If no match with immediate next, search in the next few words (handles out-of-order TTS events)
+          if (!nextMatchingItem) {
+            // Search in the next 10 words for a match
+            const searchWindow = Math.min(10, allForwardWordItems.length)
+            for (let i = 0; i < searchWindow; i++) {
+              const candidateItem = allForwardWordItems[i]
+              const candidateWordNormalized = normalizeWord(candidateItem.str)
+              if (candidateWordNormalized === spokenWordNormalized) {
+                // Found a match in the near future - use it
+                nextMatchingItem = candidateItem
+                console.log('⚠️ Found matching word in near future (out-of-order TTS event):', {
+                  spokenWord: spokenWord,
+                  foundWord: candidateItem.str,
+                  position: i + 1
+                })
+                break
               }
             }
           }
           
-          // Clamp to valid range
-          absolutePosition = Math.max(0, Math.min(absolutePosition, extractedText.length - 1))
-          
-          // Validate position is reasonable - ensure it's not a huge jump
-          if (lastValidHighlightPositionRef.current !== null) {
-            const positionDiff = absolutePosition - lastValidHighlightPositionRef.current
-            // Reject very large forward jumps (more than 200 chars) unless it's clearly progressing
-            if (positionDiff > 200 && positionDiff > textToRead.length * 0.5) {
-              // Suspicious jump - might be wrong, skip this update
-              return
+          // If still no match, check if we're continuing the same word
+          if (!nextMatchingItem && lastHighlightedCharIndexRef.current !== null && lastHighlightedElementRef.current !== null) {
+            const lastWord = normalizeWord(lastHighlightedElementRef.current.textContent || '')
+            if (lastWord === spokenWordNormalized) {
+              // TTS is saying the same word again
+              // If there's an immediate next word available, advance to it
+              // This handles:
+              // 1. Split words (e.g., "cus - tomer")
+              // 2. TTS duplicate events for the same word
+              // 3. TTS moving forward but giving repeat events
+              // The only case where we stay is if there's no next word (end of text)
+              if (allForwardWordItems.length > 0) {
+                // Advance to the immediate next word
+                nextMatchingItem = immediateNextWordItem
+                console.log('⚠️ TTS repeated same word, advancing to next:', {
+                  repeatedWord: spokenWord,
+                  nextWord: immediateNextWordItem.str
+                })
+              } else {
+                // No next word - continue highlighting the same element (end of text)
+                const sameItem = textItems.find(item => 
+                  item.element === lastHighlightedElementRef.current &&
+                  item.charIndex === lastHighlightedCharIndexRef.current
+                )
+                if (sameItem) {
+                  nextMatchingItem = sameItem
+                }
+              }
             }
           }
           
-          currentPlaybackPositionRef.current = absolutePosition
-          lastBoundaryPositionRef.current = absolutePosition
-          
-          // When a boundary event fires at position X, it means we're STARTING to speak the word at X
-          // Use the position directly (same as blue highlight) for accurate tracking
-          // Validate position is reasonable before highlighting
-          if (absolutePosition >= 0 && absolutePosition < extractedText.length) {
-            // Highlight at the current boundary position (the word being started)
-            highlightCurrentReading(absolutePosition)
+          // Final fallback: if no match found but there's a next word, advance to it
+          // This ensures we never get stuck when TTS gives out-of-order events
+          if (!nextMatchingItem && allForwardWordItems.length > 0) {
+            // TTS said a word we can't match, but there's a next word available
+            // Advance to it to keep moving forward (prevents getting stuck)
+            nextMatchingItem = immediateNextWordItem
+            console.log('⚠️ No match found, advancing to next word to prevent getting stuck:', {
+              spokenWord: spokenWord,
+              nextWord: immediateNextWordItem.str
+            })
           }
           
-          // Update previous position for tracking
-          previousBoundaryPositionRef.current = absolutePosition
+          if (!nextMatchingItem) {
+            // No matching word found and no next word - end of text or invalid event
+            return
+          }
+          
+          // Use the charIndex from our textItems array (reliable) instead of TTS position
+          const reliablePosition = nextMatchingItem.charIndex
+          
+          // Update tracking refs
+          currentPlaybackPositionRef.current = reliablePosition
+          lastBoundaryPositionRef.current = reliablePosition
+          previousBoundaryPositionRef.current = reliablePosition
+          
+          console.log('🎤 TTS BOUNDARY EVENT:', {
+            spokenWord: spokenWord,
+            reliablePosition: reliablePosition,
+            lastHighlightedCharIndex: lastHighlightedCharIndexRef.current
+          })
+          
+          // Highlight using the reliable position from our textItems array
+          highlightCurrentReading(reliablePosition)
         }
       }
 
