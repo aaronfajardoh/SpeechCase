@@ -4061,8 +4061,10 @@ function App() {
             ? lastHighlightedCharIndexRef.current 
             : position
           
-          // Find the immediate next WORD item (ignore spaces/punctuation)
-          // Then check if it matches the spoken word
+          // ZERO LAG SOLUTION: Highlight the word that TTS is speaking RIGHT NOW
+          // TTS boundary events fire when STARTING to speak a word, so we should highlight that word
+          
+          // Find all forward WORD items (ignore spaces/punctuation)
           const allForwardWordItems = textItems
             .filter(item => {
               if (!item.element || !item.element.isConnected || !item.str) return false
@@ -4073,90 +4075,62 @@ function App() {
             .sort((a, b) => a.charIndex - b.charIndex)
           
           if (allForwardWordItems.length === 0) {
-            return // No forward word items
+            return // No forward word items (end of text)
           }
           
-          // The immediate next word is the first one
+          // Find the word that TTS is speaking RIGHT NOW
+          // Strategy: Search for the spoken word within a reasonable window (5 words)
+          // This handles out-of-order TTS events while preventing large jumps
+          let targetItem = null
+          
           const immediateNextWordItem = allForwardWordItems[0]
-          const immediateNextWordNormalized = normalizeWord(immediateNextWordItem.str)
           
-          // Check if the spoken word matches the immediate next word
-          let nextMatchingItem = null
+          // Priority 1: Check immediate next word (most common, zero lag)
+          const immediateNextWordNormalized = normalizeWord(immediateNextWordItem.str)
           if (immediateNextWordNormalized === spokenWordNormalized) {
-            // Perfect match - use the immediate next word
-            nextMatchingItem = immediateNextWordItem
+            targetItem = immediateNextWordItem
           }
           
-          // If no match with immediate next, search in the next few words (handles out-of-order TTS events)
-          if (!nextMatchingItem) {
-            // Search in the next 10 words for a match
-            const searchWindow = Math.min(10, allForwardWordItems.length)
-            for (let i = 0; i < searchWindow; i++) {
+          // Priority 2: Search next 8 words for a match (handles out-of-order events)
+          // Only accept matches within 8 words to prevent skipping too many words
+          // This window is large enough to catch most out-of-order events but small enough
+          // to prevent jumping to distant repeated words
+          if (!targetItem) {
+            const maxSearchWindow = Math.min(8, allForwardWordItems.length)
+            for (let i = 1; i < maxSearchWindow; i++) {
               const candidateItem = allForwardWordItems[i]
               const candidateWordNormalized = normalizeWord(candidateItem.str)
               if (candidateWordNormalized === spokenWordNormalized) {
-                // Found a match in the near future - use it
-                nextMatchingItem = candidateItem
-                console.log('⚠️ Found matching word in near future (out-of-order TTS event):', {
-                  spokenWord: spokenWord,
-                  foundWord: candidateItem.str,
-                  position: i + 1
-                })
+                targetItem = candidateItem
+                // Found a match within reasonable distance - use it
                 break
               }
             }
           }
           
-          // If still no match, check if we're continuing the same word
-          if (!nextMatchingItem && lastHighlightedCharIndexRef.current !== null && lastHighlightedElementRef.current !== null) {
+          // Priority 3: Check if we're continuing the same word
+          if (!targetItem && lastHighlightedCharIndexRef.current !== null && lastHighlightedElementRef.current !== null) {
             const lastWord = normalizeWord(lastHighlightedElementRef.current.textContent || '')
             if (lastWord === spokenWordNormalized) {
-              // TTS is saying the same word again
-              // If there's an immediate next word available, advance to it
-              // This handles:
-              // 1. Split words (e.g., "cus - tomer")
-              // 2. TTS duplicate events for the same word
-              // 3. TTS moving forward but giving repeat events
-              // The only case where we stay is if there's no next word (end of text)
-              if (allForwardWordItems.length > 0) {
-                // Advance to the immediate next word
-                nextMatchingItem = immediateNextWordItem
-                console.log('⚠️ TTS repeated same word, advancing to next:', {
-                  repeatedWord: spokenWord,
-                  nextWord: immediateNextWordItem.str
-                })
-              } else {
-                // No next word - continue highlighting the same element (end of text)
-                const sameItem = textItems.find(item => 
-                  item.element === lastHighlightedElementRef.current &&
-                  item.charIndex === lastHighlightedCharIndexRef.current
-                )
-                if (sameItem) {
-                  nextMatchingItem = sameItem
-                }
+              // Same word - continue highlighting it
+              const sameItem = textItems.find(item => 
+                item.element === lastHighlightedElementRef.current &&
+                item.charIndex === lastHighlightedCharIndexRef.current
+              )
+              if (sameItem) {
+                targetItem = sameItem
               }
             }
           }
           
-          // Final fallback: if no match found but there's a next word, advance to it
-          // This ensures we never get stuck when TTS gives out-of-order events
-          if (!nextMatchingItem && allForwardWordItems.length > 0) {
-            // TTS said a word we can't match, but there's a next word available
-            // Advance to it to keep moving forward (prevents getting stuck)
-            nextMatchingItem = immediateNextWordItem
-            console.log('⚠️ No match found, advancing to next word to prevent getting stuck:', {
-              spokenWord: spokenWord,
-              nextWord: immediateNextWordItem.str
-            })
+          // Priority 4: Fallback - advance to immediate next word (prevents getting stuck)
+          // Only use this if we truly can't find a match in the next 5 words
+          if (!targetItem) {
+            targetItem = immediateNextWordItem
+            // Don't log this as it's expected for out-of-order events
           }
           
-          if (!nextMatchingItem) {
-            // No matching word found and no next word - end of text or invalid event
-            return
-          }
-          
-          // Use the charIndex from our textItems array (reliable) instead of TTS position
-          const reliablePosition = nextMatchingItem.charIndex
+          const reliablePosition = targetItem.charIndex
           
           // Update tracking refs
           currentPlaybackPositionRef.current = reliablePosition
