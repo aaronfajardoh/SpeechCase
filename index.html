@@ -6,14 +6,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes" />
     <title>SpeechCase - PDF Text to Speech</title>
     
-    <!-- Google tag (gtag.js) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-NHV03NY7WJ"></script>
+    <!-- Google tag (gtag.js) - Only load on production (not localhost) -->
     <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-
-      gtag('config', 'G-NHV03NY7WJ');
+      // Only initialize Google Analytics if not on localhost/local server
+      const isLocalhost = window.location.hostname === 'localhost' || 
+                         window.location.hostname === '127.0.0.1' || 
+                         window.location.hostname === '0.0.0.0' ||
+                         window.location.hostname.endsWith('.local');
+      
+      if (!isLocalhost) {
+        // Load Google Analytics script
+        const script = document.createElement('script');
+        script.async = true;
+        script.src = 'https://www.googletagmanager.com/gtag/js?id=G-NHV03NY7WJ';
+        document.head.appendChild(script);
+        
+        // Initialize Google Analytics
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-NHV03NY7WJ');
+      }
     </script>
   </head>
   <body>

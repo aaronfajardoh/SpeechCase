@@ -2479,29 +2479,17 @@ function App() {
 
   // Highlight the element currently being read - ensure exact match with TTS position
   const highlightCurrentReading = (position) => {
-    // DIAGNOSTIC: Enable logging for debugging
-    const ENABLE_DIAGNOSTIC_LOGGING = true
-    const log = ENABLE_DIAGNOSTIC_LOGGING ? console.log : () => {}
-    
-    log('=== HIGHLIGHT CURRENT READING ===')
-    log('Position:', position)
-    log('Last highlighted charIndex:', lastHighlightedCharIndexRef.current)
-    log('Last highlighted position:', lastValidHighlightPositionRef.current)
     
     // Validate position is within bounds
     if (!extractedText || position < 0 || position > extractedText.length) {
-      log('❌ Position out of bounds')
       return
     }
 
     // Execute immediately - no delays
     const currentTextItems = textItemsRef.current
     if (!currentTextItems || currentTextItems.length === 0) {
-      log('❌ No text items available')
       return
     }
-    
-    log('Total text items:', currentTextItems.length)
     
     // Validate position against last known position to prevent large jumps
     if (lastValidHighlightPositionRef.current !== null) {
@@ -2545,7 +2533,6 @@ function App() {
     }
     
     const targetWord = extractedText.substring(targetWordStart, targetWordEnd)
-    log('Target word:', `"${targetWord}"`, `(charIndex range: ${targetWordStart}-${targetWordEnd})`)
     
     // Find ALL elements that contain this position (might be duplicates across pages)
     const matchingItems = sortedAllItems.filter(item => {
@@ -2556,14 +2543,60 @@ function App() {
              item.charIndex + item.str.length > position
     })
 
-    log('Initial matching items:', matchingItems.length)
-    matchingItems.forEach((item, idx) => {
-      const page = getElementPageNumber(item.element)
-      log(`  [${idx}] "${item.str}" at charIndex ${item.charIndex}, page ${page}`)
-    })
-
     if (matchingItems.length === 0) {
-      log('❌ No matching items found')
+      // No items found at this position - might be transitioning to next page
+      // Check if we're at the last word on current page and position is on next page
+      if (lastHighlightedElementRef.current !== null && lastHighlightedCharIndexRef.current !== null) {
+        const lastElementPage = getElementPageNumber(lastHighlightedElementRef.current)
+        if (lastElementPage !== null) {
+          // Find all items on the last page
+          const lastPageItems = sortedAllItems.filter(item => {
+            const page = getElementPageNumber(item.element)
+            return page === lastElementPage
+          })
+          
+          // Check if we're at the last word on the page
+          if (lastPageItems.length > 0) {
+            const maxCharIndexOnLastPage = Math.max(...lastPageItems.map(i => i.charIndex + i.str.length))
+            const isAtLastWord = lastHighlightedCharIndexRef.current >= maxCharIndexOnLastPage - 50
+            
+            // Check if position is on the next page (or close to it)
+            const nextPageItems = sortedAllItems.filter(item => {
+              const page = getElementPageNumber(item.element)
+              return page === lastElementPage + 1
+            })
+            
+            // If we're at the last word and position is past the last page (or very close), find closest item on next page
+            if (isAtLastWord && nextPageItems.length > 0 && position >= maxCharIndexOnLastPage - 20) {
+              // Find the closest item on next page to this position
+              let nextPageItemAtPosition = nextPageItems.find(item => 
+                item.charIndex <= position && item.charIndex + item.str.length > position
+              )
+              
+              // If no exact match, find the closest item (within 200 chars)
+              if (!nextPageItemAtPosition) {
+                nextPageItemAtPosition = nextPageItems
+                  .filter(item => Math.abs(item.charIndex - position) < 200)
+                  .sort((a, b) => Math.abs(a.charIndex - position) - Math.abs(b.charIndex - position))[0]
+              }
+              
+              if (nextPageItemAtPosition) {
+                // Found item on next page - use it directly
+                const elementPage = getElementPageNumber(nextPageItemAtPosition.element)
+                const isPageTransition = currentReadingPageRef.current !== null && 
+                                        elementPage !== null && 
+                                        elementPage !== currentReadingPageRef.current
+                currentReadingPageRef.current = elementPage || nextPageItemAtPosition.page
+                lastValidHighlightPositionRef.current = position
+                lastHighlightedCharIndexRef.current = nextPageItemAtPosition.charIndex
+                lastHighlightedElementRef.current = nextPageItemAtPosition.element
+                applyReadingHighlight(nextPageItemAtPosition.element, isPageTransition)
+                return
+              }
+            }
+          }
+        }
+      }
       return
     }
 
@@ -2578,15 +2611,10 @@ function App() {
       
       // Only apply strict filtering if we're matching the SAME word (duplicate word scenario)
       if (lastWord === targetWordNormalized && lastWord.length > 0) {
-        log('🔴 DUPLICATE WORD DETECTED:', `"${lastWord}"`)
-        log('Last word charIndex:', lastHighlightedCharIndexRef.current)
-        log('Current position:', position)
-        
         // CRITICAL: First check if position is within the last highlighted word's range
         // If so, we're continuing to read the same word - use it, don't look for next instance
         const lastWordEnd = lastHighlightedCharIndexRef.current + (lastHighlightedElementRef.current.textContent || '').length
         if (position >= lastHighlightedCharIndexRef.current && position < lastWordEnd) {
-          log('✅ Position is within last word range - continuing same word, skipping duplicate filtering')
           // Use the matching items that are at the same position
           const samePositionMatches = matchingItems.filter(item => 
             item.charIndex === lastHighlightedCharIndexRef.current
@@ -2603,12 +2631,9 @@ function App() {
         // This means we've moved past the last word and might be matching a later instance
         const lastWordEndCheck = lastHighlightedCharIndexRef.current + (lastHighlightedElementRef.current.textContent || '').length
         if (position < lastHighlightedCharIndexRef.current || position >= lastWordEndCheck) {
-          log('⚠️ Position is outside last word range - applying duplicate word filtering')
-          
           // CRITICAL: For duplicate words, IGNORE the position entirely and just select the IMMEDIATE next word
           // The TTS position calculation is unreliable for duplicate words and might point to later instances
           const lastElementPage = getElementPageNumber(lastHighlightedElementRef.current)
-          log('Last element page:', lastElementPage)
           
           // Find ALL items that match the target word and are forward from last highlighted (ignore position)
           const allForwardWordMatches = sortedAllItems.filter(item => {
@@ -2625,14 +2650,6 @@ function App() {
           
           return true
         })
-        
-        log('All forward word matches:', allForwardWordMatches.length)
-        allForwardWordMatches.forEach((item, idx) => {
-          const page = getElementPageNumber(item.element)
-          const distance = item.charIndex - lastHighlightedCharIndexRef.current
-          log(`  [${idx}] "${item.str}" at charIndex ${item.charIndex}, page ${page}, distance: ${distance}`)
-        })
-        
         if (allForwardWordMatches.length > 0) {
           // Find the IMMEDIATE next word (no items between)
           const immediateNextMatches = allForwardWordMatches.filter(item => {
@@ -2646,43 +2663,30 @@ function App() {
             return itemsBetween.length === 0
           })
           
-          log('Immediate next matches (no items between):', immediateNextMatches.length)
-          immediateNextMatches.forEach((item, idx) => {
-            const page = getElementPageNumber(item.element)
-            log(`  [${idx}] "${item.str}" at charIndex ${item.charIndex}, page ${page}`)
-          })
-          
           if (immediateNextMatches.length > 0) {
             // Select the immediate next instance (smallest charIndex) - IGNORE position
             const nextInstance = immediateNextMatches.sort((a, b) => a.charIndex - b.charIndex)[0]
-            log('✅ Selected immediate next:', `"${nextInstance.str}" at charIndex ${nextInstance.charIndex}`)
             matchingItems.length = 0
             matchingItems.push(nextInstance)
           } else {
             // CRITICAL: For duplicate words, if there's no immediate next, we MUST reject
             // Using "closest forward" would jump to a later instance, which is wrong
-            log('❌ No immediate next match for duplicate word - rejecting to prevent jump')
             return
           }
         } else {
-          log('⚠️ No forward matches for duplicate word')
           // No forward matches for duplicate word - check if same position (continuing same word)
           const samePositionMatches = matchingItems.filter(item => 
             item.charIndex === lastHighlightedCharIndexRef.current
           )
           if (samePositionMatches.length > 0) {
-            log('✅ Same position match (continuing word)')
             matchingItems.length = 0
             matchingItems.push(...samePositionMatches)
           } else {
             // No valid forward match for duplicate word - reject to prevent jumping
-            log('❌ Rejecting - no valid forward match for duplicate word')
             return
           }
         }
         } // End of duplicate word filtering (only if position outside last word range)
-      } else {
-        log('✅ Different word - allowing normal progression')
       }
       // If target word is different from last word, allow normal progression (no filtering needed)
     }
@@ -2710,14 +2714,48 @@ function App() {
           maxCharIndexOnLastPage = Math.max(...lastPageItems.map(item => item.charIndex + item.str.length))
         }
         
-        // If position is within last page OR close to it (within 100 chars), ONLY use last page items
+        // If position is within last page OR close to it (within 100 chars), prioritize last page items
+        // But if we're at the boundary (within 20 chars of the end), also allow next page items
         if (maxCharIndexOnLastPage !== null && position <= maxCharIndexOnLastPage + 100) {
+          const isAtBoundary = position >= maxCharIndexOnLastPage - 20
+          
           if (lastPageMatchingItems.length > 0) {
-            // Use only items on last page
-            filteredMatchingItems = lastPageMatchingItems
+            if (isAtBoundary) {
+              // At boundary - allow both last page and next page items
+              // This handles the case where we're at the last word and TTS moves to next page
+              const nextPageMatchingItems = matchingItems.filter(item => {
+                const elementPage = getElementPageNumber(item.element)
+                return elementPage === lastElementPage + 1
+              })
+              if (nextPageMatchingItems.length > 0) {
+                // Prefer next page items when at boundary (we're transitioning)
+                filteredMatchingItems = nextPageMatchingItems
+              } else {
+                // No next page items, use last page items
+                filteredMatchingItems = lastPageMatchingItems
+              }
+            } else {
+              // Not at boundary - use only items on last page
+              filteredMatchingItems = lastPageMatchingItems
+            }
           } else {
-            // No matches on last page but position is close - reject to prevent jumping to duplicates
-            return
+            // No matches on last page
+            if (isAtBoundary) {
+              // At boundary - allow next page items
+              const nextPageMatchingItems = matchingItems.filter(item => {
+                const elementPage = getElementPageNumber(item.element)
+                return elementPage === lastElementPage + 1
+              })
+              if (nextPageMatchingItems.length > 0) {
+                filteredMatchingItems = nextPageMatchingItems
+              } else {
+                // No matches on last page or next page - reject to prevent jumping to duplicates
+                return
+              }
+            } else {
+              // No matches on last page but position is close - reject to prevent jumping to duplicates
+              return
+            }
           }
         }
         // If position is significantly past last page (>100 chars), allow next page items
@@ -2797,9 +2835,11 @@ function App() {
           })
           if (lastPageItems.length > 0) {
             const maxCharIndexOnLastPage = Math.max(...lastPageItems.map(i => i.charIndex + i.str.length))
-            // Position should be after the last page's content
-            if (position < maxCharIndexOnLastPage) {
-              // Position is still within last page's range - reject duplicate on next page
+            // Allow transition if we're at or very close to the boundary (within 50 chars)
+            // This handles the case where we're transitioning from the last word on a page
+            const margin = 50
+            if (position < maxCharIndexOnLastPage - margin) {
+              // Position is still well within last page's range - reject duplicate on next page
               return false
             }
           }
@@ -3190,23 +3230,11 @@ function App() {
     }
     
     if (!itemAtPosition || !itemAtPosition.element) {
-      log('❌ No item selected')
       return
     }
 
     const element = itemAtPosition.element
     const selectedPage = getElementPageNumber(element)
-    log('📌 FINAL SELECTION:')
-    log(`  Word: "${itemAtPosition.str}"`)
-    log(`  charIndex: ${itemAtPosition.charIndex}`)
-    log(`  Page: ${selectedPage}`)
-    log(`  Position in word: ${position - itemAtPosition.charIndex}`)
-    
-    // Show what text is around this position
-    const contextStart = Math.max(0, itemAtPosition.charIndex - 30)
-    const contextEnd = Math.min(extractedText.length, itemAtPosition.charIndex + itemAtPosition.str.length + 30)
-    const context = extractedText.substring(contextStart, contextEnd)
-    log(`  Context: "...${context}..."`)
     
     // CRITICAL: Before final validation, check if there are any items between last and current
     // This ensures we're selecting the NEXT word, not skipping ahead to a later instance
@@ -3242,15 +3270,9 @@ function App() {
       // CRITICAL: For duplicate words, we MUST use the immediate next word (no items between)
       // IGNORE position entirely for duplicate words - just use sequential progression
       if (isDuplicateWord && itemsBetween.length > 0) {
-        log('🔴 DUPLICATE WORD - Items between detected:', itemsBetween.length)
-        itemsBetween.forEach((item, idx) => {
-          log(`  [${idx}] "${item.str}" at charIndex ${item.charIndex}`)
-        })
-        
         // For duplicate words, we completely ignore position and just use the immediate next word
         // Find the immediate next word after last highlighted
         const immediateNextItem = itemsBetween.sort((a, b) => a.charIndex - b.charIndex)[0]
-        log('✅ Using immediate next item:', `"${immediateNextItem.str}" at charIndex ${immediateNextItem.charIndex}`)
         
         // For duplicate words, ALWAYS use immediate next, regardless of position
         itemAtPosition = immediateNextItem
@@ -3354,15 +3376,20 @@ function App() {
         
         if (lastPageItems.length > 0) {
           const maxCharIndexOnLastPage = Math.max(...lastPageItems.map(i => i.charIndex + i.str.length))
-          // Position MUST be after the last page's content
-          if (position <= maxCharIndexOnLastPage) {
-            // Position is still within last page's range - reject duplicate on next page
+          // Allow transition if we're at or very close to the last page boundary (within 20 chars)
+          // This handles the case where we're at the last word on a page
+          const margin = 20
+          const isAtPageBoundary = position >= maxCharIndexOnLastPage - margin
+          
+          if (!isAtPageBoundary && position <= maxCharIndexOnLastPage) {
+            // Position is still well within last page's range - reject duplicate on next page
             return
           }
           
-          // Additional check: ensure currentCharIndex is also past the last page
-          if (currentCharIndex <= maxCharIndexOnLastPage) {
-            // Element is still on last page - reject
+          // Additional check: ensure currentCharIndex is also at or past the last page boundary
+          const isCurrentAtBoundary = currentCharIndex >= maxCharIndexOnLastPage - margin
+          if (!isCurrentAtBoundary && currentCharIndex <= maxCharIndexOnLastPage) {
+            // Element is still well within last page - reject
             return
           }
         }
@@ -4124,27 +4151,34 @@ function App() {
           }
           
           // Priority 4: Fallback - advance to immediate next word (prevents getting stuck)
-          // Only use this if we truly can't find a match in the next 5 words
+          // Only use this if we truly can't find a match in the next 8 words
           if (!targetItem) {
             targetItem = immediateNextWordItem
-            // Don't log this as it's expected for out-of-order events
           }
           
+          // ELEGANT SOLUTION: The TTS handler has already found the correct word item
+          // (including items on the next page). Instead of re-validating through
+          // highlightCurrentReading, directly highlight the element that TTS identified.
+          // This trusts the word-matching logic and avoids all the validation layers
+          // that were blocking legitimate page transitions.
+          
           const reliablePosition = targetItem.charIndex
+          const elementPage = getElementPageNumber(targetItem.element)
+          const isPageTransition = currentReadingPageRef.current !== null && 
+                                  elementPage !== null && 
+                                  elementPage !== currentReadingPageRef.current
           
           // Update tracking refs
           currentPlaybackPositionRef.current = reliablePosition
           lastBoundaryPositionRef.current = reliablePosition
           previousBoundaryPositionRef.current = reliablePosition
+          currentReadingPageRef.current = elementPage || targetItem.page
+          lastValidHighlightPositionRef.current = reliablePosition
+          lastHighlightedCharIndexRef.current = reliablePosition
+          lastHighlightedElementRef.current = targetItem.element
           
-          console.log('🎤 TTS BOUNDARY EVENT:', {
-            spokenWord: spokenWord,
-            reliablePosition: reliablePosition,
-            lastHighlightedCharIndex: lastHighlightedCharIndexRef.current
-          })
-          
-          // Highlight using the reliable position from our textItems array
-          highlightCurrentReading(reliablePosition)
+          // Directly highlight the element that TTS identified
+          applyReadingHighlight(targetItem.element, isPageTransition)
         }
       }
 
