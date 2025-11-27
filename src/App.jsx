@@ -2262,8 +2262,9 @@ function App() {
       const isPageTransition = previousPage !== null && elementPage !== null && previousPage !== elementPage
       
       // For page transitions, scroll immediately without delay
-      // For same-page scrolling, use a small delay to batch rapid updates
-      const scrollDelay = isPageTransition ? 0 : 10
+      // For same-page scrolling, also use minimal delay (0ms) to ensure immediate response
+      // when highlight goes out of view
+      const scrollDelay = 0
       
       pendingScrollTimeoutRef.current = setTimeout(() => {
         pendingScrollTimeoutRef.current = null
@@ -2294,14 +2295,15 @@ function App() {
         const viewportWidth = window.innerWidth
         
         // For page transitions, always scroll immediately
-        // For same-page scrolling, only scroll if element is significantly out of view
-        const margin = 50
-        const isSignificantlyOutOfView = rect.bottom < -margin || 
-                                        rect.top > viewportHeight + margin || 
-                                        rect.right < -margin || 
-                                        rect.left > viewportWidth + margin
+        // For same-page scrolling, scroll if element is not fully visible (any part out of view)
+        // This ensures immediate scrolling as soon as highlight goes out of sight
+        // getBoundingClientRect() returns coordinates relative to viewport, so we check against window dimensions
+        const isNotFullyVisible = rect.bottom < 0 || 
+                                 rect.top > viewportHeight || 
+                                 rect.right < 0 || 
+                                 rect.left > viewportWidth
         
-        if (isPageTransition || isSignificantlyOutOfView) {
+        if (isPageTransition || isNotFullyVisible) {
           // Final check before scrolling
           if (!autoScrollEnabledRef.current || currentReadingElementRef.current !== elementToScroll) {
             return
