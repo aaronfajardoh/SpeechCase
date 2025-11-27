@@ -2518,6 +2518,21 @@ function App() {
     // Sort all text items by charIndex to maintain reading order
     const sortedAllItems = [...currentTextItems].sort((a, b) => a.charIndex - b.charIndex)
     
+    // CRITICAL: First, find the exact word at this position in extractedText
+    // This ensures we match the correct instance, not just any instance that contains the position
+    let targetWordStart = position
+    let targetWordEnd = position
+    
+    // Find word boundaries in extractedText
+    while (targetWordStart > 0 && /\S/.test(extractedText[targetWordStart - 1])) {
+      targetWordStart--
+    }
+    while (targetWordEnd < extractedText.length && /\S/.test(extractedText[targetWordEnd])) {
+      targetWordEnd++
+    }
+    
+    const targetWord = extractedText.substring(targetWordStart, targetWordEnd)
+    
     // Find ALL elements that contain this position (might be duplicates across pages)
     const matchingItems = sortedAllItems.filter(item => {
       if (!item.element || !item.str || !item.element.isConnected) return false
@@ -2529,6 +2544,54 @@ function App() {
 
     if (matchingItems.length === 0) {
       return
+    }
+
+    // CRITICAL: If we have a last highlighted element AND the target word is the SAME as last highlighted word,
+    // find the NEXT instance to prevent jumping to later instances of duplicate words
+    if (lastHighlightedCharIndexRef.current !== null && targetWord.length > 0 && lastHighlightedElementRef.current !== null) {
+      // Get the last highlighted word
+      const lastElementText = lastHighlightedElementRef.current.textContent || ''
+      const normalizeWord = (text) => text.trim().toLowerCase().replace(/[^\w]/g, '')
+      const lastWord = normalizeWord(lastElementText)
+      const targetWordNormalized = normalizeWord(targetWord)
+      
+      // Only apply strict filtering if we're matching the SAME word (duplicate word scenario)
+      if (lastWord === targetWordNormalized && lastWord.length > 0) {
+        // Find all items that match the target word and are forward from last highlighted
+        const forwardWordMatches = matchingItems.filter(item => {
+          const itemWord = normalizeWord(item.str)
+          
+          // Must match the word AND be forward from last highlighted
+          return itemWord === targetWordNormalized && 
+                 item.charIndex > lastHighlightedCharIndexRef.current
+        })
+        
+        if (forwardWordMatches.length > 0) {
+          // Select the NEXT instance (smallest charIndex that's forward)
+          const nextInstance = forwardWordMatches.sort((a, b) => a.charIndex - b.charIndex)[0]
+          // Use only this instance for matching
+          const filteredMatchingItems = [nextInstance]
+          
+          // Replace matchingItems with the filtered list
+          // This ensures we only match the next instance, not later ones
+          matchingItems.length = 0
+          matchingItems.push(...filteredMatchingItems)
+        } else {
+          // No forward matches for duplicate word - check if same position (continuing same word)
+          const samePositionMatches = matchingItems.filter(item => 
+            item.charIndex === lastHighlightedCharIndexRef.current
+          )
+          if (samePositionMatches.length > 0) {
+            // Same position - might be continuing the same word, use it
+            matchingItems.length = 0
+            matchingItems.push(...samePositionMatches)
+          } else {
+            // No valid forward match for duplicate word - reject to prevent jumping
+            return
+          }
+        }
+      }
+      // If target word is different from last word, allow normal progression (no filtering needed)
     }
     
     // CRITICAL: If we have a last highlighted element, filter matches to its page FIRST
@@ -2577,6 +2640,19 @@ function App() {
       if (relativePos < 0 || relativePos >= item.str.length) {
         return false
       }
+      
+      // CRITICAL: Validate that the element's charIndex actually corresponds to the correct position in extractedText
+      // Check if the text at item.charIndex in extractedText matches item.str
+      if (item.charIndex >= 0 && item.charIndex + item.str.length <= extractedText.length) {
+        const extractedTextAtItem = extractedText.substring(item.charIndex, item.charIndex + item.str.length)
+        // Normalize for comparison (handle whitespace differences)
+        const normalize = (str) => str.replace(/\s+/g, ' ').trim()
+        if (normalize(extractedTextAtItem) !== normalize(item.str)) {
+          // Text doesn't match at this charIndex - this item's charIndex is wrong
+          return false
+        }
+      }
+      
       // Check if the character at this position in the element matches extractedText
       const elementChar = item.str[relativePos]
       const extractedChar = extractedText[position]
@@ -2728,13 +2804,13 @@ function App() {
           // AND within a reasonable distance to prevent matching later instances
           if (lastHighlightedCharIndexRef.current !== null) {
             // Calculate maximum forward distance based on position change
-            // Use a STRICT limit to prevent matching later instances of duplicate words
+            // Use a reasonable limit that allows normal progression but prevents large jumps
             const positionDiff = lastValidHighlightPositionRef.current !== null 
               ? position - lastValidHighlightPositionRef.current 
               : 50
-            // CRITICAL: Use a much smaller window (50-100 chars max) to prevent jumping to later instances
-            // Only allow larger jumps if position actually changed significantly
-            const maxForwardDistance = Math.min(100, Math.max(50, positionDiff + 20))
+            // Allow reasonable forward progression: at least 50 chars, up to 200 chars
+            // This allows normal word-by-word progression while preventing large jumps
+            const maxForwardDistance = Math.min(200, Math.max(50, positionDiff * 2 + 30))
             
             // Filter to only items that are forward and within reasonable distance
             const forwardItems = targetPageMatchingItems.filter(item => {
@@ -2775,7 +2851,7 @@ function App() {
           }
           
           // If still no match, try validated items
-          if (!itemAtPosition) {
+    if (!itemAtPosition) {
             itemAtPosition = itemsToUse.find(item => {
               const elementPage = getElementPageNumber(item.element)
               return elementPage === targetPage
@@ -2813,8 +2889,8 @@ function App() {
               const positionDiff = lastValidHighlightPositionRef.current !== null 
                 ? position - lastValidHighlightPositionRef.current 
                 : 50
-              // CRITICAL: Use strict limit to prevent matching later instances
-              const maxForwardDistance = Math.min(100, Math.max(50, positionDiff + 20))
+              // Allow reasonable forward progression: at least 50 chars, up to 200 chars
+              const maxForwardDistance = Math.min(200, Math.max(50, positionDiff * 2 + 30))
               
               const forwardItems = nearbyMatchingItems.filter(item => {
                 const distanceFromLast = item.charIndex - lastHighlightedCharIndexRef.current
@@ -2849,8 +2925,8 @@ function App() {
               const positionDiff = lastValidHighlightPositionRef.current !== null 
                 ? position - lastValidHighlightPositionRef.current 
                 : 50
-              // CRITICAL: Use strict limit to prevent matching later instances
-              const maxForwardDistance = Math.min(100, Math.max(50, positionDiff + 20))
+              // Allow reasonable forward progression: at least 50 chars, up to 200 chars
+              const maxForwardDistance = Math.min(200, Math.max(50, positionDiff * 2 + 30))
               
               const forwardItems = nearbyTargetPageItems.filter(item => {
                 const distanceFromLast = item.charIndex - lastHighlightedCharIndexRef.current
@@ -2889,10 +2965,10 @@ function App() {
             if (nextPageItems.length > 0) {
               // Use the item closest to position on next page
               itemAtPosition = nextPageItems.sort((a, b) => {
-                const aDistance = position - a.charIndex
-                const bDistance = position - b.charIndex
-                return aDistance - bDistance
-              })[0]
+        const aDistance = position - a.charIndex
+        const bDistance = position - b.charIndex
+        return aDistance - bDistance
+      })[0]
             }
           } else {
             // Position is close to page boundary but not significantly past - reject to prevent duplicate matches
@@ -2976,8 +3052,8 @@ function App() {
           const positionDiff = lastValidHighlightPositionRef.current !== null 
             ? position - lastValidHighlightPositionRef.current 
             : 50
-          // CRITICAL: Use strict limit to prevent matching later instances
-          const maxForwardDistance = Math.min(100, Math.max(50, positionDiff + 20))
+          // Allow reasonable forward progression: at least 50 chars, up to 200 chars
+          const maxForwardDistance = Math.min(200, Math.max(50, positionDiff * 2 + 30))
           
           // Filter to only items forward and within reasonable distance
           const forwardItems = itemsToUse.filter(item => {
@@ -3031,32 +3107,72 @@ function App() {
     if (lastHighlightedCharIndexRef.current !== null) {
       const lastCharIndex = lastHighlightedCharIndexRef.current
       const currentCharIndex = itemAtPosition.charIndex
+      const lastElementPage = getElementPageNumber(lastHighlightedElementRef.current)
+      const currentElementPage = getElementPageNumber(element)
       
       // Check if there are any items between last highlighted and current selection
       const itemsBetween = sortedAllItems.filter(item => {
         if (!item.element || !item.element.isConnected) return false
-        return item.charIndex > lastCharIndex && item.charIndex < currentCharIndex
+        const itemPage = getElementPageNumber(item.element)
+        // Only count items on the same page (or if we're transitioning, count items on last page)
+        if (lastElementPage === currentElementPage) {
+          return itemPage === lastElementPage && 
+                 item.charIndex > lastCharIndex && 
+                 item.charIndex < currentCharIndex
+        } else {
+          // Page transition - check items on last page after lastCharIndex
+          return itemPage === lastElementPage && item.charIndex > lastCharIndex
+        }
       })
       
-      // If there are items between, and we're on the same page, this is suspicious
-      // We should be selecting the NEXT word, not skipping ahead
-      if (itemsBetween.length > 0) {
-        const lastElementPage = getElementPageNumber(lastHighlightedElementRef.current)
-        const currentElementPage = getElementPageNumber(element)
-        
-        // If we're on the same page and skipping items, reject unless position changed significantly
-        if (lastElementPage === currentElementPage && lastElementPage !== null) {
-          const positionDiff = lastValidHighlightPositionRef.current !== null
-            ? position - lastValidHighlightPositionRef.current
-            : 0
-          
-          // If we're skipping items but position didn't change much, this is likely wrong
-          // Allow skipping only if position changed by at least the number of skipped chars
-          const skippedChars = currentCharIndex - lastCharIndex
-          if (positionDiff < skippedChars * 0.8) {
-            // Position didn't change enough to justify skipping - reject
-            return
-          }
+       // If we're on the same page and skipping items, check if we should use the immediate next item
+       // Only be strict if we're matching the SAME word (duplicate word scenario)
+       if (lastElementPage === currentElementPage && lastElementPage !== null && itemsBetween.length > 0) {
+         // Get the current word being matched
+         const currentElementText = element.textContent || ''
+         const lastElementText = lastHighlightedElementRef.current.textContent || ''
+         const normalizeWord = (text) => text.trim().toLowerCase().replace(/[^\w]/g, '')
+         const currentWord = normalizeWord(currentElementText)
+         const lastWord = normalizeWord(lastElementText)
+         
+         // Only enforce strict sequential progression if we're matching the SAME word
+         if (currentWord === lastWord && currentWord.length > 0) {
+           // Find the immediate next word after last highlighted
+           const immediateNextItem = itemsBetween.sort((a, b) => a.charIndex - b.charIndex)[0]
+           
+           // Check if the immediate next item also matches the position
+           const immediateNextMatches = immediateNextItem.charIndex <= position && 
+                                        immediateNextItem.charIndex + immediateNextItem.str.length > position
+           
+           if (immediateNextMatches) {
+             // The immediate next word also matches - we should use that instead!
+             itemAtPosition = immediateNextItem
+             // Update element reference
+             const elementPage = getElementPageNumber(immediateNextItem.element)
+             const isPageTransition = currentReadingPageRef.current !== null && 
+                                     elementPage !== null && 
+                                     elementPage !== currentReadingPageRef.current
+             currentReadingPageRef.current = elementPage || immediateNextItem.page
+             lastValidHighlightPositionRef.current = position
+             lastHighlightedCharIndexRef.current = immediateNextItem.charIndex
+             lastHighlightedElementRef.current = immediateNextItem.element
+             applyReadingHighlight(immediateNextItem.element, isPageTransition)
+             return
+           } else {
+             // Immediate next item doesn't match position, but we're skipping it for same word
+             // This is suspicious - reject to prevent jumping to later instances
+             return
+           }
+         }
+         // If different word, allow normal progression (position might have advanced past some items)
+       }
+      
+      // If we're transitioning pages, ensure we've actually read past the last page
+      if (lastElementPage !== null && currentElementPage !== null && lastElementPage !== currentElementPage) {
+        // Check if there are items on the last page after lastCharIndex
+        if (itemsBetween.length > 0) {
+          // There are still items on the last page we haven't read - reject page transition
+          return
         }
       }
     }
@@ -3182,13 +3298,13 @@ function App() {
             const elementChar = newElement.textContent[relativePos]
             const extractedChar = extractedText[position]
             if (elementChar === extractedChar || (/\s/.test(elementChar) && /\s/.test(extractedChar))) {
-              // Update tracking
-              const elementPage = getElementPageNumber(newElement)
-              currentReadingPageRef.current = elementPage || pageNum
-              lastValidHighlightPositionRef.current = position
-              lastHighlightedCharIndexRef.current = itemAtPosition.charIndex
-              lastHighlightedElementRef.current = newElement
-              applyReadingHighlight(newElement)
+          // Update tracking
+          const elementPage = getElementPageNumber(newElement)
+          currentReadingPageRef.current = elementPage || pageNum
+          lastValidHighlightPositionRef.current = position
+          lastHighlightedCharIndexRef.current = itemAtPosition.charIndex
+          lastHighlightedElementRef.current = newElement
+          applyReadingHighlight(newElement)
             }
           }
         }
@@ -3223,11 +3339,25 @@ function App() {
         const betterMatch = searchItems.find(item => {
           if (!item.element || !item.str || !item.element.isConnected) return false
           
-          // If we have a last highlighted element, ensure this is forward and close
+          // If we have a last highlighted element, ensure this is forward and within reasonable distance
           if (lastHighlightedCharIndexRef.current !== null) {
             const distanceFromLast = item.charIndex - lastHighlightedCharIndexRef.current
-            // CRITICAL: Must be forward and within strict distance (100 chars max) to prevent later instances
-            if (distanceFromLast <= 0 || distanceFromLast > 100) {
+            const positionDiff = lastValidHighlightPositionRef.current !== null
+              ? position - lastValidHighlightPositionRef.current
+              : 50
+            // Allow reasonable forward progression: at least 50 chars, up to 200 chars
+            const maxDistance = Math.min(200, Math.max(50, positionDiff * 2 + 30))
+            
+            // Must be forward, but also allow if position is within item's range (handles slight position errors)
+            const positionInItem = position - item.charIndex
+            const isPositionInRange = positionInItem >= 0 && positionInItem < item.str.length
+            
+            if (distanceFromLast <= 0 && !isPositionInRange) {
+              // Not forward and position not in range - reject
+              return false
+            }
+            if (distanceFromLast > 0 && distanceFromLast > maxDistance && !isPositionInRange) {
+              // Too far forward and position not in range - reject
               return false
             }
           }
@@ -3277,9 +3407,9 @@ function App() {
           itemAtPosition = betterMatch
           // Update element reference
           const elementPage = getElementPageNumber(betterMatch.element)
-          const isPageTransition = currentReadingPageRef.current !== null && 
-                                  elementPage !== null && 
-                                  elementPage !== currentReadingPageRef.current
+    const isPageTransition = currentReadingPageRef.current !== null && 
+                            elementPage !== null && 
+                            elementPage !== currentReadingPageRef.current
           currentReadingPageRef.current = elementPage || betterMatch.page
           lastValidHighlightPositionRef.current = position
           lastHighlightedCharIndexRef.current = betterMatch.charIndex
@@ -3288,7 +3418,7 @@ function App() {
           return
         } else {
           // No better match found - reject this update
-          return
+        return
         }
       }
     }
