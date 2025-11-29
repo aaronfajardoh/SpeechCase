@@ -6,6 +6,13 @@ import './App.css'
 // Set up PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`
 
+// Guards to prevent overlapping PDF render operations on the same canvases.
+// Instead of skipping renders, we serialize them by awaiting the previous run.
+// pdf.js throws "Cannot use the same canvas during multiple render() operations"
+// if a second render starts before the first one finishes (e.g., on resize).
+let renderPagesPromise = null
+let renderThumbnailsPromise = null
+
 // Apple-like SVG Icons
 const IconUpload = ({ size = 24, className = '' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -158,6 +165,304 @@ const IconNavigation = ({ size = 16, className = '' }) => (
   </svg>
 )
 
+const IconTimeline = ({ size = 20, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <line x1="3" y1="12" x2="21" y2="12" />
+    <circle cx="6" cy="12" r="2" />
+    <circle cx="12" cy="12" r="2" />
+    <circle cx="18" cy="12" r="2" />
+  </svg>
+)
+
+const IconUsers = ({ size = 20, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+  </svg>
+)
+
+const IconMessageCircle = ({ size = 20, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+  </svg>
+)
+
+const IconFileText = ({ size = 20, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <polyline points="14 2 14 8 20 8" />
+    <line x1="16" y1="13" x2="8" y2="13" />
+    <line x1="16" y1="17" x2="8" y2="17" />
+    <polyline points="10 9 9 9 8 9" />
+  </svg>
+)
+
+const IconChevronLeft = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <polyline points="15 18 9 12 15 6" />
+  </svg>
+)
+
+const IconChevronRight = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <polyline points="9 18 15 12 9 6" />
+  </svg>
+)
+
+const IconExpandTimeline = ({ size = 20, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+  </svg>
+)
+
+const IconMinimizeTimeline = ({ size = 20, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+  </svg>
+)
+
+// Proportional Timeline Component - Horizontal line with dots
+const ProportionalTimeline = ({ events, selectedEvent, onEventClick, onCloseDetails }) => {
+  const timelineRef = useRef(null)
+  const [timelineWidth, setTimelineWidth] = useState(0)
+
+  // Parse date string to numeric timestamp for calculation
+  const parseDateToTimestamp = (dateStr, index) => {
+    if (!dateStr) return index * 1000 // Default spacing
+    
+    const str = dateStr.toLowerCase().trim()
+    
+    // Try to parse various date formats
+    // Format: dd/mm/yyyy or mm/dd/yyyy
+    const ddmmyyyy = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/)
+    if (ddmmyyyy) {
+      const [, day, month, year] = ddmmyyyy
+      return new Date(parseInt(year), parseInt(month) - 1, parseInt(day)).getTime()
+    }
+    
+    // Format: mm/yyyy
+    const mmyyyy = str.match(/(\d{1,2})\/(\d{4})/)
+    if (mmyyyy) {
+      const [, month, year] = mmyyyy
+      return new Date(parseInt(year), parseInt(month) - 1, 1).getTime()
+    }
+    
+    // Format: yyyy
+    const yyyy = str.match(/(\d{4})/)
+    if (yyyy) {
+      return new Date(parseInt(yyyy[1]), 0, 1).getTime()
+    }
+    
+    // Try parsing as full date string
+    const parsed = Date.parse(dateStr)
+    if (!isNaN(parsed)) {
+      return parsed
+    }
+    
+    // Extract numbers and use as relative time
+    const numbers = str.match(/\d+/)
+    if (numbers) {
+      const num = parseInt(numbers[0])
+      // If it's a day number
+      if (str.includes('day')) {
+        return num * 86400000 // milliseconds in a day
+      }
+      // If it's a year
+      if (str.includes('year')) {
+        return new Date(num, 0, 1).getTime()
+      }
+      // Default: use as days
+      return num * 86400000
+    }
+    
+    // Fallback: use index
+    return index * 1000
+  }
+
+  // Format date for display (preserve original format if possible)
+  const formatDateForDisplay = (dateStr, index) => {
+    if (!dateStr) return `Event ${index + 1}`
+    
+    // If it already looks like a date format, return as-is
+    if (/\d{1,2}\/\d{1,2}\/\d{4}/.test(dateStr) || 
+        /\d{1,2}\/\d{4}/.test(dateStr) || 
+        /^\d{4}$/.test(dateStr)) {
+      return dateStr
+    }
+    
+    // Try to parse and reformat
+    const timestamp = parseDateToTimestamp(dateStr, index)
+    if (timestamp && timestamp !== index * 1000) { // Only if we got a real timestamp
+      const date = new Date(timestamp)
+      if (!isNaN(date.getTime())) {
+        // Check what information we have in the original string
+        const hasDay = /\d{1,2}\/\d{1,2}\/\d{4}/.test(dateStr)
+        const hasMonth = /\d{1,2}\/\d{4}/.test(dateStr)
+        
+        if (hasDay) {
+          // dd/mm/yyyy
+          const day = date.getDate()
+          const month = date.getMonth() + 1
+          const year = date.getFullYear()
+          return `${day}/${month}/${year}`
+        } else if (hasMonth) {
+          // mm/yyyy
+          const month = date.getMonth() + 1
+          const year = date.getFullYear()
+          return `${month}/${year}`
+        } else if (/^\d{4}$/.test(dateStr)) {
+          // yyyy
+          return dateStr
+        } else {
+          // Try to extract year from parsed date
+          return date.getFullYear().toString()
+        }
+      }
+    }
+    
+    // Return original if we can't parse, or fallback to order
+    return dateStr || `Event ${index + 1}`
+  }
+
+  // Calculate proportional positions based on dates
+  const calculatePositions = () => {
+    if (!events || events.length === 0) return []
+
+    // Parse all dates to timestamps
+    const eventsWithTimestamps = events.map((event, index) => ({
+      ...event,
+      timestamp: parseDateToTimestamp(event.date, index),
+      originalIndex: index
+    }))
+
+    // Find min and max timestamps
+    const timestamps = eventsWithTimestamps.map(e => e.timestamp)
+    const minTimestamp = Math.min(...timestamps)
+    const maxTimestamp = Math.max(...timestamps)
+    const timeRange = maxTimestamp - minTimestamp || 1 // Avoid division by zero
+
+    // Calculate proportional positions (0 to 1) and format dates
+    const positioned = eventsWithTimestamps.map((event, idx) => {
+      const displayDate = formatDateForDisplay(event.date, idx)
+      console.log(`Event ${idx}: date="${event.date}", displayDate="${displayDate}"`)
+      return {
+        ...event,
+        position: (event.timestamp - minTimestamp) / timeRange,
+        displayDate: displayDate
+      }
+    })
+    
+    return positioned
+  }
+
+  const positionedEvents = calculatePositions()
+
+  // Update timeline width on resize
+  useEffect(() => {
+    const updateWidth = () => {
+      if (timelineRef.current) {
+        setTimelineWidth(timelineRef.current.offsetWidth)
+      }
+    }
+    updateWidth()
+    window.addEventListener('resize', updateWidth)
+    return () => window.removeEventListener('resize', updateWidth)
+  }, [])
+
+  // Get brief description (first few words)
+  const getBriefDescription = (text, maxWords = 4) => {
+    if (!text) return ''
+    const words = text.split(' ').slice(0, maxWords)
+    return words.join(' ')
+  }
+
+  return (
+    <div className="proportional-timeline-container" ref={timelineRef}>
+      {/* Horizontal Timeline Line */}
+      <div className="timeline-horizontal-line"></div>
+      
+      {/* Events positioned along the line */}
+      <div className="timeline-events-container">
+        {positionedEvents.map((event, index) => {
+          const leftPercent = event.position * 100
+          const isAbove = index % 2 === 0 // Alternate above/below
+          
+          return (
+            <div 
+              key={index} 
+              className={`timeline-event-marker ${isAbove ? 'above' : 'below'} ${selectedEvent === index ? 'selected' : ''}`}
+              style={{ left: `${leftPercent}%` }}
+            >
+              {/* Dot */}
+              <button
+                className="timeline-dot-small"
+                onClick={() => onEventClick(selectedEvent === index ? null : index)}
+                data-event-index={index}
+                aria-label={`Event ${index + 1}: ${event.event}`}
+              />
+              
+              {/* Date and Description */}
+              <div 
+                className={`timeline-event-label ${isAbove ? 'label-above' : 'label-below'}`}
+                onClick={() => onEventClick(selectedEvent === index ? null : index)}
+              >
+                <div className="timeline-event-date">
+                  {event.displayDate || event.date || `Event ${event.order || index + 1}`}
+                </div>
+                <div className="timeline-event-brief">
+                  {getBriefDescription(event.event || event.description, 4)}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      
+      {/* Event Details Tooltip */}
+      {selectedEvent !== null && positionedEvents[selectedEvent] && (() => {
+        const event = positionedEvents[selectedEvent]
+        const eventElement = timelineRef.current?.querySelector(`[data-event-index="${selectedEvent}"]`)
+        const rect = eventElement?.getBoundingClientRect()
+        const containerRect = timelineRef.current?.getBoundingClientRect()
+        
+        let tooltipStyle = {}
+        if (rect && containerRect) {
+          // Position tooltip above or below based on available space
+          const spaceAbove = rect.top - containerRect.top
+          const spaceBelow = containerRect.bottom - rect.bottom
+          const isAbove = spaceAbove > spaceBelow
+          
+          tooltipStyle = {
+            top: isAbove ? `${rect.top - containerRect.top - 10}px` : `${rect.bottom - containerRect.top + 10}px`,
+            left: `${rect.left + rect.width / 2 - containerRect.left}px`,
+            transform: 'translateX(-50%)',
+            position: 'absolute'
+          }
+        }
+        
+        return (
+          <div className="timeline-event-details-tooltip" style={tooltipStyle}>
+            <button className="tooltip-close" onClick={onCloseDetails}>
+              <IconClose size={14} />
+            </button>
+            <div className="tooltip-header">
+              {event.displayDate && (
+                <div className="tooltip-date">{event.displayDate}</div>
+              )}
+              <div className="tooltip-title">{event.event || `Event ${event.order}`}</div>
+            </div>
+            <div className="tooltip-description">
+              {event.description || event.event || 'No description available.'}
+            </div>
+          </div>
+        )
+      })()}
+    </div>
+  )
+}
+
 function App() {
   const [pdfFile, setPdfFile] = useState(null)
   const [pdfDoc, setPdfDoc] = useState(null)
@@ -186,6 +491,17 @@ function App() {
   const canvasRefs = useRef({}) // Store canvas refs by page number
   const textLayerRefs = useRef({}) // Store text layer refs by page number
   const highlightLayerRefs = useRef({}) // Store highlight layer refs by page number
+  const thumbnailRefs = useRef({}) // Store thumbnail canvas refs by page number
+  const [renderedThumbnails, setRenderedThumbnails] = useState([]) // Track which thumbnails are rendered
+  const [sidebarView, setSidebarView] = useState('pages') // 'pages', 'timeline', 'characters', 'chat'
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false) // Sidebar collapsed state
+  const [documentId, setDocumentId] = useState(null) // Document ID for AI features
+  const [isPDFProcessing, setIsPDFProcessing] = useState(false) // Track if PDF is being processed
+  const [timeline, setTimeline] = useState(null) // Timeline data
+  const [isTimelineLoading, setIsTimelineLoading] = useState(false) // Timeline loading state
+  const [timelineError, setTimelineError] = useState(null) // Timeline error message
+  const [isTimelineExpanded, setIsTimelineExpanded] = useState(false) // Timeline expanded in main view
+  const [selectedEvent, setSelectedEvent] = useState(null) // Selected event for details tooltip
   const fileInputRef = useRef(null)
   const utteranceRef = useRef(null)
   const synthRef = useRef(null)
@@ -837,6 +1153,80 @@ function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageData, interactionMode])
+
+  // Render thumbnails when PDF document is loaded
+  useEffect(() => {
+    if (pdfDoc && totalPages > 0) {
+      renderThumbnails()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdfDoc, totalPages])
+
+  // Clear rendered thumbnails when sidebar is collapsed (canvas content is lost when hidden)
+  useEffect(() => {
+    if (isSidebarCollapsed || sidebarView !== 'pages') {
+      setRenderedThumbnails([])
+    }
+  }, [isSidebarCollapsed, sidebarView])
+
+  // Re-render thumbnails when sidebar is expanded (canvas content is lost when hidden)
+  useEffect(() => {
+    if (pdfDoc && totalPages > 0 && !isSidebarCollapsed && sidebarView === 'pages') {
+      // Wait for DOM to be ready and sidebar content to be visible
+      const timeoutId = setTimeout(() => {
+        renderThumbnails()
+      }, 200)
+      return () => clearTimeout(timeoutId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSidebarCollapsed, sidebarView, pdfDoc, totalPages])
+
+  // Clear rendered pages when switching away from pages view
+  useEffect(() => {
+    if (sidebarView !== 'pages') {
+      setRenderedPages([])
+    }
+  }, [sidebarView])
+
+  // Re-render pages and thumbnails when switching back to pages view
+  useEffect(() => {
+    if (pdfDoc && totalPages > 0 && sidebarView === 'pages' && pageData.length > 0) {
+      // Wait for DOM to be ready
+      const timeoutId = setTimeout(() => {
+        // Re-render PDF pages
+        renderPages()
+        // Re-render thumbnails if sidebar is not collapsed
+        if (!isSidebarCollapsed) {
+          setTimeout(() => {
+            renderThumbnails()
+          }, 100)
+        }
+      }, 200)
+      return () => clearTimeout(timeoutId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarView, isSidebarCollapsed])
+
+  // Auto-scroll sidebar to keep current page visible
+  useEffect(() => {
+    if (currentPage > 0 && !isMobile) {
+      const activeThumbnail = document.querySelector(`.thumbnail-item.active`)
+      if (activeThumbnail) {
+        const sidebarContent = document.querySelector('.thumbnail-sidebar-content')
+        if (sidebarContent) {
+          const sidebarRect = sidebarContent.getBoundingClientRect()
+          const thumbnailRect = activeThumbnail.getBoundingClientRect()
+          
+          // Check if thumbnail is outside visible area
+          if (thumbnailRect.top < sidebarRect.top) {
+            activeThumbnail.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          } else if (thumbnailRect.bottom > sidebarRect.bottom) {
+            activeThumbnail.scrollIntoView({ behavior: 'smooth', block: 'end' })
+          }
+        }
+      }
+    }
+  }, [currentPage, isMobile])
 
   // Restore scroll position immediately when pageData is set (e.g., after zoom)
   // Use useLayoutEffect to set scroll position synchronously before browser paints
@@ -1809,7 +2199,17 @@ function App() {
   const renderPages = async () => {
     if (!pdfDoc || pageData.length === 0) return
 
-    try {
+    // Serialize render operations: wait for any previous render to finish
+    if (renderPagesPromise) {
+      try {
+        await renderPagesPromise
+      } catch (e) {
+        // Ignore errors from previous render; we'll try again
+        console.error('Previous renderPages run failed, continuing with new render:', e)
+      }
+    }
+
+    const run = async () => {
       for (const pageInfo of pageData) {
         const { pageNum, viewport, pageCharOffset, textContent } = pageInfo
         const canvas = canvasRefs.current[pageNum]
@@ -1857,9 +2257,77 @@ function App() {
           return prev
         })
       }
+    }
+
+    renderPagesPromise = run()
+
+    try {
+      await renderPagesPromise
     } catch (err) {
       console.error('Error rendering pages:', err)
       setError('Error rendering PDF pages: ' + err.message)
+    } finally {
+      renderPagesPromise = null
+    }
+  }
+
+  const renderThumbnails = async () => {
+    if (!pdfDoc || totalPages === 0) return
+
+    // Serialize thumbnail renders to avoid overlapping operations on the same canvas
+    if (renderThumbnailsPromise) {
+      try {
+        await renderThumbnailsPromise
+      } catch (e) {
+        console.error('Previous renderThumbnails run failed, continuing with new render:', e)
+      }
+    }
+
+    const run = async () => {
+      // Calculate thumbnail scale to show approximately 4-4.5 pages in the sidebar
+      // Sidebar width is 180px, thumbnails will be CSS-scaled to fit this width
+      // For a typical PDF page (612x792 points at 72 DPI):
+      // - Aspect ratio: 612/792 ≈ 0.773 (width/height)
+      // - If width is constrained to 180px, height = 180 / 0.773 ≈ 233px
+      // - To show 4-4.5 pages: target height per thumbnail ≈ 150-170px (accounting for gaps)
+      // - We'll render at a small scale and let CSS handle the final sizing
+      const thumbnailScale = 0.2 // Scale for thumbnail rendering (will be CSS-scaled to fit)
+      
+      for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+        const thumbnailCanvas = thumbnailRefs.current[pageNum]
+        if (!thumbnailCanvas) continue
+
+        const page = await pdfDoc.getPage(pageNum)
+        const viewport = page.getViewport({ scale: thumbnailScale })
+        const context = thumbnailCanvas.getContext('2d')
+        
+        // Set canvas dimensions
+        thumbnailCanvas.width = viewport.width
+        thumbnailCanvas.height = viewport.height
+        
+        // Render the page
+        await page.render({
+          canvasContext: context,
+          viewport: viewport
+        }).promise
+
+        setRenderedThumbnails(prev => {
+          if (!prev.includes(pageNum)) {
+            return [...prev, pageNum]
+          }
+          return prev
+        })
+      }
+    }
+
+    renderThumbnailsPromise = run()
+
+    try {
+      await renderThumbnailsPromise
+    } catch (err) {
+      console.error('Error rendering thumbnails:', err)
+    } finally {
+      renderThumbnailsPromise = null
     }
   }
 
@@ -3923,6 +4391,28 @@ function App() {
         console.log('Detected language:', detected, 'for text length:', finalText.length)
         setDetectedLanguage(detected)
       }
+
+      // Process PDF for AI features (chunking and embeddings)
+      if (finalText && finalText.length > 0) {
+        const newDocumentId = `${file.name}-${Date.now()}`
+        setDocumentId(newDocumentId)
+        setTimeline(null) // Clear previous timeline
+        setTimelineError(null)
+        setIsPDFProcessing(true)
+        
+        // Process PDF in background (don't block UI)
+        processPDFForAI(newDocumentId, finalText, {
+          fileName: file.name,
+          pageCount: pdf.numPages,
+          textLength: finalText.length
+        }).then(() => {
+          setIsPDFProcessing(false)
+        }).catch(err => {
+          console.error('Error processing PDF for AI:', err)
+          setIsPDFProcessing(false)
+          // Don't show error to user - AI features will just be unavailable
+        })
+      }
       
       // Initialize Media Session metadata so macOS recognizes this as a media source
       if ('mediaSession' in navigator) {
@@ -3945,6 +4435,117 @@ function App() {
       setIsLoading(false)
     }
   }
+
+  // Process PDF for AI features (chunking and embeddings)
+  const processPDFForAI = async (docId, text, metadata) => {
+    try {
+      const response = await fetch('/api/ai/process-pdf', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          documentId: docId,
+          text: text,
+          metadata: metadata
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to process PDF')
+      }
+
+      const result = await response.json()
+      console.log('PDF processed for AI:', result)
+      return result
+    } catch (error) {
+      console.error('Error processing PDF for AI:', error)
+      throw error
+    }
+  }
+
+  // Generate timeline from PDF
+  const generateTimeline = async (retryCount = 0, force = false) => {
+    if (!documentId) {
+      setTimelineError('No document loaded. Please upload a PDF first.')
+      return
+    }
+
+    // If PDF is still processing, wait a bit and retry
+    if (isPDFProcessing && retryCount < 10) {
+      setTimeout(() => {
+        generateTimeline(retryCount + 1, force)
+      }, 500) // Wait 500ms and retry
+      return
+    }
+
+    if (isPDFProcessing) {
+      setTimelineError('PDF is still being processed. Please wait a moment and try again.')
+      return
+    }
+
+    setIsTimelineLoading(true)
+    setTimelineError(null)
+
+    try {
+      const response = await fetch('/api/ai/timeline', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          documentId: documentId,
+          force: force
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        // If document not found and we haven't retried much, wait and retry
+        if (errorData.error && errorData.error.includes('not found') && retryCount < 5) {
+          setTimeout(() => {
+            generateTimeline(retryCount + 1)
+          }, 1000) // Wait 1 second and retry
+          return
+        }
+        throw new Error(errorData.error || 'Failed to generate timeline')
+      }
+
+      const data = await response.json()
+      
+      if (!data.success) {
+        // Couldn't generate timeline
+        console.log('Timeline generation failed:', data);
+        setTimelineError(data.message || 'Could not generate timeline from this document.')
+        setTimeline(null)
+        return
+      }
+
+      setTimeline(data.timeline || [])
+    } catch (error) {
+      console.error('Error generating timeline:', error)
+      setTimelineError(error.message || 'Failed to generate timeline')
+      setTimeline(null)
+    } finally {
+      setIsTimelineLoading(false)
+    }
+  }
+
+  // Generate timeline when timeline tab is opened
+  useEffect(() => {
+    if (sidebarView === 'timeline' && documentId && !timeline && !isTimelineLoading && !timelineError && !isPDFProcessing) {
+      generateTimeline()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarView, documentId, isPDFProcessing])
+
+  // Auto-minimize controls when timeline is expanded
+  useEffect(() => {
+    if (isTimelineExpanded && !isControlsPanelMinimized) {
+      setIsControlsPanelMinimized(true)
+    }
+  }, [isTimelineExpanded])
 
   // Helper function to reset speech synthesis state (fixes Chrome issues)
   const resetSpeechSynthesis = () => {
@@ -5363,7 +5964,204 @@ function App() {
 
       {/* Main PDF Viewer Area */}
       <div className="reader-main">
-        <div className="pdf-viewer-container">
+        {/* Enhanced Sidebar with Tabs */}
+        {pdfDoc && totalPages > 0 && !isMobile && (
+          <div className={`pdf-sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}>
+            {/* Sidebar Header with Tabs */}
+            <div className="sidebar-header">
+              <div className="sidebar-tabs">
+                <button
+                  className={`sidebar-tab ${sidebarView === 'pages' ? 'active' : ''}`}
+                  onClick={() => setSidebarView('pages')}
+                  title="Pages"
+                >
+                  <IconFileText size={18} />
+                  {!isSidebarCollapsed && <span>Pages</span>}
+                </button>
+                <button
+                  className={`sidebar-tab ${sidebarView === 'timeline' ? 'active' : ''}`}
+                  onClick={() => setSidebarView('timeline')}
+                  title="Timeline"
+                >
+                  <IconTimeline size={18} />
+                  {!isSidebarCollapsed && <span>Timeline</span>}
+                </button>
+                <button
+                  className={`sidebar-tab ${sidebarView === 'characters' ? 'active' : ''}`}
+                  onClick={() => setSidebarView('characters')}
+                  title="Characters"
+                >
+                  <IconUsers size={18} />
+                  {!isSidebarCollapsed && <span>Characters</span>}
+                </button>
+                <button
+                  className={`sidebar-tab ${sidebarView === 'chat' ? 'active' : ''}`}
+                  onClick={() => setSidebarView('chat')}
+                  title="Chat"
+                >
+                  <IconMessageCircle size={18} />
+                  {!isSidebarCollapsed && <span>Chat</span>}
+                </button>
+              </div>
+              <button
+                className="sidebar-toggle-btn"
+                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              >
+                {isSidebarCollapsed ? <IconChevronRight size={16} /> : <IconChevronLeft size={16} />}
+              </button>
+            </div>
+
+            {/* Sidebar Content */}
+            {!isSidebarCollapsed && (
+              <div className="sidebar-content">
+                {sidebarView === 'pages' && (
+                  <div className="sidebar-tab-content thumbnail-sidebar-content">
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
+                      <div
+                        key={pageNum}
+                        className={`thumbnail-item ${currentPage === pageNum ? 'active' : ''}`}
+                        onClick={() => scrollToPage(pageNum)}
+                        title={`Page ${pageNum}`}
+                      >
+                        <canvas
+                          ref={(el) => {
+                            if (el) thumbnailRefs.current[pageNum] = el
+                          }}
+                          className="thumbnail-canvas"
+                        />
+                        <div className="thumbnail-page-number">{pageNum}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {sidebarView === 'timeline' && (
+                  <div className="sidebar-tab-content timeline-sidebar-content">
+                    {isPDFProcessing ? (
+                      <div className="timeline-loading">
+                        <IconLoading size={32} />
+                        <p>Processing PDF for AI features...</p>
+                        <p className="timeline-loading-subtitle">This may take a moment</p>
+                      </div>
+                    ) : isTimelineLoading ? (
+                      <div className="timeline-loading">
+                        <IconLoading size={32} />
+                        <p>Generating timeline...</p>
+                      </div>
+                    ) : timelineError ? (
+                      <div className="timeline-error">
+                        <IconTimeline size={48} />
+                        <h3>Unable to Generate Timeline</h3>
+                        <p>{timelineError}</p>
+                        {documentId && (
+                          <button 
+                            className="btn-retry-timeline"
+                            onClick={() => generateTimeline(0, false)}
+                          >
+                            Try Again
+                          </button>
+                        )}
+                      </div>
+                    ) : timeline && timeline.length > 0 ? (
+                      <div className="timeline-list">
+                        <div className="timeline-header">
+                          <div className="timeline-header-left">
+                            <h3>Story Timeline</h3>
+                            <span className="timeline-count">{timeline.length} events</span>
+                          </div>
+                          <button
+                            className="btn-expand-timeline"
+                            onClick={() => setIsTimelineExpanded(!isTimelineExpanded)}
+                            title={isTimelineExpanded ? 'Minimize timeline' : 'Expand timeline'}
+                          >
+                            {isTimelineExpanded ? <IconMinimizeTimeline size={18} /> : <IconExpandTimeline size={18} />}
+                            {!isSidebarCollapsed && <span>{isTimelineExpanded ? 'Minimize' : 'Expand'}</span>}
+                          </button>
+                        </div>
+                        <div className="timeline-items">
+                          {timeline.map((event, index) => (
+                            <div key={index} className="timeline-item">
+                              <div className="timeline-marker">
+                                <div className="timeline-dot"></div>
+                                {index < timeline.length - 1 && <div className="timeline-line"></div>}
+                              </div>
+                              <div className="timeline-content">
+                                <div className="timeline-event-title">{event.event || `Event ${event.order || index + 1}`}</div>
+                                <div className="timeline-event-description">{event.description || ''}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="feature-placeholder">
+                        <IconTimeline size={48} />
+                        <h3>Timeline</h3>
+                        <p>Click to generate timeline from the story</p>
+                        {documentId && (
+                          <button 
+                            className="btn-generate-timeline"
+                            onClick={generateTimeline}
+                          >
+                            Generate Timeline
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {sidebarView === 'characters' && (
+                  <div className="sidebar-tab-content">
+                    <div className="feature-placeholder">
+                      <IconUsers size={48} />
+                      <h3>Characters</h3>
+                      <p>Character list will appear here</p>
+                    </div>
+                  </div>
+                )}
+                {sidebarView === 'chat' && (
+                  <div className="sidebar-tab-content">
+                    <div className="feature-placeholder">
+                      <IconMessageCircle size={48} />
+                      <h3>Chat</h3>
+                      <p>Q&A interface will appear here</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        
+        {/* Main Content Area - Shows PDF or Timeline based on isTimelineExpanded */}
+        {isTimelineExpanded && timeline && timeline.length > 0 ? (
+          <div className="timeline-full-view">
+            <div className="timeline-full-view-header">
+              <div className="timeline-full-view-title">
+                <IconTimeline size={24} />
+                <h2>Story Timeline</h2>
+                <span className="timeline-full-view-count">{timeline.length} events</span>
+              </div>
+              <button
+                className="btn-back-to-pdf"
+                onClick={() => setIsTimelineExpanded(false)}
+                title="Back to PDF"
+              >
+                <IconChevronLeft size={18} />
+                <span>Back to PDF</span>
+              </button>
+            </div>
+            <div className="timeline-full-view-content">
+              <ProportionalTimeline 
+                events={timeline}
+                selectedEvent={selectedEvent}
+                onEventClick={setSelectedEvent}
+                onCloseDetails={() => setSelectedEvent(null)}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="pdf-viewer-container">
           {error && (
             <div className="error-message error-floating">
               {error}
@@ -5446,6 +6244,57 @@ function App() {
             )}
           </div>
         </div>
+        )}
+        
+        {/* Feature Views for other tabs (characters, chat) - Only show when not on pages or timeline */}
+        {sidebarView !== 'pages' && sidebarView !== 'timeline' && (
+          <div className="feature-view-container">
+            {sidebarView === 'characters' && (
+              <div className="feature-view characters-view">
+                <div className="feature-view-header">
+                  <h2>Characters</h2>
+                  <button
+                    className="btn-feature-back"
+                    onClick={() => setSidebarView('pages')}
+                    title="Back to PDF"
+                  >
+                    <IconChevronLeft size={16} />
+                    <span>Back to PDF</span>
+                  </button>
+                </div>
+                <div className="feature-view-content">
+                  <div className="feature-placeholder-large">
+                    <IconUsers size={64} />
+                    <h3>Character List</h3>
+                    <p>This will display a list of characters with images extracted from the PDF.</p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {sidebarView === 'chat' && (
+              <div className="feature-view chat-view">
+                <div className="feature-view-header">
+                  <h2>Q&A Chat</h2>
+                  <button
+                    className="btn-feature-back"
+                    onClick={() => setSidebarView('pages')}
+                    title="Back to PDF"
+                  >
+                    <IconChevronLeft size={16} />
+                    <span>Back to PDF</span>
+                  </button>
+                </div>
+                <div className="feature-view-content">
+                  <div className="feature-placeholder-large">
+                    <IconMessageCircle size={64} />
+                    <h3>Chat Interface</h3>
+                    <p>This will display a Q&A chat interface to interact with the PDF content.</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Mobile Bottom Controls Bar - Always Visible */}
@@ -5548,17 +6397,20 @@ function App() {
       {/* Desktop Floating Controls Panel */}
       {pdfDoc && !isMobile && (
         <>
-          {isControlsPanelMinimized ? (
+          {(isControlsPanelMinimized || isTimelineExpanded) ? (
             <div 
               className={`reader-controls-panel-minimized ${isHoveringMinimizedPanel ? 'hovered' : ''}`}
               onMouseEnter={() => setIsHoveringMinimizedPanel(true)}
               onMouseLeave={() => setIsHoveringMinimizedPanel(false)}
-              onClick={() => setIsControlsPanelMinimized(false)}
+              onClick={() => {
+                setIsControlsPanelMinimized(false)
+                if (isTimelineExpanded) setIsTimelineExpanded(false)
+              }}
             >
               <IconSpeaker size={16} />
             </div>
           ) : (
-            <div className="reader-controls-panel">
+            <div className={`reader-controls-panel ${isTimelineExpanded ? 'timeline-expanded' : ''}`}>
               <div className="controls-panel-header">
                 <button
                   className="panel-minimize-btn"
