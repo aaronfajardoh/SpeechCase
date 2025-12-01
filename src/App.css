@@ -672,6 +672,11 @@
   padding: 1.5rem 2rem;
   overflow-x: hidden;
   overflow-y: auto;
+  position: relative;
+  min-height: 0;
+  /* Match pdf-viewer-container properties to take over the same space */
+  height: 100%;
+  width: 100%;
 }
 
 .timeline-full-view-header {
@@ -723,15 +728,17 @@
 .timeline-full-view-content {
   flex: 1;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
   overflow: visible;
+  min-height: 0;
 }
 
 .proportional-timeline-container {
   position: relative;
   width: 100%;
   max-width: 100%;
+  height: 100%;
   /* Extra horizontal padding so edge labels are fully visible */
   /* Labels are max 180px wide, so we need at least 90px + safety margin on each side */
   padding: 2.5rem 6rem 3rem 6rem;
@@ -739,12 +746,15 @@
   overflow-y: visible;
   scroll-padding-left: 6rem;
   scroll-padding-right: 6rem;
+  display: flex;
+  flex-direction: column;
 }
 
 .timeline-track {
   position: relative;
   width: 100%;
-  height: 140px;
+  flex: 1;
+  min-height: 140px;
 }
 
 .timeline-horizontal-line {
@@ -1110,6 +1120,13 @@
 @media (max-width: 768px) {
   .timeline-full-view {
     padding: 1.25rem 0.75rem 2.5rem 0.75rem;
+    /* Match pdf-viewer-container mobile properties */
+    height: 100%;
+    width: 100%;
+    min-height: 0;
+    touch-action: pan-x pan-y pinch-zoom;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
 
   .proportional-timeline-container {
