@@ -628,18 +628,52 @@ Use contextual inference (e.g., if Monday → next Tuesday → next Friday).
 
 If two events cannot be ordered with certainty, keep original order but flag uncertainty by placing them sequentially.
 
-5. Output Format
+5. Identify Stages (if applicable)
+
+If the text lends itself to being divided into distinct stages, phases, or periods, identify these stages and assign each event to its corresponding stage. Examples of stages might include:
+- "Initial Setup" / "Growth Phase" / "Crisis" / "Resolution"
+- "Planning" / "Implementation" / "Evaluation"
+- "Early Years" / "Expansion" / "Maturity"
+- Or any other natural divisions in the narrative
+
+If the text does not naturally separate into stages (e.g., it's a continuous narrative without clear phases), you may omit the stage field or set it to null.
+
+6. Assess Event Importance
+
+For each event, assess its importance relative to the central theme:
+- "high": Events that are critical to understanding the central theme, major turning points, or key decisions
+- "medium": Events that are relevant and contribute to the narrative but are not central
+- "low": Events that provide context but are secondary to the main story
+
+Focus on selecting events that are at least "medium" importance. Only include "low" importance events if they provide essential context or transitions.
+
+7. Output Format (STRICT)
 
 Return a JSON object with a "timeline" array.
-Each event has the structure:
+Each event MUST have the structure:
 
 {
   "event": "short title",
   "description": "1–2 sentences explaining what happened",
   "order": 1,
-  "date_original_format": "the timestamp as described in the reading",
-  "date_normalized": "normalized timestamp or null if not inferable"
+  "date_original_format": "the timestamp as described in the reading, or the best short human description such as 'January 2021' or 'around 2021'",
+  "date_normalized": "normalized timestamp or null if not inferable",
+  "date": "optional display date; usually the same as date_original_format",
+  "importance": "high" | "medium" | "low",
+  "stage": "stage name" | null
 }
+
+Rules for dates:
+
+- If the text contains ANY explicit or relative time information for the event (month, year, weekday, time of day, decade, 'two years later', 'Day 3', etc.), you MUST set date_original_format to a non-null string that reflects that information.
+- Only use null for date_original_format AND date_normalized when the text truly gives NO time information for that event.
+- If you can infer an approximate year from context (e.g., "two years after the 2019 launch" -> around 2021), you SHOULD set:
+  - "date_original_format": "around 2021"
+  - "date_normalized": "2021"
+- If the text says "In January 2021", you SHOULD set:
+  - "date_original_format": "January 2021"
+  - "date_normalized": "2021-01"
+- The optional "date" field MAY be included and should usually match date_original_format.
 
 Notes
 
@@ -649,19 +683,23 @@ date_normalized is for machine sorting.
 
 If no timestamp exists, both fields can be "null".
 
-6. Additional Guidelines
+8. Additional Guidelines
 
-NEVER invent dates.
+NEVER invent precise dates that are not justified by the text.
 
-When ambiguity exists, make conservative inferences.
+When ambiguity exists, make conservative inferences (e.g., only year or month+year).
 
-Focus on useful, case-relevant events.
+Focus on useful, case-relevant events that support the central theme.
 
-Ensure the timeline is readable for humans and structured for machines.`
+Ensure the timeline is readable for humans and structured for machines.
+
+When assigning importance, be selective: most events should be "high" or "medium" importance. Only include "low" importance events when they provide essential context or smooth transitions between major events.
+
+When identifying stages, be thoughtful: only create stages if the narrative naturally divides into distinct phases. If the text is a continuous flow without clear divisions, set stage to null for all events.`
         },
         {
           role: 'user',
-          content: `Extract a timeline of the main events from this story. Focus on significant plot points and key events that drive the narrative forward. For each event, extract dates in standard formats (dd/mm/yyyy, mm/yyyy, or yyyy). If dates are relative (like "Day 3", "Year 5"), convert them to numeric formats. If no date is available, use null.\n\n${context}\n\nReturn JSON with this structure: { "timeline": [ { "event": "Event title", "description": "What happened (1-2 sentences)", "order": 1, "date": "15/01/2024" or "01/2024" or "2024" or null }, ... ] }`
+          content: `Extract a timeline of the main events from this story. First, identify the central axis or theme that this case is trying to teach, then select events that are most relevant to understanding that theme.\n\nFor EVERY event that has any time-related information (explicit date, month, year, decade, weekday, time-of-day, or relative phrase like "two years later", "Day 3"), you MUST set both:\n- "date_original_format": a short human-readable string describing the time (for example "January 2021", "around 2021", "Year 5", "Day 3")\n- "date_normalized": a machine-sortable approximation whenever possible (for example "2021-01", "2021", "year-5", "day-3"), or null ONLY if you truly cannot infer anything.\n\nOnly use null for both date_original_format and date_normalized if there is absolutely no time context for that event.\n\nIf the text naturally divides into distinct stages or phases, identify these stages and assign each event to its corresponding stage. If the text doesn't lend itself to stage separation, set "stage" to null.\n\nAssess the importance of each event relative to the central theme: "high" for critical events, "medium" for relevant events, "low" for secondary context events.\n\nReturn JSON with this structure exactly:\n{\n  "timeline": [\n    {\n      "event": "Event title",\n      "description": "What happened (1-2 sentences)",\n      "order": 1,\n      "date_original_format": "the timestamp as described in the reading or a short human description",\n      "date_normalized": "normalized timestamp suitable for sorting, or null if not inferable",\n      "importance": "high" | "medium" | "low",\n      "stage": "stage name" | null\n    },\n    ...\n  ]\n}\n\nText to analyze:\n\n${context}`
         }
       ];
       
@@ -691,9 +729,16 @@ Ensure the timeline is readable for humans and structured for machines.`
                 content: `You are an advanced assistant that extracts accurate chronological timelines from business case readings, HBS cases, and narrative texts. Your core objective is to identify the key events and order them chronologically, even when the text contains multiple inconsistent or overlapping time formats (e.g., weekdays, clock times, years, relative dates, decades).
 
 Primary Responsibilities
-1. Extract the MOST relevant events
+0. Identify the Central Axis or Theme
 
-Include events important for understanding the case:
+Before extracting events, identify the central axis or theme that the case/reading is trying to teach. This is the core lesson, strategic question, or narrative thread that ties the case together. Use this theme to:
+- Prioritize events that are most relevant to understanding this central theme
+- Filter out events that are tangential or not essential to the case's core message
+- Ensure the timeline highlights the events that best illustrate the central teaching point
+
+1. Extract the MOST relevant events (filtered by central theme)
+
+Include events important for understanding the case and its central theme:
 
 Strategic decisions or turning points
 
@@ -707,7 +752,7 @@ Market or industry developments
 
 Financial events or crisis triggers
 
-Ignore trivial, tangential, or descriptive non-events.
+Ignore trivial, tangential, or descriptive non-events that don't contribute to understanding the central theme.
 
 2. Detect ALL timestamp formats present in the reading
 
@@ -789,18 +834,52 @@ Use contextual inference (e.g., if Monday → next Tuesday → next Friday).
 
 If two events cannot be ordered with certainty, keep original order but flag uncertainty by placing them sequentially.
 
-5. Output Format
+5. Identify Stages (if applicable)
+
+If the text lends itself to being divided into distinct stages, phases, or periods, identify these stages and assign each event to its corresponding stage. Examples of stages might include:
+- "Initial Setup" / "Growth Phase" / "Crisis" / "Resolution"
+- "Planning" / "Implementation" / "Evaluation"
+- "Early Years" / "Expansion" / "Maturity"
+- Or any other natural divisions in the narrative
+
+If the text does not naturally separate into stages (e.g., it's a continuous narrative without clear phases), you may omit the stage field or set it to null.
+
+6. Assess Event Importance
+
+For each event, assess its importance relative to the central theme:
+- "high": Events that are critical to understanding the central theme, major turning points, or key decisions
+- "medium": Events that are relevant and contribute to the narrative but are not central
+- "low": Events that provide context but are secondary to the main story
+
+Focus on selecting events that are at least "medium" importance. Only include "low" importance events if they provide essential context or transitions.
+
+7. Output Format (STRICT)
 
 Return a JSON object with a "timeline" array.
-Each event has the structure:
+Each event MUST have the structure:
 
 {
   "event": "short title",
   "description": "1–2 sentences explaining what happened",
   "order": 1,
-  "date_original_format": "the timestamp as described in the reading",
-  "date_normalized": "normalized timestamp or null if not inferable"
+  "date_original_format": "the timestamp as described in the reading, or the best short human description such as 'January 2021' or 'around 2021'",
+  "date_normalized": "normalized timestamp or null if not inferable",
+  "date": "optional display date; usually the same as date_original_format",
+  "importance": "high" | "medium" | "low",
+  "stage": "stage name" | null
 }
+
+Rules for dates:
+
+- If the text contains ANY explicit or relative time information for the event (month, year, weekday, time of day, decade, 'two years later', 'Day 3', etc.), you MUST set date_original_format to a non-null string that reflects that information.
+- Only use null for date_original_format AND date_normalized when the text truly gives NO time information for that event.
+- If you can infer an approximate year from context (e.g., "two years after the 2019 launch" -> around 2021), you SHOULD set:
+  - "date_original_format": "around 2021"
+  - "date_normalized": "2021"
+- If the text says "In January 2021", you SHOULD set:
+  - "date_original_format": "January 2021"
+  - "date_normalized": "2021-01"
+- The optional "date" field MAY be included and should usually match date_original_format.
 
 Notes
 
@@ -810,19 +889,23 @@ date_normalized is for machine sorting.
 
 If no timestamp exists, both fields can be "null".
 
-6. Additional Guidelines
+8. Additional Guidelines
 
-NEVER invent dates.
+NEVER invent precise dates that are not justified by the text.
 
-When ambiguity exists, make conservative inferences.
+When ambiguity exists, make conservative inferences (e.g., only year or month+year).
 
-Focus on useful, case-relevant events.
+Focus on useful, case-relevant events that support the central theme.
 
-Ensure the timeline is readable for humans and structured for machines.`
+Ensure the timeline is readable for humans and structured for machines.
+
+When assigning importance, be selective: most events should be "high" or "medium" importance. Only include "low" importance events when they provide essential context or smooth transitions between major events.
+
+When identifying stages, be thoughtful: only create stages if the narrative naturally divides into distinct phases. If the text is a continuous flow without clear divisions, set stage to null for all events.`
               },
               {
                 role: 'user',
-                content: `Extract a timeline of the main events from this story. Focus on significant plot points and key events that drive the narrative forward:\n\n${context}\n\nReturn JSON with this structure: { "timeline": [ { "event": "Event title", "description": "What happened", "order": 1 }, ... ] }`
+                content: `Extract a timeline of the main events from this story. First, identify the central axis or theme that this case is trying to teach, then select events that are most relevant to understanding that theme.\n\nFor EVERY event that has any time-related information (explicit date, month, year, decade, weekday, time-of-day, or relative phrase like "two years later", "Day 3"), you MUST set both:\n- "date_original_format": a short human-readable string describing the time (for example "January 2021", "around 2021", "Year 5", "Day 3")\n- "date_normalized": a machine-sortable approximation whenever possible (for example "2021-01", "2021", "year-5", "day-3"), or null ONLY if you truly cannot infer anything.\n\nOnly use null for both date_original_format and date_normalized if there is absolutely no time context for that event.\n\nIf the text naturally divides into distinct stages or phases, identify these stages and assign each event to its corresponding stage. If the text doesn't lend itself to stage separation, set "stage" to null.\n\nAssess the importance of each event relative to the central theme: "high" for critical events, "medium" for relevant events, "low" for secondary context events.\n\nReturn JSON with this structure exactly:\n{\n  "timeline": [\n    {\n      "event": "Event title",\n      "description": "What happened (1-2 sentences)",\n      "order": 1,\n      "date_original_format": "the timestamp as described in the reading or a short human description",\n      "date_normalized": "normalized timestamp suitable for sorting, or null if not inferable",\n      "importance": "high" | "medium" | "low",\n      "stage": "stage name" | null\n    },\n    ...\n  ]\n}\n\nText to analyze:\n\n${context}`
               }
             ],
             temperature: 0.3,
@@ -873,11 +956,111 @@ Ensure the timeline is readable for humans and structured for machines.`
         }
       }
 
-      // Ensure each event has order
-      timeline = timeline.map((event, index) => ({
-        ...event,
-        order: event.order || index + 1
-      })).sort((a, b) => a.order - b.order);
+      // Helper to infer a simple date string from event text if the model omitted it
+      const inferDateFromText = (text) => {
+        if (!text || typeof text !== 'string') return null;
+
+        // Match patterns like "January 2021", "Jan 2021"
+        const monthNames =
+          '(January|February|March|April|May|June|July|August|September|October|November|December|' +
+          'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)';
+        const monthYearRegex = new RegExp(`\\b${monthNames}\\s+(\\d{4})\\b`, 'i');
+        const monthYearMatch = text.match(monthYearRegex);
+        if (monthYearMatch) {
+          // e.g. "January 2021"
+          return monthYearMatch[0];
+        }
+
+        // Bare 4-digit year like 2019, 2021
+        const yearMatch = text.match(/\b(19|20)\d{2}\b/);
+        if (yearMatch) {
+          return yearMatch[0];
+        }
+
+        return null;
+      };
+
+      // Ensure each event has order and normalize date fields for frontend compatibility
+      timeline = timeline
+        .map((event, index) => {
+          // Support both new fields (date_original_format/date_normalized)
+          // and legacy field (date), and always expose a unified `date` for the UI.
+          let dateOriginal =
+            event.date_original_format ??
+            event.dateOriginalFormat ??
+            event.date ??
+            null;
+
+          let dateNormalized =
+            event.date_normalized ??
+            event.dateNormalized ??
+            null;
+
+          // If the model failed to provide any date fields, try to infer from text
+          if (!dateOriginal && !dateNormalized) {
+            const inferred = inferDateFromText(event.description || event.event || '');
+            if (inferred) {
+              dateOriginal = inferred;
+
+              // Best-effort normalized value: if it's month+year, convert to yyyy-mm; if bare year, keep as-is
+              const monthYearMatch = inferred.match(
+                new RegExp(
+                  `^${'(January|February|March|April|May|June|July|August|September|October|November|December|' +
+                    'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)'}\\s+(\\d{4})$`,
+                  'i'
+                )
+              );
+              if (monthYearMatch) {
+                const monthName = monthYearMatch[1].toLowerCase();
+                const year = monthYearMatch[2];
+                const monthIndex = [
+                  'january',
+                  'february',
+                  'march',
+                  'april',
+                  'may',
+                  'june',
+                  'july',
+                  'august',
+                  'september',
+                  'october',
+                  'november',
+                  'december'
+                ].findIndex((m) => monthName.startsWith(m.slice(0, 3)));
+                if (monthIndex >= 0) {
+                  const month = String(monthIndex + 1).padStart(2, '0');
+                  dateNormalized = `${year}-${month}`;
+                } else {
+                  dateNormalized = year;
+                }
+              } else {
+                // If it's just a year like "2021"
+                const yearOnlyMatch = inferred.match(/^(19|20)\d{2}$/);
+                if (yearOnlyMatch) {
+                  dateNormalized = inferred;
+                }
+              }
+            }
+          }
+
+          // Prefer the original format for display, fall back to normalized or legacy `date`
+          const unifiedDate =
+            event.date ??
+            dateOriginal ??
+            dateNormalized ??
+            null;
+
+          return {
+            ...event,
+            date_original_format: dateOriginal ?? null,
+            date_normalized: dateNormalized ?? null,
+            date: unifiedDate,
+            order: event.order || index + 1,
+            importance: event.importance || 'medium', // Default to medium if not provided
+            stage: event.stage ?? null // Preserve null if explicitly set, otherwise default to null
+          };
+        })
+        .sort((a, b) => a.order - b.order);
 
       // Validate timeline has events
       if (timeline.length === 0) {

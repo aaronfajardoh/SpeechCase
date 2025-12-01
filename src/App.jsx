@@ -3,6 +3,43 @@ import * as pdfjsLib from 'pdfjs-dist'
 import { PDFDocument, rgb } from 'pdf-lib'
 import './App.css'
 
+import {
+  IconUpload,
+  IconDocument,
+  IconPlay,
+  IconPause,
+  IconStop,
+  IconReset,
+  IconRewind,
+  IconForward,
+  IconDownload,
+  IconClose,
+  IconMinimize,
+  IconSpeaker,
+  IconLoading,
+  IconHighlighter,
+  IconCursor,
+  IconZoomIn,
+  IconZoomOut,
+  IconUndo,
+  IconRedo,
+  IconTarget,
+  IconNavigation,
+  IconTimeline,
+  IconUsers,
+  IconMessageCircle,
+  IconFileText,
+  IconChevronLeft,
+  IconChevronRight,
+  IconExpandTimeline,
+  IconMinimizeTimeline
+} from './components/Icons.jsx'
+import ProportionalTimeline from './components/ProportionalTimeline.jsx'
+import PagesSidebar from './components/PagesSidebar.jsx'
+import TimelineSidebar from './components/TimelineSidebar.jsx'
+import CharactersSidebar from './components/CharactersSidebar.jsx'
+import ChatSidebar from './components/ChatSidebar.jsx'
+
 // Set up PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`
 
@@ -12,456 +49,6 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.j
 // if a second render starts before the first one finishes (e.g., on resize).
 let renderPagesPromise = null
 let renderThumbnailsPromise = null
-
-// Apple-like SVG Icons
-const IconUpload = ({ size = 24, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-    <polyline points="17 8 12 3 7 8" />
-    <line x1="12" y1="3" x2="12" y2="15" />
-  </svg>
-)
-
-const IconDocument = ({ size = 24, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-    <polyline points="14 2 14 8 20 8" />
-  </svg>
-)
-
-const IconPlay = ({ size = 18, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
-    <path d="M8 5v14l11-7z" />
-  </svg>
-)
-
-const IconPause = ({ size = 18, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
-    <rect x="6" y="4" width="4" height="16" />
-    <rect x="14" y="4" width="4" height="16" />
-  </svg>
-)
-
-const IconStop = ({ size = 18, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
-    <rect x="6" y="6" width="12" height="12" />
-  </svg>
-)
-
-const IconReset = ({ size = 18, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <polyline points="23 4 23 10 17 10" />
-    <polyline points="1 20 1 14 7 14" />
-    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-  </svg>
-)
-
-const IconRewind = ({ size = 18, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <polygon points="11 19 2 12 11 5 11 19" />
-    <polygon points="22 19 13 12 22 5 22 19" />
-  </svg>
-)
-
-const IconForward = ({ size = 18, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <polygon points="13 19 22 12 13 5 13 19" />
-    <polygon points="2 19 11 12 2 5 2 19" />
-  </svg>
-)
-
-const IconDownload = ({ size = 18, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-    <polyline points="7 10 12 15 17 10" />
-    <line x1="12" y1="15" x2="12" y2="3" />
-  </svg>
-)
-
-const IconClose = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <line x1="18" y1="6" x2="6" y2="18" />
-    <line x1="6" y1="6" x2="18" y2="18" />
-  </svg>
-)
-
-const IconMinimize = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <line x1="5" y1="12" x2="19" y2="12" />
-  </svg>
-)
-
-const IconSpeaker = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
-  </svg>
-)
-
-const IconLoading = ({ size = 18, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={{ animation: 'spin 1s linear infinite' }}>
-    <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
-    <path d="M12 2a10 10 0 0 1 10 10" strokeDasharray="31.416" strokeDashoffset="23.562" />
-  </svg>
-)
-
-const IconHighlighter = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-  </svg>
-)
-
-const IconCursor = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
-  </svg>
-)
-
-const IconZoomIn = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <circle cx="11" cy="11" r="8" />
-    <line x1="21" y1="21" x2="16.65" y2="16.65" />
-    <line x1="11" y1="8" x2="11" y2="14" />
-    <line x1="8" y1="11" x2="14" y2="11" />
-  </svg>
-)
-
-const IconZoomOut = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <circle cx="11" cy="11" r="8" />
-    <line x1="21" y1="21" x2="16.65" y2="16.65" />
-    <line x1="8" y1="11" x2="14" y2="11" />
-  </svg>
-)
-
-const IconUndo = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M3 7v6h6" />
-    <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
-  </svg>
-)
-
-const IconRedo = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M21 7v6h-6" />
-    <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13" />
-  </svg>
-)
-
-const IconTarget = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <circle cx="12" cy="12" r="10" />
-    <circle cx="12" cy="12" r="6" />
-    <circle cx="12" cy="12" r="2" />
-  </svg>
-)
-
-const IconNavigation = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
-    {/* Upward-pointing triangle (arrow) */}
-    <path d="M12 3L8 10h8L12 3z" />
-    {/* Small detached base */}
-    <rect x="10.5" y="11" width="3" height="1.5" rx="0.5" />
-  </svg>
-)
-
-const IconTimeline = ({ size = 20, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <line x1="3" y1="12" x2="21" y2="12" />
-    <circle cx="6" cy="12" r="2" />
-    <circle cx="12" cy="12" r="2" />
-    <circle cx="18" cy="12" r="2" />
-  </svg>
-)
-
-const IconUsers = ({ size = 20, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-    <circle cx="9" cy="7" r="4" />
-    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-  </svg>
-)
-
-const IconMessageCircle = ({ size = 20, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
-  </svg>
-)
-
-const IconFileText = ({ size = 20, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-    <polyline points="14 2 14 8 20 8" />
-    <line x1="16" y1="13" x2="8" y2="13" />
-    <line x1="16" y1="17" x2="8" y2="17" />
-    <polyline points="10 9 9 9 8 9" />
-  </svg>
-)
-
-const IconChevronLeft = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <polyline points="15 18 9 12 15 6" />
-  </svg>
-)
-
-const IconChevronRight = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <polyline points="9 18 15 12 9 6" />
-  </svg>
-)
-
-const IconExpandTimeline = ({ size = 20, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
-  </svg>
-)
-
-const IconMinimizeTimeline = ({ size = 20, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
-  </svg>
-)
-
-// Proportional Timeline Component - Horizontal line with dots
-const ProportionalTimeline = ({ events, selectedEvent, onEventClick, onCloseDetails }) => {
-  const timelineRef = useRef(null)
-  const [timelineWidth, setTimelineWidth] = useState(0)
-
-  // Parse date string to numeric timestamp for calculation
-  const parseDateToTimestamp = (dateStr, index) => {
-    if (!dateStr) return index * 1000 // Default spacing
-    
-    const str = dateStr.toLowerCase().trim()
-    
-    // Try to parse various date formats
-    // Format: dd/mm/yyyy or mm/dd/yyyy
-    const ddmmyyyy = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/)
-    if (ddmmyyyy) {
-      const [, day, month, year] = ddmmyyyy
-      return new Date(parseInt(year), parseInt(month) - 1, parseInt(day)).getTime()
-    }
-    
-    // Format: mm/yyyy
-    const mmyyyy = str.match(/(\d{1,2})\/(\d{4})/)
-    if (mmyyyy) {
-      const [, month, year] = mmyyyy
-      return new Date(parseInt(year), parseInt(month) - 1, 1).getTime()
-    }
-    
-    // Format: yyyy
-    const yyyy = str.match(/(\d{4})/)
-    if (yyyy) {
-      return new Date(parseInt(yyyy[1]), 0, 1).getTime()
-    }
-    
-    // Try parsing as full date string
-    const parsed = Date.parse(dateStr)
-    if (!isNaN(parsed)) {
-      return parsed
-    }
-    
-    // Extract numbers and use as relative time
-    const numbers = str.match(/\d+/)
-    if (numbers) {
-      const num = parseInt(numbers[0])
-      // If it's a day number
-      if (str.includes('day')) {
-        return num * 86400000 // milliseconds in a day
-      }
-      // If it's a year
-      if (str.includes('year')) {
-        return new Date(num, 0, 1).getTime()
-      }
-      // Default: use as days
-      return num * 86400000
-    }
-    
-    // Fallback: use index
-    return index * 1000
-  }
-
-  // Format date for display (preserve original format if possible)
-  const formatDateForDisplay = (dateStr, index) => {
-    if (!dateStr) return `Event ${index + 1}`
-    
-    // If it already looks like a date format, return as-is
-    if (/\d{1,2}\/\d{1,2}\/\d{4}/.test(dateStr) || 
-        /\d{1,2}\/\d{4}/.test(dateStr) || 
-        /^\d{4}$/.test(dateStr)) {
-      return dateStr
-    }
-    
-    // Try to parse and reformat
-    const timestamp = parseDateToTimestamp(dateStr, index)
-    if (timestamp && timestamp !== index * 1000) { // Only if we got a real timestamp
-      const date = new Date(timestamp)
-      if (!isNaN(date.getTime())) {
-        // Check what information we have in the original string
-        const hasDay = /\d{1,2}\/\d{1,2}\/\d{4}/.test(dateStr)
-        const hasMonth = /\d{1,2}\/\d{4}/.test(dateStr)
-        
-        if (hasDay) {
-          // dd/mm/yyyy
-          const day = date.getDate()
-          const month = date.getMonth() + 1
-          const year = date.getFullYear()
-          return `${day}/${month}/${year}`
-        } else if (hasMonth) {
-          // mm/yyyy
-          const month = date.getMonth() + 1
-          const year = date.getFullYear()
-          return `${month}/${year}`
-        } else if (/^\d{4}$/.test(dateStr)) {
-          // yyyy
-          return dateStr
-        } else {
-          // Try to extract year from parsed date
-          return date.getFullYear().toString()
-        }
-      }
-    }
-    
-    // Return original if we can't parse, or fallback to order
-    return dateStr || `Event ${index + 1}`
-  }
-
-  // Calculate proportional positions based on dates
-  const calculatePositions = () => {
-    if (!events || events.length === 0) return []
-
-    // Parse all dates to timestamps
-    const eventsWithTimestamps = events.map((event, index) => ({
-      ...event,
-      timestamp: parseDateToTimestamp(event.date, index),
-      originalIndex: index
-    }))
-
-    // Find min and max timestamps
-    const timestamps = eventsWithTimestamps.map(e => e.timestamp)
-    const minTimestamp = Math.min(...timestamps)
-    const maxTimestamp = Math.max(...timestamps)
-    const timeRange = maxTimestamp - minTimestamp || 1 // Avoid division by zero
-
-    // Calculate proportional positions (0 to 1) and format dates
-    const positioned = eventsWithTimestamps.map((event, idx) => {
-      const displayDate = formatDateForDisplay(event.date, idx)
-      console.log(`Event ${idx}: date="${event.date}", displayDate="${displayDate}"`)
-      return {
-        ...event,
-        position: (event.timestamp - minTimestamp) / timeRange,
-        displayDate: displayDate
-      }
-    })
-    
-    return positioned
-  }
-
-  const positionedEvents = calculatePositions()
-
-  // Update timeline width on resize
-  useEffect(() => {
-    const updateWidth = () => {
-      if (timelineRef.current) {
-        setTimelineWidth(timelineRef.current.offsetWidth)
-      }
-    }
-    updateWidth()
-    window.addEventListener('resize', updateWidth)
-    return () => window.removeEventListener('resize', updateWidth)
-  }, [])
-
-  // Get brief description (first few words)
-  const getBriefDescription = (text, maxWords = 4) => {
-    if (!text) return ''
-    const words = text.split(' ').slice(0, maxWords)
-    return words.join(' ')
-  }
-
-  return (
-    <div className="proportional-timeline-container" ref={timelineRef}>
-      {/* Horizontal Timeline Line */}
-      <div className="timeline-horizontal-line"></div>
-      
-      {/* Events positioned along the line */}
-      <div className="timeline-events-container">
-        {positionedEvents.map((event, index) => {
-          const leftPercent = event.position * 100
-          const isAbove = index % 2 === 0 // Alternate above/below
-          
-          return (
-            <div 
-              key={index} 
-              className={`timeline-event-marker ${isAbove ? 'above' : 'below'} ${selectedEvent === index ? 'selected' : ''}`}
-              style={{ left: `${leftPercent}%` }}
-            >
-              {/* Dot */}
-              <button
-                className="timeline-dot-small"
-                onClick={() => onEventClick(selectedEvent === index ? null : index)}
-                data-event-index={index}
-                aria-label={`Event ${index + 1}: ${event.event}`}
-              />
-              
-              {/* Date and Description */}
-              <div 
-                className={`timeline-event-label ${isAbove ? 'label-above' : 'label-below'}`}
-                onClick={() => onEventClick(selectedEvent === index ? null : index)}
-              >
-                <div className="timeline-event-date">
-                  {event.displayDate || event.date || `Event ${event.order || index + 1}`}
-                </div>
-                <div className="timeline-event-brief">
-                  {getBriefDescription(event.event || event.description, 4)}
-                </div>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-      
-      {/* Event Details Tooltip */}
-      {selectedEvent !== null && positionedEvents[selectedEvent] && (() => {
-        const event = positionedEvents[selectedEvent]
-        const eventElement = timelineRef.current?.querySelector(`[data-event-index="${selectedEvent}"]`)
-        const rect = eventElement?.getBoundingClientRect()
-        const containerRect = timelineRef.current?.getBoundingClientRect()
-        
-        let tooltipStyle = {}
-        if (rect && containerRect) {
-          // Position tooltip above or below based on available space
-          const spaceAbove = rect.top - containerRect.top
-          const spaceBelow = containerRect.bottom - rect.bottom
-          const isAbove = spaceAbove > spaceBelow
-          
-          tooltipStyle = {
-            top: isAbove ? `${rect.top - containerRect.top - 10}px` : `${rect.bottom - containerRect.top + 10}px`,
-            left: `${rect.left + rect.width / 2 - containerRect.left}px`,
-            transform: 'translateX(-50%)',
-            position: 'absolute'
-          }
-        }
-        
-        return (
-          <div className="timeline-event-details-tooltip" style={tooltipStyle}>
-            <button className="tooltip-close" onClick={onCloseDetails}>
-              <IconClose size={14} />
-            </button>
-            <div className="tooltip-header">
-              {event.displayDate && (
-                <div className="tooltip-date">{event.displayDate}</div>
-              )}
-              <div className="tooltip-title">{event.event || `Event ${event.order}`}</div>
-            </div>
-            <div className="tooltip-description">
-              {event.description || event.event || 'No description available.'}
-            </div>
-          </div>
-        )
-      })()}
-    </div>
-  )
-}
 
 function App() {
   const [pdfFile, setPdfFile] = useState(null)
@@ -6016,118 +5603,28 @@ function App() {
             {!isSidebarCollapsed && (
               <div className="sidebar-content">
                 {sidebarView === 'pages' && (
-                  <div className="sidebar-tab-content thumbnail-sidebar-content">
-                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
-                      <div
-                        key={pageNum}
-                        className={`thumbnail-item ${currentPage === pageNum ? 'active' : ''}`}
-                        onClick={() => scrollToPage(pageNum)}
-                        title={`Page ${pageNum}`}
-                      >
-                        <canvas
-                          ref={(el) => {
-                            if (el) thumbnailRefs.current[pageNum] = el
-                          }}
-                          className="thumbnail-canvas"
-                        />
-                        <div className="thumbnail-page-number">{pageNum}</div>
-                      </div>
-                    ))}
-                  </div>
+                  <PagesSidebar
+                    totalPages={totalPages}
+                    currentPage={currentPage}
+                    scrollToPage={scrollToPage}
+                    thumbnailRefs={thumbnailRefs}
+                  />
                 )}
                 {sidebarView === 'timeline' && (
-                  <div className="sidebar-tab-content timeline-sidebar-content">
-                    {isPDFProcessing ? (
-                      <div className="timeline-loading">
-                        <IconLoading size={32} />
-                        <p>Processing PDF for AI features...</p>
-                        <p className="timeline-loading-subtitle">This may take a moment</p>
-                      </div>
-                    ) : isTimelineLoading ? (
-                      <div className="timeline-loading">
-                        <IconLoading size={32} />
-                        <p>Generating timeline...</p>
-                      </div>
-                    ) : timelineError ? (
-                      <div className="timeline-error">
-                        <IconTimeline size={48} />
-                        <h3>Unable to Generate Timeline</h3>
-                        <p>{timelineError}</p>
-                        {documentId && (
-                          <button 
-                            className="btn-retry-timeline"
-                            onClick={() => generateTimeline(0, false)}
-                          >
-                            Try Again
-                          </button>
-                        )}
-                      </div>
-                    ) : timeline && timeline.length > 0 ? (
-                      <div className="timeline-list">
-                        <div className="timeline-header">
-                          <div className="timeline-header-left">
-                            <h3>Story Timeline</h3>
-                            <span className="timeline-count">{timeline.length} events</span>
-                          </div>
-                          <button
-                            className="btn-expand-timeline"
-                            onClick={() => setIsTimelineExpanded(!isTimelineExpanded)}
-                            title={isTimelineExpanded ? 'Minimize timeline' : 'Expand timeline'}
-                          >
-                            {isTimelineExpanded ? <IconMinimizeTimeline size={18} /> : <IconExpandTimeline size={18} />}
-                            {!isSidebarCollapsed && <span>{isTimelineExpanded ? 'Minimize' : 'Expand'}</span>}
-                          </button>
-                        </div>
-                        <div className="timeline-items">
-                          {timeline.map((event, index) => (
-                            <div key={index} className="timeline-item">
-                              <div className="timeline-marker">
-                                <div className="timeline-dot"></div>
-                                {index < timeline.length - 1 && <div className="timeline-line"></div>}
-                              </div>
-                              <div className="timeline-content">
-                                <div className="timeline-event-title">{event.event || `Event ${event.order || index + 1}`}</div>
-                                <div className="timeline-event-description">{event.description || ''}</div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="feature-placeholder">
-                        <IconTimeline size={48} />
-                        <h3>Timeline</h3>
-                        <p>Click to generate timeline from the story</p>
-                        {documentId && (
-                          <button 
-                            className="btn-generate-timeline"
-                            onClick={generateTimeline}
-                          >
-                            Generate Timeline
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  <TimelineSidebar
+                    isPDFProcessing={isPDFProcessing}
+                    isTimelineLoading={isTimelineLoading}
+                    timelineError={timelineError}
+                    documentId={documentId}
+                    generateTimeline={generateTimeline}
+                    timeline={timeline}
+                    isTimelineExpanded={isTimelineExpanded}
+                    setIsTimelineExpanded={setIsTimelineExpanded}
+                    isSidebarCollapsed={isSidebarCollapsed}
+                  />
                 )}
-                {sidebarView === 'characters' && (
-                  <div className="sidebar-tab-content">
-                    <div className="feature-placeholder">
-                      <IconUsers size={48} />
-                      <h3>Characters</h3>
-                      <p>Character list will appear here</p>
-                    </div>
-                  </div>
-                )}
-                {sidebarView === 'chat' && (
-                  <div className="sidebar-tab-content">
-                    <div className="feature-placeholder">
-                      <IconMessageCircle size={48} />
-                      <h3>Chat</h3>
-                      <p>Q&A interface will appear here</p>
-                    </div>
-                  </div>
-                )}
+                {sidebarView === 'characters' && <CharactersSidebar />}
+                {sidebarView === 'chat' && <ChatSidebar />}
               </div>
             )}
           </div>
