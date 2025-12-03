@@ -5110,6 +5110,18 @@ function App() {
     })
   }, [highlights, pageData, renderedPages, pageScale])
 
+  // Update all existing highlight opacities to ensure they use the latest value
+  useEffect(() => {
+    Object.values(highlightLayerRefs.current).forEach(layer => {
+      if (layer) {
+        const highlightRects = layer.querySelectorAll('.highlight-rect')
+        highlightRects.forEach(rect => {
+          rect.style.backgroundColor = 'rgba(251, 188, 4, 0.24)'
+        })
+      }
+    })
+  }, [renderedPages])
+
   // Undo/redo functions for highlights
   const handleUndoHighlight = useCallback(() => {
     setHighlightHistory(hist => {
@@ -5171,9 +5183,15 @@ function App() {
   }, [handleUndoHighlight, handleRedoHighlight])
 
   const renderHighlight = (highlight, highlightLayer) => {
-    // Check if highlight already rendered
-    const existingHighlight = highlightLayer.querySelector(`[data-highlight-id="${highlight.id}"]`)
-    if (existingHighlight) return
+    // Check if highlight already rendered - if so, update its opacity
+    const existingHighlights = highlightLayer.querySelectorAll(`[data-highlight-id="${highlight.id}"]`)
+    if (existingHighlights.length > 0) {
+      // Update existing highlights with new opacity
+      existingHighlights.forEach(existingHighlight => {
+        existingHighlight.style.backgroundColor = 'rgba(251, 188, 4, 0.24)'
+      })
+      return
+    }
 
     // Get current page info to adjust coordinates if scale changed
     const pageInfo = pageData.find(p => p.pageNum === highlight.page)
@@ -5222,7 +5240,7 @@ function App() {
       div.style.top = y + 'px'
       div.style.width = width + 'px'
       div.style.height = height + 'px'
-      div.style.backgroundColor = 'rgba(251, 188, 4, 0.3)'
+      div.style.backgroundColor = 'rgba(251, 188, 4, 0.24)'
       div.style.pointerEvents = 'none'
       div.style.zIndex = '1'
       
@@ -5359,7 +5377,7 @@ function App() {
                   width: pdfWidth,
                   height: pdfHeight,
                   color: rgb(1, 1, 0), // Yellow
-                  opacity: 0.3,
+                  opacity: 0.01,
                   borderOpacity: 0
                 })
               }
@@ -5931,22 +5949,7 @@ function App() {
               </div>
           
           <div className="controls-panel-content">
-            <div className="control-group">
-              <label htmlFor="language-select">Language</label>
-              <select
-                id="language-select"
-                value={language}
-                onChange={(e) => setLanguage(e.target.value)}
-                className="language-select"
-                disabled={isPlaying}
-              >
-                <option value="auto">
-                  Auto {detectedLanguage && `(${detectedLanguage === 'es' ? 'ES' : 'EN'})`}
-                </option>
-                <option value="en">English</option>
-                <option value="es">Español</option>
-              </select>
-            </div>
+            
 
             <div className="control-group">
               <label htmlFor="speed-slider">Speed: {playbackSpeed.toFixed(1)}x</label>
@@ -6063,14 +6066,7 @@ function App() {
                   <IconForward size={16} />
                 </button>
               </div>
-              <button
-                onClick={handleStop}
-                className="btn btn-secondary btn-small btn-stop"
-                disabled={!isPlaying}
-              >
-                <IconStop size={16} />
-                <span>Stop</span>
-              </button>
+              
             </div>
           </div>
 
@@ -6100,3 +6096,5 @@ function App() {
 }
 
 export default App
+
+
