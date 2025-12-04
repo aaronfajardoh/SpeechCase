@@ -268,6 +268,68 @@
   transition: color 0.2s ease;
 }
 
+/* Highlight Control Panel */
+.highlight-control-panel {
+  position: fixed;
+  top: 50%;
+  right: 1.5rem;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: rgba(45, 45, 45, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 12px;
+  padding: 0.75rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(61, 61, 61, 0.6);
+  z-index: 200;
+  opacity: 0.4;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: auto;
+}
+
+.highlight-control-panel:hover {
+  opacity: 1;
+  background: rgba(45, 45, 45, 0.95);
+  border-color: rgba(61, 61, 61, 0.8);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+  transform: translateY(-50%) scale(1.05);
+}
+
+.highlight-color-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.highlight-color-btn:hover {
+  transform: scale(1.1);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.highlight-color-btn.active {
+  border-color: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.2);
+}
+
+.highlight-color-btn.active::after {
+  content: '✓';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  font-size: 14px;
+  font-weight: bold;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
 @keyframes slideInUp {
   from {
     transform: translateY(20px);
@@ -1157,6 +1219,146 @@
 
 .feature-placeholder p {
   font-size: 0.8rem;
+}
+
+/* Highlights Sidebar */
+.highlights-sidebar-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.highlights-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 1rem;
+}
+
+.highlights-items {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+}
+
+.highlight-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: #3d3d3d;
+  border-radius: 8px;
+  border: 1px solid #5f6368;
+  cursor: move;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.highlight-item:hover {
+  background: #454545;
+  border-color: #6f7378;
+}
+
+.highlight-item.dragging {
+  opacity: 0.5;
+}
+
+.highlight-item.drag-over {
+  border-color: #4285f4;
+  background: #4a4a4a;
+}
+
+.highlight-item-content {
+  flex: 1;
+  cursor: text;
+  user-select: text;
+  min-height: 1.5rem;
+  line-height: 1.5;
+}
+
+.highlight-item-normal {
+  font-family: 'Poppins', sans-serif;
+  font-size: 0.875rem;
+  color: #e8eaed;
+  font-weight: 400;
+}
+
+.highlight-item-h2 {
+  font-family: 'Poppins', sans-serif;
+  font-size: 1.125rem;
+  color: #e8eaed;
+  font-weight: 700;
+}
+
+.highlight-item-bullet {
+  font-family: 'Poppins', sans-serif;
+  font-size: 0.875rem;
+  color: #e8eaed;
+  font-weight: 400;
+}
+
+.highlight-item-bullet .bullet-point {
+  margin-right: 0.5rem;
+  color: #4285f4;
+}
+
+.highlight-drag-handle {
+  width: 20px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  opacity: 0.4;
+  transition: opacity 0.2s ease;
+  flex-shrink: 0;
+}
+
+.highlight-item:hover .highlight-drag-handle {
+  opacity: 1;
+}
+
+.highlight-drag-handle:active {
+  cursor: grabbing;
+}
+
+.drag-handle-dots {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.drag-handle-dots span {
+  width: 3px;
+  height: 3px;
+  background: #9aa0a6;
+  border-radius: 50%;
+}
+
+.highlight-edit-input {
+  flex: 1;
+  background: #2d2d2d;
+  border: 1px solid #4285f4;
+  border-radius: 4px;
+  padding: 0.5rem;
+  color: #e8eaed;
+  font-family: 'Poppins', sans-serif;
+  font-size: 0.875rem;
+  outline: none;
+}
+
+.highlights-actions {
+  padding: 0.5rem 0;
+  border-top: 1px solid #5f6368;
+}
+
+.btn-format-summary {
+  width: 100%;
+  justify-content: center;
 }
 
 .mode-toggle {

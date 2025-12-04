@@ -35,7 +35,7 @@ if (process.env.GOOGLE_CREDENTIALS) {
   clientConfig.keyFilename = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 } else {
   // Fall back to local file (for development)
-  const keyFile = join(__dirname, 'speechcase-1ff2439d1c93.json');
+  const keyFile = join(__dirname, 'speechcase-480201-519937c131b7.json');
   if (existsSync(keyFile)) {
     clientConfig.keyFilename = keyFile;
   } else {
@@ -837,10 +837,7 @@ If two events cannot be ordered with certainty, keep original order but flag unc
 5. Identify Stages (if applicable)
 
 If the text lends itself to being divided into distinct stages, phases, or periods, identify these stages and assign each event to its corresponding stage. Examples of stages might include:
-- "Initial Setup" / "Growth Phase" / "Crisis" / "Resolution"
-- "Planning" / "Implementation" / "Evaluation"
-- "Early Years" / "Expansion" / "Maturity"
-- Or any other natural divisions in the narrative
+
 
 If the text does not naturally separate into stages (e.g., it's a continuous narrative without clear phases), you may omit the stage field or set it to null.
 
@@ -1242,6 +1239,55 @@ app.delete('/api/ai/document/:documentId', (req, res) => {
   } catch (error) {
     console.error('Error deleting document:', error);
     res.status(500).json({ error: 'Failed to delete document', details: error.message });
+  }
+});
+
+/**
+ * Generate summary from highlights
+ * POST /api/ai/summary
+ * Body: { documentId: string, highlights: string }
+ */
+app.post('/api/ai/summary', async (req, res) => {
+  try {
+    const chatClient = deepSeekClient || openaiClient;
+    
+    if (!chatClient) {
+      return res.status(503).json({ error: 'No AI API configured. Please set DEEPSEEK_API_KEY or OPENAI_API_KEY environment variable.' });
+    }
+
+    const { documentId, highlights } = req.body;
+
+    if (!highlights || typeof highlights !== 'string' || highlights.trim().length === 0) {
+      return res.status(400).json({ error: 'highlights text is required' });
+    }
+
+    // Use AI to generate summary from highlights
+    const completion = await chatClient.chat.completions.create({
+      model: deepSeekClient ? 'deepseek-chat' : 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a helpful assistant that creates concise, well-structured summaries from highlighted text. Your summaries should be clear, organized, and capture the key points and main ideas from the highlighted content.'
+        },
+        {
+          role: 'user',
+          content: `Create a comprehensive summary based on the following highlighted text from a reading:\n\n${highlights}\n\nProvide a well-structured summary that captures the main points and key ideas.`
+        }
+      ],
+      temperature: 0.7,
+      max_tokens: 1000
+    });
+
+    const summary = completion.choices[0].message.content;
+
+    res.json({
+      success: true,
+      summary,
+      documentId
+    });
+  } catch (error) {
+    console.error('Error generating summary:', error);
+    res.status(500).json({ error: 'Failed to generate summary', details: error.message });
   }
 });
 

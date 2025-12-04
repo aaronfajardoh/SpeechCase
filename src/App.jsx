@@ -39,6 +39,7 @@ import PagesSidebar from './components/PagesSidebar.jsx'
 import TimelineSidebar from './components/TimelineSidebar.jsx'
 import CharactersSidebar from './components/CharactersSidebar.jsx'
 import ChatSidebar from './components/ChatSidebar.jsx'
+import HighlightsSidebar from './components/HighlightsSidebar.jsx'
 
 // Set up PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`
@@ -72,6 +73,7 @@ function App() {
   const [highlightHistory, setHighlightHistory] = useState([[]]) // History stack for undo/redo
   const [historyIndex, setHistoryIndex] = useState(0) // Current position in history
   const [interactionMode, setInteractionMode] = useState('read') // 'read' or 'highlight'
+  const [highlightColor, setHighlightColor] = useState('yellow') // 'yellow', 'green', 'blue'
   const [isSelecting, setIsSelecting] = useState(false)
   const [selectionStart, setSelectionStart] = useState(null)
   const [currentSelection, setCurrentSelection] = useState(null)
@@ -80,9 +82,10 @@ function App() {
   const highlightLayerRefs = useRef({}) // Store highlight layer refs by page number
   const thumbnailRefs = useRef({}) // Store thumbnail canvas refs by page number
   const [renderedThumbnails, setRenderedThumbnails] = useState([]) // Track which thumbnails are rendered
-  const [sidebarView, setSidebarView] = useState('pages') // 'pages', 'timeline', 'characters', 'chat'
+  const [sidebarView, setSidebarView] = useState('pages') // 'pages', 'timeline', 'characters', 'chat', 'highlights'
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false) // Sidebar collapsed state
   const [documentId, setDocumentId] = useState(null) // Document ID for AI features
+  const [highlightItems, setHighlightItems] = useState([]) // Store highlight items for sidebar: { id, text, color, order }
   const [isPDFProcessing, setIsPDFProcessing] = useState(false) // Track if PDF is being processed
   const [timeline, setTimeline] = useState(null) // Timeline data
   const [isTimelineLoading, setIsTimelineLoading] = useState(false) // Timeline loading state
@@ -3944,6 +3947,7 @@ function App() {
     setTotalPages(0)
     setStartPosition(0)
     setHighlights([])
+    setHighlightItems([])
 
     try {
       const arrayBuffer = await file.arrayBuffer()
@@ -3953,6 +3957,7 @@ function App() {
       setPdfDoc(pdf)
       setTotalPages(pdf.numPages)
       setHighlights([]) // Clear highlights when loading new PDF
+      setHighlightItems([]) // Clear highlight items when loading new PDF
       setHighlightHistory([[]]) // Reset history
       setHistoryIndex(0)
       historyIndexRef.current = 0
@@ -4857,9 +4862,11 @@ function App() {
     const clonedRange = range.cloneRange()
     
     // Get all spans in the text layer
-    const allSpans = textLayerDiv.querySelectorAll('span')
+    const allSpans = Array.from(textLayerDiv.querySelectorAll('span'))
     
-    // Process each span to find the precise selected portion
+    // First, collect all selected spans with their selection info
+    const selectedSpans = []
+    
     allSpans.forEach(span => {
       const textNode = span.firstChild
       if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return
@@ -4927,62 +4934,24 @@ function App() {
         }
       }
       
-      // Calculate precise bounding box for the selected portion
+      // Only add if there's actually a selected portion
       if (startOffset < endOffset && startOffset >= 0 && endOffset <= textNode.textContent.length) {
-        // Get the span's style properties (already relative to text layer)
-        const spanLeft = parseFloat(span.style.left) || 0
-        const spanTop = parseFloat(span.style.top) || 0
-        const fontSize = parseFloat(span.style.fontSize) || 12
-        const fontFamily = span.style.fontFamily || 'sans-serif'
-        
-        // Get the selected text portion
-        const selectedText = textNode.textContent.substring(startOffset, endOffset)
-        const textBeforeSelection = textNode.textContent.substring(0, startOffset)
-        
-        // Measure text width to calculate precise position
-        const textBeforeWidth = measureTextWidth(textBeforeSelection, fontFamily, fontSize)
-        const selectedTextWidth = measureTextWidth(selectedText, fontFamily, fontSize)
-        
-        // Get the span's transform to account for rotation
-        const transform = span.style.transform
-        let angle = 0
-        if (transform && transform !== 'none') {
-          // Extract rotation angle from transform string (e.g., "rotate(0.1rad)")
-          const match = transform.match(/rotate\(([^)]+)\)/)
-          if (match) {
-            const angleStr = match[1]
-            if (angleStr.includes('rad')) {
-              angle = parseFloat(angleStr)
-            } else if (angleStr.includes('deg')) {
-              angle = parseFloat(angleStr) * Math.PI / 180
-            }
-          }
-        }
-        
-        // Calculate precise rectangle - return as separate rectangle, not combined
-        if (Math.abs(angle) < 0.001) {
-          // No rotation - simple case: calculate precise position based on text measurement
-          rects.push({
-            x: spanLeft + textBeforeWidth,
-            y: spanTop,
-            width: selectedTextWidth,
-            height: fontSize
-          })
-        } else {
-          // For rotated text, use the full span
-          const fullTextWidth = measureTextWidth(textNode.textContent, fontFamily, fontSize)
-          rects.push({
-            x: spanLeft,
-            y: spanTop,
-            width: fullTextWidth,
-            height: fontSize
-          })
-        }
+        selectedSpans.push({
+          span,
+          textNode,
+          startOffset,
+          endOffset,
+          spanLeft: parseFloat(span.style.left) || 0,
+          spanTop: parseFloat(span.style.top) || 0,
+          fontSize: parseFloat(span.style.fontSize) || 12,
+          fontFamily: span.style.fontFamily || 'sans-serif',
+          transform: span.style.transform
+        })
       }
     })
     
-    // Fallback to getClientRects if no spans were processed
-    if (rects.length === 0) {
+    if (selectedSpans.length === 0) {
+      // Fallback to getClientRects if no spans were processed
       const clientRects = range.getClientRects()
       for (let i = 0; i < clientRects.length; i++) {
         const rect = clientRects[i]
@@ -4994,6 +4963,137 @@ function App() {
             height: rect.height
           })
         }
+      }
+      return rects.length > 0 ? rects : null
+    }
+    
+    // Helper function to combine spans on the same line into a single rectangle
+    function combineSpansOnLine(spanGroup) {
+      if (spanGroup.length === 0) return null
+      
+      // Sort by left position
+      spanGroup.sort((a, b) => a.spanLeft - b.spanLeft)
+      
+      const firstSpan = spanGroup[0]
+      const lastSpan = spanGroup[spanGroup.length - 1]
+      
+      // Check if any span has rotation
+      const hasRotation = spanGroup.some(s => {
+        const transform = s.transform
+        if (!transform || transform === 'none') return false
+        const match = transform.match(/rotate\(([^)]+)\)/)
+        if (match) {
+          const angleStr = match[1]
+          let angle = 0
+          if (angleStr.includes('rad')) {
+            angle = parseFloat(angleStr)
+          } else if (angleStr.includes('deg')) {
+            angle = parseFloat(angleStr) * Math.PI / 180
+          }
+          return Math.abs(angle) >= 0.001
+        }
+        return false
+      })
+      
+      if (hasRotation) {
+        // For rotated text, process each span individually
+        const individualRects = []
+        spanGroup.forEach(spanInfo => {
+          const fullTextWidth = measureTextWidth(spanInfo.textNode.textContent, spanInfo.fontFamily, spanInfo.fontSize)
+          individualRects.push({
+            x: spanInfo.spanLeft,
+            y: spanInfo.spanTop,
+            width: fullTextWidth,
+            height: spanInfo.fontSize
+          })
+        })
+        // Return the first one (we'll handle multiple rectangles separately if needed)
+        return individualRects[0]
+      }
+      
+      // For non-rotated text, combine all spans into one rectangle
+      // Calculate the start position of the first span's selected portion
+      const firstTextBefore = firstSpan.textNode.textContent.substring(0, firstSpan.startOffset)
+      const firstTextBeforeWidth = measureTextWidth(firstTextBefore, firstSpan.fontFamily, firstSpan.fontSize)
+      const firstStartX = firstSpan.spanLeft + firstTextBeforeWidth
+      
+      // Calculate the end position of the last span's selected portion
+      const lastSelectedText = lastSpan.textNode.textContent.substring(lastSpan.startOffset, lastSpan.endOffset)
+      const lastTextBefore = lastSpan.textNode.textContent.substring(0, lastSpan.startOffset)
+      const lastTextBeforeWidth = measureTextWidth(lastTextBefore, lastSpan.fontFamily, lastSpan.fontSize)
+      const lastSelectedWidth = measureTextWidth(lastSelectedText, lastSpan.fontFamily, lastSpan.fontSize)
+      const lastEndX = lastSpan.spanLeft + lastTextBeforeWidth + lastSelectedWidth
+      
+      // For all spans in the group, calculate their full end positions to find the maximum
+      // This ensures we include spaces and any gaps between spans
+      let maxEndX = lastEndX
+      
+      spanGroup.forEach(spanInfo => {
+        // Calculate the end position of this span's selected portion
+        const selectedText = spanInfo.textNode.textContent.substring(spanInfo.startOffset, spanInfo.endOffset)
+        const textBefore = spanInfo.textNode.textContent.substring(0, spanInfo.startOffset)
+        const textBeforeWidth = measureTextWidth(textBefore, spanInfo.fontFamily, spanInfo.fontSize)
+        const selectedWidth = measureTextWidth(selectedText, spanInfo.fontFamily, spanInfo.fontSize)
+        const spanEndX = spanInfo.spanLeft + textBeforeWidth + selectedWidth
+        
+        if (spanEndX > maxEndX) {
+          maxEndX = spanEndX
+        }
+      })
+      
+      // The total width is from the start of the first selection to the end of the last
+      const totalWidth = maxEndX - firstStartX
+      
+      // Use the maximum fontSize from the group
+      const maxFontSize = Math.max(...spanGroup.map(s => s.fontSize))
+      
+      return {
+        x: firstStartX,
+        y: firstSpan.spanTop,
+        width: totalWidth,
+        height: maxFontSize
+      }
+    }
+    
+    // Sort selected spans by their position (top, then left)
+    selectedSpans.sort((a, b) => {
+      const topDiff = a.spanTop - b.spanTop
+      if (Math.abs(topDiff) > 1) { // Allow small tolerance for same line
+        return topDiff
+      }
+      return a.spanLeft - b.spanLeft
+    })
+    
+    // Group consecutive spans on the same line and combine them
+    let currentGroup = []
+    let currentTop = null
+    const tolerance = 1 // Tolerance for considering spans on the same line
+    
+    selectedSpans.forEach((spanInfo, index) => {
+      const isNewLine = currentTop === null || Math.abs(spanInfo.spanTop - currentTop) > tolerance
+      
+      if (isNewLine) {
+        // Process previous group if it exists
+        if (currentGroup.length > 0) {
+          const combinedRect = combineSpansOnLine(currentGroup)
+          if (combinedRect) {
+            rects.push(combinedRect)
+          }
+        }
+        // Start new group
+        currentGroup = [spanInfo]
+        currentTop = spanInfo.spanTop
+      } else {
+        // Add to current group
+        currentGroup.push(spanInfo)
+      }
+    })
+    
+    // Don't forget the last group
+    if (currentGroup.length > 0) {
+      const combinedRect = combineSpansOnLine(currentGroup)
+      if (combinedRect) {
+        rects.push(combinedRect)
       }
     }
     
@@ -5057,6 +5157,7 @@ function App() {
               page: pageNum,
               rects: rectangles, // Array of {x, y, width, height}
               text: selectedText,
+              color: highlightColor, // Store the highlight color
               scale // Store the scale at creation time
             }
             
@@ -5075,6 +5176,18 @@ function App() {
               })
               return newHighlights
             })
+            
+            // Add to highlight items for sidebar
+            setHighlightItems(prev => {
+              const newItem = {
+                id: highlight.id,
+                text: selectedText.trim(),
+                color: highlightColor,
+                order: prev.length
+              }
+              return [...prev, newItem]
+            })
+            
             selection.removeAllRanges()
           }
         }
@@ -5109,6 +5222,41 @@ function App() {
       }
     })
   }, [highlights, pageData, renderedPages, pageScale])
+
+  // Sync highlight items with highlights (for undo/redo)
+  useEffect(() => {
+    // Create a map of current highlight IDs
+    const highlightIds = new Set(highlights.map(h => h.id))
+    
+    // Update highlightItems to match highlights
+    setHighlightItems(prev => {
+      // Remove items that no longer exist in highlights
+      const filtered = prev.filter(item => highlightIds.has(item.id))
+      
+      // Add new highlights that don't have items yet
+      const existingIds = new Set(filtered.map(item => item.id))
+      const newItems = highlights
+        .filter(h => !existingIds.has(h.id))
+        .map((h, index) => ({
+          id: h.id,
+          text: h.text || '',
+          color: h.color || 'yellow',
+          order: filtered.length + index
+        }))
+      
+      // Combine and reorder
+      const combined = [...filtered, ...newItems]
+      return combined
+        .map((item, index) => ({ ...item, order: index }))
+        .sort((a, b) => {
+          // Try to maintain original order based on highlight order
+          const aIndex = highlights.findIndex(h => h.id === a.id)
+          const bIndex = highlights.findIndex(h => h.id === b.id)
+          return aIndex - bIndex
+        })
+        .map((item, index) => ({ ...item, order: index }))
+    })
+  }, [highlights])
 
   // Update all existing highlight opacities to ensure they use the latest value
   useEffect(() => {
@@ -5182,13 +5330,25 @@ function App() {
     }
   }, [handleUndoHighlight, handleRedoHighlight])
 
+  // Helper function to get highlight color
+  const getHighlightColor = (color) => {
+    const colors = {
+      yellow: 'rgba(251, 188, 4, 0.24)',
+      green: 'rgba(52, 168, 83, 0.24)',
+      blue: 'rgba(66, 133, 244, 0.24)'
+    }
+    return colors[color] || colors.yellow
+  }
+
   const renderHighlight = (highlight, highlightLayer) => {
+    const highlightBgColor = getHighlightColor(highlight.color || 'yellow')
+    
     // Check if highlight already rendered - if so, update its opacity
     const existingHighlights = highlightLayer.querySelectorAll(`[data-highlight-id="${highlight.id}"]`)
     if (existingHighlights.length > 0) {
-      // Update existing highlights with new opacity
+      // Update existing highlights with new color
       existingHighlights.forEach(existingHighlight => {
-        existingHighlight.style.backgroundColor = 'rgba(251, 188, 4, 0.24)'
+        existingHighlight.style.backgroundColor = highlightBgColor
       })
       return
     }
@@ -5240,7 +5400,7 @@ function App() {
       div.style.top = y + 'px'
       div.style.width = width + 'px'
       div.style.height = height + 'px'
-      div.style.backgroundColor = 'rgba(251, 188, 4, 0.24)'
+      div.style.backgroundColor = highlightBgColor
       div.style.pointerEvents = 'none'
       div.style.zIndex = '1'
       
@@ -5567,6 +5727,30 @@ function App() {
         </div>
       </div>
 
+      {/* Highlight Control Panel */}
+      {interactionMode === 'highlight' && pdfDoc && !isMobile && (
+        <div className="highlight-control-panel">
+          <button
+            className={`highlight-color-btn ${highlightColor === 'yellow' ? 'active' : ''}`}
+            onClick={() => setHighlightColor('yellow')}
+            title="Yellow: Normal text"
+            style={{ backgroundColor: 'rgba(251, 188, 4, 0.8)' }}
+          />
+          <button
+            className={`highlight-color-btn ${highlightColor === 'green' ? 'active' : ''}`}
+            onClick={() => setHighlightColor('green')}
+            title="Green: Bold H2 headers"
+            style={{ backgroundColor: 'rgba(52, 168, 83, 0.8)' }}
+          />
+          <button
+            className={`highlight-color-btn ${highlightColor === 'blue' ? 'active' : ''}`}
+            onClick={() => setHighlightColor('blue')}
+            title="Blue: Bullet points"
+            style={{ backgroundColor: 'rgba(66, 133, 244, 0.8)' }}
+          />
+        </div>
+      )}
+
       {/* Main PDF Viewer Area */}
       <div className="reader-main">
         {/* Enhanced Sidebar with Tabs */}
@@ -5607,6 +5791,14 @@ function App() {
                   <IconMessageCircle size={18} />
                   {!isSidebarCollapsed && <span>Chat</span>}
                 </button>
+                <button
+                  className={`sidebar-tab ${sidebarView === 'highlights' ? 'active' : ''}`}
+                  onClick={() => setSidebarView('highlights')}
+                  title="Highlights"
+                >
+                  <IconHighlighter size={18} />
+                  {!isSidebarCollapsed && <span>Highlights</span>}
+                </button>
               </div>
               <button
                 className="sidebar-toggle-btn"
@@ -5643,6 +5835,13 @@ function App() {
                 )}
                 {sidebarView === 'characters' && <CharactersSidebar />}
                 {sidebarView === 'chat' && <ChatSidebar />}
+                {sidebarView === 'highlights' && (
+                  <HighlightsSidebar
+                    highlightItems={highlightItems}
+                    setHighlightItems={setHighlightItems}
+                    documentId={documentId}
+                  />
+                )}
               </div>
             )}
           </div>
@@ -5761,7 +5960,7 @@ function App() {
         </div>
         )}
         
-        {/* Feature Views for other tabs (characters, chat) - Only show when not on pages or timeline */}
+        {/* Feature Views for other tabs (characters, chat, highlights) - Only show when not on pages or timeline */}
         {sidebarView !== 'pages' && sidebarView !== 'timeline' && (
           <div className="feature-view-container">
             {sidebarView === 'characters' && (
@@ -5804,6 +6003,28 @@ function App() {
                     <IconMessageCircle size={64} />
                     <h3>Chat Interface</h3>
                     <p>This will display a Q&A chat interface to interact with the PDF content.</p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {sidebarView === 'highlights' && (
+              <div className="feature-view highlights-view">
+                <div className="feature-view-header">
+                  <h2>Highlights</h2>
+                  <button
+                    className="btn-feature-back"
+                    onClick={() => setSidebarView('pages')}
+                    title="Back to PDF"
+                  >
+                    <IconChevronLeft size={16} />
+                    <span>Back to PDF</span>
+                  </button>
+                </div>
+                <div className="feature-view-content">
+                  <div className="feature-placeholder-large">
+                    <IconHighlighter size={64} />
+                    <h3>Highlights</h3>
+                    <p>Highlighted content from the PDF will appear here.</p>
                   </div>
                 </div>
               </div>
