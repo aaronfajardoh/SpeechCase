@@ -5689,6 +5689,29 @@ function App() {
               height: highlight.height || 0
             }]
             
+            // Get highlight color based on highlight.color
+            const highlightColor = highlight.color || 'yellow'
+            let pdfColor
+            let pdfOpacity = 0.3 // Default opacity for highlights
+            
+            switch (highlightColor) {
+              case 'yellow':
+                pdfColor = rgb(0.984, 0.737, 0.016) // rgba(251, 188, 4) normalized
+                pdfOpacity = 0.3
+                break
+              case 'green':
+                pdfColor = rgb(0.204, 0.659, 0.325) // rgba(52, 168, 83) normalized
+                pdfOpacity = 0.3
+                break
+              case 'blue':
+                pdfColor = rgb(0.259, 0.522, 0.957) // rgba(66, 133, 244) normalized
+                pdfOpacity = 0.3
+                break
+              default:
+                pdfColor = rgb(0.984, 0.737, 0.016) // Default to yellow
+                pdfOpacity = 0.3
+            }
+            
             // Draw each rectangle separately
             rects.forEach(rect => {
               // Convert highlight coordinates to PDF coordinates
@@ -5701,14 +5724,14 @@ function App() {
               // Only draw if coordinates are valid and within page bounds
               if (pdfWidth > 0 && pdfHeight > 0 && pdfX >= 0 && pdfY >= 0 && 
                   pdfX + pdfWidth <= pageWidth && pdfY + pdfHeight <= pageHeight) {
-                // Add highlight annotation using a blend mode that works better with PDFs
+                // Add highlight annotation with proper color and opacity
                 page.drawRectangle({
                   x: pdfX,
                   y: pdfY,
                   width: pdfWidth,
                   height: pdfHeight,
-                  color: rgb(1, 1, 0), // Yellow
-                  opacity: 0.01,
+                  color: pdfColor,
+                  opacity: pdfOpacity,
                   borderOpacity: 0
                 })
               }
