@@ -30,7 +30,7 @@ if (process.env.GOOGLE_CREDENTIALS) {
   clientConfig.keyFilename = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 } else {
   // Fall back to local file (for development)
-  const keyFile = join(__dirname, 'speechcase-1ff2439d1c93.json');
+  const keyFile = join(__dirname, 'speechcase-480201-519937c131b7.json');
   if (existsSync(keyFile)) {
     clientConfig.keyFilename = keyFile;
   } else {
