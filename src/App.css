@@ -1765,31 +1765,35 @@
   will-change: transform;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
+  /* Ensure spans are interactive */
+  pointer-events: auto;
 }
 
-/* Uniform selection highlight to prevent double highlighting at span boundaries */
-/* Use a consistent, semi-transparent background that doesn't visually stack */
-/* The key is to use a uniform opacity that prevents visual stacking at boundaries */
+/* Hide native browser selection in highlight mode - we use custom overlay instead */
 .text-layer span::selection {
-  background: rgba(251, 188, 4, 0.3) !important;
+  background: transparent !important;
   color: transparent;
 }
 
 .text-layer span::-moz-selection {
-  background: rgba(251, 188, 4, 0.3) !important;
-  color: transparent;
-}
-
-/* Make space-only spans have transparent selection to prevent double highlighting */
-/* This prevents the overlap effect in blank spaces between words */
-.text-layer span.text-space::selection {
   background: transparent !important;
   color: transparent;
 }
 
-.text-layer span.text-space::-moz-selection {
-  background: transparent !important;
-  color: transparent;
+/* Custom selection overlay layer */
+.selection-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 3;
+  /* Dimensions will be set by JavaScript to match canvas display size */
+  transform-origin: 0 0;
+}
+
+.selection-rect {
+  border-radius: 2px;
 }
 
 .start-position-marker {

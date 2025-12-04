@@ -80,7 +80,10 @@ function App() {
   const canvasRefs = useRef({}) // Store canvas refs by page number
   const textLayerRefs = useRef({}) // Store text layer refs by page number
   const highlightLayerRefs = useRef({}) // Store highlight layer refs by page number
+  const selectionLayerRefs = useRef({}) // Store selection overlay layer refs by page number
   const thumbnailRefs = useRef({}) // Store thumbnail canvas refs by page number
+  const isDraggingSelectionRef = useRef(false) // Track if user is dragging to select
+  const selectionStartRangeRef = useRef(null) // Store the start of selection range
   const [renderedThumbnails, setRenderedThumbnails] = useState([]) // Track which thumbnails are rendered
   const [sidebarView, setSidebarView] = useState('pages') // 'pages', 'timeline', 'characters', 'chat', 'highlights'
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false) // Sidebar collapsed state
@@ -1738,6 +1741,7 @@ function App() {
     canvasRefs.current = {}
     textLayerRefs.current = {}
     highlightLayerRefs.current = {}
+    selectionLayerRefs.current = {}
 
     try {
       // Build repetition map for smart header/footer detection
@@ -1835,6 +1839,14 @@ function App() {
           const canvasRect = canvas.getBoundingClientRect()
           highlightLayerDiv.style.width = canvasRect.width + 'px'
           highlightLayerDiv.style.height = canvasRect.height + 'px'
+        }
+        
+        // Set selection layer dimensions to match canvas display size
+        const selectionLayerDiv = selectionLayerRefs.current[pageNum]
+        if (selectionLayerDiv) {
+          const canvasRect = canvas.getBoundingClientRect()
+          selectionLayerDiv.style.width = canvasRect.width + 'px'
+          selectionLayerDiv.style.height = canvasRect.height + 'px'
         }
 
         // Render text layer (this will also set text layer dimensions)
@@ -4839,6 +4851,7 @@ function App() {
     canvasRefs.current = {}
     textLayerRefs.current = {}
     highlightLayerRefs.current = {}
+    selectionLayerRefs.current = {}
     pdfArrayBufferRef.current = null
     currentPlaybackPositionRef.current = 0
     playbackStartPositionRef.current = 0
@@ -5107,108 +5120,261 @@ function App() {
 
   // Handle text selection to create highlights (only in highlight mode)
   useEffect(() => {
-    const handleMouseUp = () => {
-      // Only process selections in highlight mode
-      if (interactionMode !== 'highlight') return
-      
-      const selection = window.getSelection()
-      if (selection.toString().trim().length > 0 && selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0)
-        const selectedText = selection.toString().trim()
+    if (interactionMode !== 'highlight') {
+      // Clear selection overlay when not in highlight mode
+      Object.values(selectionLayerRefs.current).forEach(layer => {
+        if (layer) layer.innerHTML = ''
+      })
+      return
+    }
+
+    // Render custom selection overlay
+    const renderSelectionOverlay = (range, pageNum) => {
+      if (!range || !pageNum || !textLayerRefs.current[pageNum]) {
+        // Clear selection overlay
+        Object.values(selectionLayerRefs.current).forEach(layer => {
+          if (layer) layer.innerHTML = ''
+        })
+        return
+      }
+
+      const textLayerDiv = textLayerRefs.current[pageNum]
+      const selectionLayer = selectionLayerRefs.current[pageNum]
+      if (!selectionLayer) return
+
+      // Clear previous overlay
+      selectionLayer.innerHTML = ''
+
+      // Calculate precise rectangles
+      const rectangles = calculatePreciseRectangles(range, textLayerDiv)
+      if (!rectangles || rectangles.length === 0) return
+
+      // Get highlight color
+      const highlightBgColor = getHighlightColor(highlightColor)
+
+      // Render each rectangle
+      rectangles.forEach((rect, index) => {
+        const div = document.createElement('div')
+        div.className = 'selection-rect'
+        div.style.position = 'absolute'
+        div.style.left = rect.x + 'px'
+        div.style.top = rect.y + 'px'
+        div.style.width = rect.width + 'px'
+        div.style.height = rect.height + 'px'
+        div.style.backgroundColor = highlightBgColor
+        div.style.pointerEvents = 'none'
+        div.style.zIndex = '3'
+        div.style.borderRadius = '2px'
         
-        if (selectedText.length === 0) return
+        selectionLayer.appendChild(div)
+      })
+    }
+
+    const getRangeFromPoint = (x, y) => {
+      if (document.caretRangeFromPoint) {
+        return document.caretRangeFromPoint(x, y)
+      } else if (document.caretPositionFromPoint) {
+        const pos = document.caretPositionFromPoint(x, y)
+        if (!pos) return null
+        const range = document.createRange()
+        range.setStart(pos.offsetNode, pos.offset)
+        range.setEnd(pos.offsetNode, pos.offset)
+        return range
+      } else {
+        // Fallback: use elementFromPoint and find text node
+        const element = document.elementFromPoint(x, y)
+        if (!element) return null
         
-        // Find the page by checking the common ancestor
-        let startElement = range.startContainer
-        while (startElement && startElement.nodeType !== Node.ELEMENT_NODE) {
-          startElement = startElement.parentElement
-        }
+        // Find the text layer span
+        const span = element.closest('.text-layer span')
+        if (!span || !span.firstChild) return null
         
-        // Try to find page number from start element or its parents
-        let pageNum = null
-        let currentElement = startElement
-        while (currentElement && !pageNum) {
-          if (currentElement.dataset && currentElement.dataset.page) {
-            pageNum = parseInt(currentElement.dataset.page)
-            break
-          }
-          currentElement = currentElement.parentElement
-        }
+        const textNode = span.firstChild
+        if (textNode.nodeType !== Node.TEXT_NODE) return null
         
-        // If not found, check all text layers
-        if (!pageNum) {
-          for (const [page, textLayer] of Object.entries(textLayerRefs.current)) {
-            if (textLayer && textLayer.contains(range.startContainer)) {
-              pageNum = parseInt(page)
-              break
-            }
-          }
-        }
-        
-        if (pageNum && textLayerRefs.current[pageNum]) {
-          const textLayerDiv = textLayerRefs.current[pageNum]
-          
-          // Calculate precise rectangles (one per line segment)
-          const rectangles = calculatePreciseRectangles(range, textLayerDiv)
-          
-          if (rectangles && rectangles.length > 0) {
-            // Get page info to store scale
-            const pageInfo = pageData.find(p => p.pageNum === pageNum)
-            const scale = pageInfo ? pageScale : 1.5
-            
-            // Create highlight with array of rectangles
-            const highlight = {
-              id: Date.now() + Math.random(),
-              page: pageNum,
-              rects: rectangles, // Array of {x, y, width, height}
-              text: selectedText,
-              color: highlightColor, // Store the highlight color
-              scale // Store the scale at creation time
-            }
-            
-            // Add to history for undo/redo
-            setHighlights(prev => {
-              const newHighlights = [...prev, highlight]
-              // Update history: remove any future states if we're not at the end
-              setHighlightHistory(hist => {
-                const currentIdx = historyIndexRef.current
-                const newHistory = hist.slice(0, currentIdx + 1)
-                newHistory.push(newHighlights)
-                const newIdx = newHistory.length - 1
-                historyIndexRef.current = newIdx
-                setHistoryIndex(newIdx)
-                return newHistory
-              })
-              return newHighlights
-            })
-            
-            // Add to highlight items for sidebar
-            setHighlightItems(prev => {
-              const newItem = {
-                id: highlight.id,
-                text: selectedText.trim(),
-                color: highlightColor,
-                order: prev.length
-              }
-              return [...prev, newItem]
-            })
-            
-            selection.removeAllRanges()
-          }
-        }
+        // Create range at start of text node
+        const range = document.createRange()
+        range.setStart(textNode, 0)
+        range.setEnd(textNode, 0)
+        return range
       }
     }
 
-    // Add a small delay to ensure selection is complete
-    const timeoutId = setTimeout(() => {
-      document.addEventListener('mouseup', handleMouseUp)
-    }, 100)
+    const handleMouseDown = (e) => {
+      // Only handle if clicking in a text layer
+      let pageNum = null
+      for (const [page, textLayer] of Object.entries(textLayerRefs.current)) {
+        if (textLayer && (textLayer.contains(e.target) || textLayer === e.target)) {
+          pageNum = parseInt(page)
+          break
+        }
+      }
+
+      if (!pageNum) return
+
+      // Prevent default selection
+      e.preventDefault()
+      
+      // Get the text node and offset at click position
+      const range = getRangeFromPoint(e.clientX, e.clientY)
+      if (!range) return
+
+      // Store start of selection
+      selectionStartRangeRef.current = range.cloneRange()
+      isDraggingSelectionRef.current = true
+
+      // Clear any existing selection
+      window.getSelection().removeAllRanges()
+    }
+
+    const handleMouseMove = (e) => {
+      if (!isDraggingSelectionRef.current || !selectionStartRangeRef.current) return
+
+      // Find which page we're on
+      let pageNum = null
+      for (const [page, textLayer] of Object.entries(textLayerRefs.current)) {
+        const rect = textLayer.getBoundingClientRect()
+        if (textLayer && (textLayer.contains(e.target) || 
+            (rect.left <= e.clientX && e.clientX <= rect.right && 
+             rect.top <= e.clientY && e.clientY <= rect.bottom))) {
+          pageNum = parseInt(page)
+          break
+        }
+      }
+
+      if (!pageNum) return
+
+      // Get current position
+      const range = getRangeFromPoint(e.clientX, e.clientY)
+      if (!range) return
+
+      // Create selection range from start to current position
+      const selectionRange = selectionStartRangeRef.current.cloneRange()
+      selectionRange.setEnd(range.endContainer, range.endOffset)
+
+      // Render custom overlay
+      renderSelectionOverlay(selectionRange, pageNum)
+    }
+
+    const handleMouseUp = (e) => {
+      if (!isDraggingSelectionRef.current || !selectionStartRangeRef.current) {
+        isDraggingSelectionRef.current = false
+        return
+      }
+
+      // Find which page we're on
+      let pageNum = null
+      for (const [page, textLayer] of Object.entries(textLayerRefs.current)) {
+        if (textLayer && (textLayer.contains(e.target) || textLayer === e.target)) {
+          pageNum = parseInt(page)
+          break
+        }
+      }
+
+      if (!pageNum) {
+        // Clear selection overlay
+        Object.values(selectionLayerRefs.current).forEach(layer => {
+          if (layer) layer.innerHTML = ''
+        })
+        isDraggingSelectionRef.current = false
+        selectionStartRangeRef.current = null
+        return
+      }
+
+      // Get final position
+      const range = getRangeFromPoint(e.clientX, e.clientY)
+      if (!range) {
+        isDraggingSelectionRef.current = false
+        selectionStartRangeRef.current = null
+        return
+      }
+
+      // Create final selection range
+      const selectionRange = selectionStartRangeRef.current.cloneRange()
+      selectionRange.setEnd(range.endContainer, range.endOffset)
+
+      const selectedText = selectionRange.toString().trim()
+      
+      if (selectedText.length === 0) {
+        // Clear selection overlay
+        Object.values(selectionLayerRefs.current).forEach(layer => {
+          if (layer) layer.innerHTML = ''
+        })
+        isDraggingSelectionRef.current = false
+        return
+      }
+
+      const textLayerDiv = textLayerRefs.current[pageNum]
+      if (!textLayerDiv) {
+        isDraggingSelectionRef.current = false
+        return
+      }
+
+      // Calculate precise rectangles
+      const rectangles = calculatePreciseRectangles(selectionRange, textLayerDiv)
+      
+      if (rectangles && rectangles.length > 0) {
+        // Get page info to store scale
+        const pageInfo = pageData.find(p => p.pageNum === pageNum)
+        const scale = pageInfo ? pageScale : 1.5
+        
+        // Create highlight with array of rectangles
+        const highlight = {
+          id: Date.now() + Math.random(),
+          page: pageNum,
+          rects: rectangles,
+          text: selectedText,
+          color: highlightColor,
+          scale
+        }
+        
+        // Add to history for undo/redo
+        setHighlights(prev => {
+          const newHighlights = [...prev, highlight]
+          setHighlightHistory(hist => {
+            const currentIdx = historyIndexRef.current
+            const newHistory = hist.slice(0, currentIdx + 1)
+            newHistory.push(newHighlights)
+            const newIdx = newHistory.length - 1
+            historyIndexRef.current = newIdx
+            setHistoryIndex(newIdx)
+            return newHistory
+          })
+          return newHighlights
+        })
+        
+        // Add to highlight items for sidebar
+        setHighlightItems(prev => {
+          const newItem = {
+            id: highlight.id,
+            text: selectedText.trim(),
+            color: highlightColor,
+            order: prev.length
+          }
+          return [...prev, newItem]
+        })
+      }
+
+      // Clear selection overlay
+      Object.values(selectionLayerRefs.current).forEach(layer => {
+        if (layer) layer.innerHTML = ''
+      })
+
+      isDraggingSelectionRef.current = false
+      selectionStartRangeRef.current = null
+    }
+
+    // Add event listeners
+    document.addEventListener('mousedown', handleMouseDown)
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
 
     return () => {
-      clearTimeout(timeoutId)
+      document.removeEventListener('mousedown', handleMouseDown)
+      document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [textItems, pageData, pageScale, interactionMode])
+  }, [textItems, pageData, pageScale, interactionMode, highlightColor])
 
   // Render highlights on pages
   useEffect(() => {
@@ -5950,6 +6116,12 @@ function App() {
                         if (el) highlightLayerRefs.current[pageInfo.pageNum] = el
                       }}
                       className="highlight-layer"
+                    />
+                    <div
+                      ref={(el) => {
+                        if (el) selectionLayerRefs.current[pageInfo.pageNum] = el
+                      }}
+                      className="selection-layer"
                     />
                   </div>
                 </div>
