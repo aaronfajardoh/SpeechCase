@@ -87,6 +87,17 @@ function App() {
   const [renderedThumbnails, setRenderedThumbnails] = useState([]) // Track which thumbnails are rendered
   const [sidebarView, setSidebarView] = useState('pages') // 'pages', 'timeline', 'characters', 'chat', 'highlights'
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false) // Sidebar collapsed state
+  const [sidebarWidth, setSidebarWidth] = useState(230) // Sidebar width in pixels
+  const [isResizing, setIsResizing] = useState(false) // Track if sidebar is being resized
+  const isResizingRef = useRef(false) // Track if user is resizing the sidebar
+  const resizeStartXRef = useRef(0) // Track initial mouse X position when resizing starts
+  const resizeStartWidthRef = useRef(230) // Track initial sidebar width when resizing starts
+  const normalSidebarWidthRef = useRef(230) // Store normal sidebar width before expansion
+  const previousInteractionModeRef = useRef('read') // Track previous interaction mode to detect changes
+  const sidebarWidthRef = useRef(230) // Track current sidebar width
+  const isSidebarCollapsedRef = useRef(false) // Track current sidebar collapsed state
+  const sidebarViewRef = useRef('pages') // Track current sidebar view
+  const previousSidebarViewRef = useRef('pages') // Track previous sidebar view to detect changes
   const [documentId, setDocumentId] = useState(null) // Document ID for AI features
   const [highlightItems, setHighlightItems] = useState([]) // Store highlight items for sidebar: { id, text, color, order }
   const [isPDFProcessing, setIsPDFProcessing] = useState(false) // Track if PDF is being processed
@@ -153,6 +164,147 @@ function App() {
     window.addEventListener('resize', checkMobile)
     return () => window.removeEventListener('resize', checkMobile)
   }, [])
+
+  // Sidebar resize handlers
+  const handleResizeStart = useCallback((e) => {
+    if (isSidebarCollapsed) return
+    e.preventDefault()
+    isResizingRef.current = true
+    setIsResizing(true) // Disable CSS transition during resize
+    resizeStartXRef.current = e.clientX
+    resizeStartWidthRef.current = sidebarWidth
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [isSidebarCollapsed, sidebarWidth])
+
+  const handleResizeMove = useCallback((e) => {
+    if (!isResizingRef.current) return
+    const deltaX = e.clientX - resizeStartXRef.current
+    const newWidth = Math.max(220, Math.min(500, resizeStartWidthRef.current + deltaX))
+    setSidebarWidth(newWidth)
+    
+    // Update normal width if not on highlights tab (preserve original normal width when on highlights)
+    if (sidebarView !== 'highlights') {
+      normalSidebarWidthRef.current = newWidth
+    }
+  }, [sidebarView])
+
+  const handleResizeEnd = useCallback(() => {
+    if (!isResizingRef.current) return
+    isResizingRef.current = false
+    setIsResizing(false) // Re-enable CSS transition after resize
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }, [])
+
+  // Add global mouse event listeners for resizing
+  useEffect(() => {
+    if (isMobile) return
+    
+    window.addEventListener('mousemove', handleResizeMove)
+    window.addEventListener('mouseup', handleResizeEnd)
+    
+    return () => {
+      window.removeEventListener('mousemove', handleResizeMove)
+      window.removeEventListener('mouseup', handleResizeEnd)
+    }
+  }, [isMobile, handleResizeMove, handleResizeEnd])
+
+  // Update refs when state changes
+  useEffect(() => {
+    sidebarWidthRef.current = sidebarWidth
+    isSidebarCollapsedRef.current = isSidebarCollapsed
+    sidebarViewRef.current = sidebarView
+  }, [sidebarWidth, isSidebarCollapsed, sidebarView])
+
+  // Initialize previous sidebar view ref
+  useEffect(() => {
+    previousSidebarViewRef.current = sidebarView
+  }, []) // Only run once on mount
+
+  // Auto-expand sidebar and minimize panel when Highlight mode is activated
+  useEffect(() => {
+    if (isMobile || !pdfDoc) return
+    
+    // Read the ref value at the start (before updating it)
+    const wasHighlight = previousInteractionModeRef.current === 'highlight'
+    const isHighlight = interactionMode === 'highlight'
+    
+    // Only run expansion logic when mode actually changes, not on every render
+    if (isHighlight && !wasHighlight) {
+      // Highlight mode was just activated
+      // Store current width as normal width if not already expanded
+      const currentWidth = sidebarWidthRef.current
+      if (currentWidth < 500) {
+        normalSidebarWidthRef.current = currentWidth
+      }
+      
+      // Expand sidebar if collapsed
+      if (isSidebarCollapsedRef.current) {
+        setIsSidebarCollapsed(false)
+        // Wait a bit for collapse animation, then expand to max width
+        setTimeout(() => {
+          setSidebarWidth(500)
+        }, 150)
+      } else {
+        // Animate to max width (CSS transition will handle the animation)
+        setSidebarWidth(500)
+      }
+      
+      // Switch to highlights sidebar view (only when mode first activates)
+      setSidebarView('highlights')
+      
+      // Minimize control panel
+      setIsControlsPanelMinimized(true)
+    } else if (!isHighlight && wasHighlight) {
+      // Highlight mode was just deactivated, reverse expansion if still on highlights tab
+      if (sidebarViewRef.current === 'highlights' && sidebarWidthRef.current >= 500) {
+        setSidebarWidth(normalSidebarWidthRef.current || 230)
+      }
+      
+      // Maximize control panel (only if switching to read mode)
+      if (interactionMode === 'read') {
+        setIsControlsPanelMinimized(false)
+      }
+    }
+    
+    // Update previous interaction mode ref
+    previousInteractionModeRef.current = interactionMode
+  }, [interactionMode, isMobile, pdfDoc]) // Only depend on interactionMode to prevent interference
+
+  // Auto-expand/collapse sidebar when switching to/from highlights view
+  useEffect(() => {
+    if (isMobile || !pdfDoc) return
+    
+    const wasHighlights = previousSidebarViewRef.current === 'highlights'
+    const isHighlights = sidebarView === 'highlights'
+    
+    if (isHighlights && !wasHighlights) {
+      // Just switched TO highlights view
+      // Store current width as normal width if not already expanded
+      if (sidebarWidthRef.current < 500) {
+        normalSidebarWidthRef.current = sidebarWidthRef.current
+      }
+      
+      // Expand sidebar if collapsed
+      if (isSidebarCollapsedRef.current) {
+        setIsSidebarCollapsed(false)
+        // Wait a bit for collapse animation, then expand to max width
+        setTimeout(() => {
+          setSidebarWidth(500)
+        }, 150)
+      } else {
+        // Animate to max width (CSS transition will handle the animation)
+        setSidebarWidth(500)
+      }
+    } else if (!isHighlights && wasHighlights && sidebarWidthRef.current >= 500) {
+      // Just switched AWAY from highlights view, reverse expansion
+      setSidebarWidth(normalSidebarWidthRef.current || 230)
+    }
+    
+    // Update previous sidebar view
+    previousSidebarViewRef.current = sidebarView
+  }, [sidebarView, isMobile, pdfDoc])
 
   // Auto-hide toolbar on scroll (mobile only)
   useEffect(() => {
@@ -5949,7 +6101,10 @@ function App() {
       <div className="reader-main">
         {/* Enhanced Sidebar with Tabs */}
         {pdfDoc && totalPages > 0 && !isMobile && (
-          <div className={`pdf-sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}>
+          <div 
+            className={`pdf-sidebar ${isSidebarCollapsed ? 'collapsed' : ''} ${isResizing ? 'resizing' : ''}`}
+            style={{ width: isSidebarCollapsed ? '52px' : `${sidebarWidth}px` }}
+          >
             {/* Sidebar Header with Tabs */}
             <div className="sidebar-header">
               <div className="sidebar-tabs">
@@ -6037,6 +6192,13 @@ function App() {
                   />
                 )}
               </div>
+            )}
+            {/* Resize Handle */}
+            {!isSidebarCollapsed && (
+              <div 
+                className="sidebar-resize-handle"
+                onMouseDown={handleResizeStart}
+              />
             )}
           </div>
         )}
@@ -6160,77 +6322,6 @@ function App() {
         </div>
         )}
         
-        {/* Feature Views for other tabs (characters, chat, highlights) - Only show when not on pages or timeline */}
-        {sidebarView !== 'pages' && sidebarView !== 'timeline' && (
-          <div className="feature-view-container">
-            {sidebarView === 'characters' && (
-              <div className="feature-view characters-view">
-                <div className="feature-view-header">
-                  <h2>Characters</h2>
-                  <button
-                    className="btn-feature-back"
-                    onClick={() => setSidebarView('pages')}
-                    title="Back to PDF"
-                  >
-                    <IconChevronLeft size={16} />
-                    <span>Back to PDF</span>
-                  </button>
-                </div>
-                <div className="feature-view-content">
-                  <div className="feature-placeholder-large">
-                    <IconUsers size={64} />
-                    <h3>Character List</h3>
-                    <p>This will display a list of characters with images extracted from the PDF.</p>
-                  </div>
-                </div>
-              </div>
-            )}
-            {sidebarView === 'chat' && (
-              <div className="feature-view chat-view">
-                <div className="feature-view-header">
-                  <h2>Q&A Chat</h2>
-                  <button
-                    className="btn-feature-back"
-                    onClick={() => setSidebarView('pages')}
-                    title="Back to PDF"
-                  >
-                    <IconChevronLeft size={16} />
-                    <span>Back to PDF</span>
-                  </button>
-                </div>
-                <div className="feature-view-content">
-                  <div className="feature-placeholder-large">
-                    <IconMessageCircle size={64} />
-                    <h3>Chat Interface</h3>
-                    <p>This will display a Q&A chat interface to interact with the PDF content.</p>
-                  </div>
-                </div>
-              </div>
-            )}
-            {sidebarView === 'highlights' && (
-              <div className="feature-view highlights-view">
-                <div className="feature-view-header">
-                  <h2>Highlights</h2>
-                  <button
-                    className="btn-feature-back"
-                    onClick={() => setSidebarView('pages')}
-                    title="Back to PDF"
-                  >
-                    <IconChevronLeft size={16} />
-                    <span>Back to PDF</span>
-                  </button>
-                </div>
-                <div className="feature-view-content">
-                  <div className="feature-placeholder-large">
-                    <IconHighlighter size={64} />
-                    <h3>Highlights</h3>
-                    <p>Highlighted content from the PDF will appear here.</p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Mobile Bottom Controls Bar - Always Visible */}
