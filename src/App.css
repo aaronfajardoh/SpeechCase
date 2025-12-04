@@ -1767,6 +1767,31 @@
   -webkit-backface-visibility: hidden;
 }
 
+/* Uniform selection highlight to prevent double highlighting at span boundaries */
+/* Use a consistent, semi-transparent background that doesn't visually stack */
+/* The key is to use a uniform opacity that prevents visual stacking at boundaries */
+.text-layer span::selection {
+  background: rgba(251, 188, 4, 0.3) !important;
+  color: transparent;
+}
+
+.text-layer span::-moz-selection {
+  background: rgba(251, 188, 4, 0.3) !important;
+  color: transparent;
+}
+
+/* Make space-only spans have transparent selection to prevent double highlighting */
+/* This prevents the overlap effect in blank spaces between words */
+.text-layer span.text-space::selection {
+  background: transparent !important;
+  color: transparent;
+}
+
+.text-layer span.text-space::-moz-selection {
+  background: transparent !important;
+  color: transparent;
+}
+
 .start-position-marker {
   background-color: rgba(66, 133, 244, 0.25) !important;
   border-bottom: 2px solid #4285f4 !important;

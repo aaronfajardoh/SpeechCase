@@ -2022,6 +2022,11 @@ function App() {
         span.dataset.page = pageNum
         span.dataset.charIndex = itemCharIndex
         
+        // Mark space-only spans to prevent double highlighting
+        if (!/\S/.test(word)) {
+          span.classList.add('text-space')
+        }
+        
         // Store text item with position info
         const textItem = {
           str: word,
