@@ -4136,6 +4136,7 @@ function App() {
     setStartPosition(0)
     setHighlights([])
     setHighlightItems([])
+    setHighlightColor('yellow') // Reset to yellow when uploading a new PDF
 
     try {
       const arrayBuffer = await file.arrayBuffer()
@@ -6986,24 +6987,33 @@ function App() {
       {/* Highlight Control Panel */}
       {interactionMode === 'highlight' && pdfDoc && !isMobile && (
         <div className="highlight-control-panel">
-          <button
-            className={`highlight-color-btn ${highlightColor === 'yellow' ? 'active' : ''}`}
-            onClick={() => setHighlightColor('yellow')}
-            title="Yellow: Normal text"
-            style={{ backgroundColor: 'rgba(251, 188, 4, 0.8)' }}
-          />
-          <button
-            className={`highlight-color-btn ${highlightColor === 'green' ? 'active' : ''}`}
-            onClick={() => setHighlightColor('green')}
-            title="Green: Bold H2 headers"
-            style={{ backgroundColor: 'rgba(52, 168, 83, 0.8)' }}
-          />
-          <button
-            className={`highlight-color-btn ${highlightColor === 'blue' ? 'active' : ''}`}
-            onClick={() => setHighlightColor('blue')}
-            title="Blue: Bullet points"
-            style={{ backgroundColor: 'rgba(66, 133, 244, 0.8)' }}
-          />
+          <div className="highlight-color-option">
+            <button
+              className={`highlight-color-btn ${highlightColor === 'yellow' ? 'active' : ''}`}
+              onClick={() => setHighlightColor('yellow')}
+              title="Yellow: Normal text"
+              style={{ backgroundColor: 'rgba(251, 188, 4, 0.8)' }}
+            />
+            <span className="highlight-color-label">Aa</span>
+          </div>
+          <div className="highlight-color-option">
+            <button
+              className={`highlight-color-btn ${highlightColor === 'green' ? 'active' : ''}`}
+              onClick={() => setHighlightColor('green')}
+              title="Green: Bold H2 headers"
+              style={{ backgroundColor: 'rgba(52, 168, 83, 0.8)' }}
+            />
+            <span className="highlight-color-label highlight-color-label-bold">Aa</span>
+          </div>
+          <div className="highlight-color-option">
+            <button
+              className={`highlight-color-btn ${highlightColor === 'blue' ? 'active' : ''}`}
+              onClick={() => setHighlightColor('blue')}
+              title="Blue: Bullet points"
+              style={{ backgroundColor: 'rgba(66, 133, 244, 0.8)' }}
+            />
+            <span className="highlight-color-label">• Aa</span>
+          </div>
         </div>
       )}
 
