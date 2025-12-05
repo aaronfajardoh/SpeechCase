@@ -6950,6 +6950,17 @@ function App() {
         </div>
 
         <div className="toolbar-right">
+        {interactionMode === 'highlight' && highlights.length > 0 && (
+            <button
+              onClick={handleDownloadPdf}
+              className="btn-toolbar"
+              disabled={isLoading || highlights.length === 0}
+              title="Download Highlighted PDF"
+            >
+              <IconDownload size={16} />
+              <span>Download Highlighted PDF</span>
+            </button>
+          )}
           {totalPages > 0 && (
             <div className="page-counter">
               <span className="page-counter-text">Page {currentPage} of {totalPages}</span>
@@ -6974,6 +6985,7 @@ function App() {
               <IconZoomIn size={16} />
             </button>
           </div>
+          
           <button
             onClick={handleReset}
             className="btn-toolbar"
@@ -7475,14 +7487,6 @@ function App() {
                 <div className="highlights-count">
                   {highlights.length} highlight{highlights.length !== 1 ? 's' : ''}
                 </div>
-                <button
-                  onClick={handleDownloadPdf}
-                  className="btn btn-primary btn-small"
-                  disabled={isLoading || highlights.length === 0}
-                >
-                  <IconDownload size={16} />
-                  <span>Download Highlighted PDF</span>
-                </button>
               </div>
             )}
 
