@@ -49,8 +49,17 @@ const client = new textToSpeech.TextToSpeechClient(clientConfig);
 let openaiClient = null;
 let deepSeekClient = null;
 
+// Check if environment variables are loaded (for debugging)
+const hasDeepSeekKey = process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY.trim().length > 0;
+const hasOpenAIKey = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim().length > 0;
+
+console.log('Environment check:', {
+  DEEPSEEK_API_KEY: hasDeepSeekKey ? 'Found' : 'Not found or empty',
+  OPENAI_API_KEY: hasOpenAIKey ? 'Found' : 'Not found or empty'
+});
+
 // Initialize Deep Seek (preferred for chat completions - cheaper)
-if (process.env.DEEPSEEK_API_KEY) {
+if (hasDeepSeekKey) {
   try {
     initializeDeepSeek(process.env.DEEPSEEK_API_KEY);
     deepSeekClient = new OpenAI({
@@ -62,11 +71,11 @@ if (process.env.DEEPSEEK_API_KEY) {
     console.warn('Failed to initialize Deep Seek client:', error.message);
   }
 } else {
-  console.warn('DEEPSEEK_API_KEY not found. Will use OpenAI for chat if available.');
+  console.warn('DEEPSEEK_API_KEY not found or empty. Will use OpenAI for chat if available.');
 }
 
 // Initialize OpenAI (for chat completions and fallback)
-if (process.env.OPENAI_API_KEY) {
+if (hasOpenAIKey) {
   try {
     initializeOpenAI(process.env.OPENAI_API_KEY);
     openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -75,7 +84,7 @@ if (process.env.OPENAI_API_KEY) {
     console.warn('Failed to initialize OpenAI client:', error.message);
   }
 } else {
-  console.warn('OPENAI_API_KEY not found. Some AI features may not be available.');
+  console.warn('OPENAI_API_KEY not found or empty. Some AI features may not be available.');
 }
 
 // Helper function to split text into chunks under 5000 bytes
@@ -1252,7 +1261,22 @@ app.post('/api/ai/summary', async (req, res) => {
     const chatClient = deepSeekClient || openaiClient;
     
     if (!chatClient) {
-      return res.status(503).json({ error: 'No AI API configured. Please set DEEPSEEK_API_KEY or OPENAI_API_KEY environment variable.' });
+      const hasDeepSeek = process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY.trim().length > 0;
+      const hasOpenAI = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim().length > 0;
+      
+      let errorMsg = 'No AI API configured. ';
+      if (!hasDeepSeek && !hasOpenAI) {
+        errorMsg += 'Please set DEEPSEEK_API_KEY or OPENAI_API_KEY in your .env file and restart the server.';
+      } else if (hasDeepSeek && !deepSeekClient) {
+        errorMsg += 'DEEPSEEK_API_KEY is set but client initialization failed. Check your API key and restart the server.';
+      } else if (hasOpenAI && !openaiClient) {
+        errorMsg += 'OPENAI_API_KEY is set but client initialization failed. Check your API key and restart the server.';
+      } else {
+        errorMsg += 'Please set DEEPSEEK_API_KEY or OPENAI_API_KEY environment variable and restart the server.';
+      }
+      
+      console.error('Summary endpoint error:', errorMsg);
+      return res.status(503).json({ error: errorMsg });
     }
 
     const { documentId, highlights } = req.body;
@@ -1266,12 +1290,12 @@ app.post('/api/ai/summary', async (req, res) => {
       model: deepSeekClient ? 'deepseek-chat' : 'gpt-4o-mini',
       messages: [
         {
-          role: 'system',
-          content: 'You are a helpful assistant that creates concise, well-structured summaries from highlighted text. Your summaries should be clear, organized, and capture the key points and main ideas from the highlighted content.'
+          "role": "system",
+          "content": "You are a bullet-only briefing engine for HBS students: no main titles (Example: 'Summary of...' - this is not allowed), no filler, just tight facts, numbers, decisions, trade-offs, stakes—ready for students to have handy relevant information about the main points of a reading so they can participate in class discussions. Create your summary exclusively based on the highlights provided by the user. Do not add information that is not present in the highlights. Synthesize and organize the highlighted content into a coherent, well-structured summary that captures the main points and key ideas from the highlights."
         },
         {
-          role: 'user',
-          content: `Create a comprehensive summary based on the following highlighted text from a reading:\n\n${highlights}\n\nProvide a well-structured summary that captures the main points and key ideas.`
+          "role": "user", 
+          "content": `Create a summary based exclusively on the following highlights from a reading. Only use information present in these highlights:\n\n${highlights}\n\nSynthesize these highlights into a well-structured summary that captures the main points and key ideas.`
         }
       ],
       temperature: 0.7,

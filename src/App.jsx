@@ -78,7 +78,10 @@ function App() {
   const [connectingFrom, setConnectingFrom] = useState(null) // Track connection start: { highlightId, dot: 'left' | 'right' }
   const connectionLayerRefs = useRef({}) // Store connection layer refs by page number
   const hoveredHighlightIdRef = useRef(null) // Ref for hover state to avoid closure issues
+  const isHoveringTooltipRef = useRef(false) // Track if mouse is over tooltip
   const [mousePosition, setMousePosition] = useState(null) // Track mouse position for temporary connection line: { x, y, page }
+  const [showTooltipFor, setShowTooltipFor] = useState(null) // Track which highlight shows tooltip: { highlightId, x, y, page? }
+  const tooltipLayerRefs = useRef({}) // Store tooltip layer refs by page number
   const [isSelecting, setIsSelecting] = useState(false)
   const [selectionStart, setSelectionStart] = useState(null)
   const [currentSelection, setCurrentSelection] = useState(null)
@@ -5854,6 +5857,147 @@ function App() {
     })
   }, [highlights, pageData, pageScale, hoveredHighlightId, connectingFrom, mousePosition])
 
+  // Handle color change for highlight
+  const handleChangeHighlightColor = (highlightId, newColor) => {
+    setHighlights(prev => {
+      const updated = prev.map(h => {
+        if (h.id === highlightId) {
+          return { ...h, color: newColor }
+        }
+        return h
+      })
+      // Update history
+      setHighlightHistory(hist => {
+        const currentIdx = historyIndexRef.current
+        const newHistory = hist.slice(0, currentIdx + 1)
+        newHistory.push(updated)
+        const newIdx = newHistory.length - 1
+        historyIndexRef.current = newIdx
+        setHistoryIndex(newIdx)
+        return newHistory
+      })
+      return updated
+    })
+    // Update highlightItems color
+    setHighlightItems(prev => {
+      return prev.map(item => {
+        if (item.id === highlightId) {
+          return { ...item, color: newColor }
+        }
+        return item
+      })
+    })
+    setShowTooltipFor(null) // Hide tooltip after color change
+  }
+
+  // Handle delete highlight
+  const handleDeleteHighlight = (highlightId) => {
+    setHighlights(prev => {
+      const filtered = prev.filter(h => h.id !== highlightId)
+      // Update history
+      setHighlightHistory(hist => {
+        const currentIdx = historyIndexRef.current
+        const newHistory = hist.slice(0, currentIdx + 1)
+        newHistory.push(filtered)
+        const newIdx = newHistory.length - 1
+        historyIndexRef.current = newIdx
+        setHistoryIndex(newIdx)
+        return newHistory
+      })
+      return filtered
+    })
+    // Remove from highlightItems
+    setHighlightItems(prev => {
+      return prev.filter(item => item.id !== highlightId)
+    })
+    setShowTooltipFor(null) // Hide tooltip after delete
+    setHoveredHighlightId(null)
+  }
+
+  // Render tooltip for PDF highlights
+  useEffect(() => {
+    // Clear all tooltip layers
+    Object.values(tooltipLayerRefs.current).forEach(layer => {
+      if (layer) {
+        layer.innerHTML = ''
+      }
+    })
+
+    if (!showTooltipFor || !showTooltipFor.page) return
+
+    const tooltipLayer = tooltipLayerRefs.current[showTooltipFor.page]
+    if (!tooltipLayer) return
+
+    const highlight = highlights.find(h => h.id === showTooltipFor.highlightId)
+    if (!highlight) return
+
+    // Create tooltip
+    const tooltip = document.createElement('div')
+    tooltip.className = 'highlight-tooltip'
+    tooltip.style.position = 'absolute'
+    tooltip.style.left = showTooltipFor.x + 'px'
+    tooltip.style.top = showTooltipFor.y + 'px'
+    tooltip.style.transform = 'translate(-50%, -100%)'
+    tooltip.style.zIndex = '20'
+    tooltip.style.pointerEvents = 'auto'
+    
+    // Color options
+    const colorOptions = document.createElement('div')
+    colorOptions.className = 'tooltip-color-options'
+    
+    const colors = ['yellow', 'green', 'blue']
+    colors.forEach(color => {
+      const colorBtn = document.createElement('button')
+      colorBtn.className = `tooltip-color-btn ${highlight.color === color ? 'active' : ''}`
+      colorBtn.style.backgroundColor = color === 'yellow' ? 'rgba(251, 188, 4, 1)' : 
+                                       color === 'green' ? 'rgba(52, 168, 83, 1)' : 
+                                       'rgba(66, 133, 244, 1)'
+      colorBtn.style.width = '11.23px'
+      colorBtn.style.height = '11.23px'
+      colorBtn.style.borderRadius = '50%'
+      colorBtn.style.border = highlight.color === color ? '0.94px solid #000' : '0.94px solid transparent'
+      colorBtn.style.cursor = 'pointer'
+      colorBtn.style.margin = '0 1.87px'
+      colorBtn.title = color
+      colorBtn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        handleChangeHighlightColor(highlight.id, color)
+      })
+      colorOptions.appendChild(colorBtn)
+    })
+    
+    // Delete button - black circle with white X
+    const deleteBtn = document.createElement('button')
+    deleteBtn.className = 'tooltip-delete-btn'
+    deleteBtn.innerHTML = '' // X is added via CSS ::before
+    deleteBtn.style.cursor = 'pointer'
+    deleteBtn.style.marginLeft = '3.74px'
+    deleteBtn.title = 'Delete highlight'
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      handleDeleteHighlight(highlight.id)
+    })
+    
+    tooltip.appendChild(colorOptions)
+    tooltip.appendChild(deleteBtn)
+    tooltipLayer.appendChild(tooltip)
+    
+    // Keep tooltip visible when hovering over it
+    tooltip.addEventListener('mouseenter', () => {
+      isHoveringTooltipRef.current = true
+      setShowTooltipFor(showTooltipFor)
+    })
+    
+    tooltip.addEventListener('mouseleave', () => {
+      isHoveringTooltipRef.current = false
+      setTimeout(() => {
+        if (hoveredHighlightIdRef.current !== highlight.id && !isHoveringTooltipRef.current) {
+          setShowTooltipFor(null)
+        }
+      }, 200)
+    })
+  }, [showTooltipFor, highlights])
+
   // Sync highlight items with highlights (for undo/redo)
   // Function to merge connected highlights of the same color
   const mergeConnectedHighlights = useCallback((highlights) => {
@@ -6171,6 +6315,18 @@ function App() {
         dots.forEach(dot => {
           dot.style.opacity = '1'
         })
+        
+        // Show tooltip (only if not connecting)
+        if (!connectingFrom) {
+          const rect = div.getBoundingClientRect()
+          const canvas = canvasRefs.current[highlight.page]
+          if (canvas) {
+            const canvasRect = canvas.getBoundingClientRect()
+            const tooltipX = rect.left - canvasRect.left + rect.width / 2
+            const tooltipY = rect.top - canvasRect.top - 7.5 // Position above the highlight (25% closer)
+            setShowTooltipFor({ highlightId: highlight.id, x: tooltipX, y: tooltipY, page: highlight.page })
+          }
+        }
       }
       
       div.addEventListener('mouseenter', handleMouseEnter)
@@ -6178,10 +6334,11 @@ function App() {
       
       div.addEventListener('mouseleave', (e) => {
         e.stopPropagation()
-        // Use setTimeout to allow dot hover to work
+        // Use setTimeout to allow dot hover and tooltip hover to work
         setTimeout(() => {
-          if (hoveredHighlightIdRef.current === highlight.id) {
+          if (hoveredHighlightIdRef.current === highlight.id && !isHoveringTooltipRef.current) {
             setHoveredHighlightId(null)
+            setShowTooltipFor(null) // Hide tooltip
             const dots = highlightLayer.querySelectorAll(`[data-highlight-id="${highlight.id}"][data-dot]`)
             dots.forEach(dot => {
               // Only hide if not hovering over the dot itself
@@ -6190,7 +6347,7 @@ function App() {
               }
             })
           }
-        }, 150)
+        }, 200)
         div.style.border = 'none'
       })
       
@@ -6362,6 +6519,7 @@ function App() {
             })
             // Clear hover state and remove borders immediately
             setHoveredHighlightId(null)
+            setShowTooltipFor(null) // Hide tooltip
             // Also remove borders and hide dots from all highlight rectangles
             Object.values(highlightLayerRefs.current).forEach(layer => {
               if (layer) {
@@ -6942,6 +7100,8 @@ function App() {
                     setHighlightItems={setHighlightItems}
                     documentId={documentId}
                     highlights={highlights}
+                    onColorChange={handleChangeHighlightColor}
+                    onDelete={handleDeleteHighlight}
                   />
                 )}
               </div>
@@ -7060,6 +7220,12 @@ function App() {
                         if (el) connectionLayerRefs.current[pageInfo.pageNum] = el
                       }}
                       className="connection-layer"
+                    />
+                    <div
+                      ref={(el) => {
+                        if (el) tooltipLayerRefs.current[pageInfo.pageNum] = el
+                      }}
+                      className="tooltip-layer"
                     />
                     <div
                       ref={(el) => {

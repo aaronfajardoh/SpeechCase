@@ -1262,7 +1262,6 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  gap: 1rem;
   background: white;
 }
 
@@ -1274,6 +1273,7 @@
   line-height: 1.6;
   white-space: normal;
   word-wrap: break-word;
+  min-height: 0;
 }
 
 .highlight-item {
@@ -1463,13 +1463,240 @@
 }
 
 .highlights-actions {
-  padding: 0.5rem 0;
-  border-top: 1px solid #5f6368;
+  padding: 0.75rem;
+  border-top: 1px solid #e0e0e0;
+  flex-shrink: 0;
 }
 
 .btn-format-summary {
   width: 100%;
   justify-content: center;
+}
+
+/* Highlights Tabs - macOS style, minimal and subtle */
+.highlights-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  background: transparent;
+  padding: 0.25rem 0.5rem 0 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.highlights-tab {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 400;
+  border: none;
+  background: transparent;
+  color: rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border-radius: 4px 4px 0 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+  position: relative;
+}
+
+.highlights-tab:hover {
+  background: rgba(0, 0, 0, 0.03);
+  color: rgba(0, 0, 0, 0.7);
+}
+
+.highlights-tab.active {
+  color: rgba(0, 0, 0, 0.85);
+  background: transparent;
+}
+
+.highlights-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0.75rem;
+  right: 0.75rem;
+  height: 1px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.highlights-tab-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Summary Content */
+.highlights-summary-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.highlights-summary-markdown {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem 1.5rem;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+  line-height: 1.6;
+  color: rgba(0, 0, 0, 0.85);
+  position: relative;
+}
+
+/* Overlay reload button - macOS style */
+.btn-update-summary-overlay {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 0 1px rgba(0, 0, 0, 0.05);
+  color: rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 10;
+  opacity: 0.5;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+}
+
+.btn-update-summary-overlay:hover:not(:disabled) {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.95);
+  color: rgba(0, 0, 0, 0.7);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), 0 0 1px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+
+.btn-update-summary-overlay:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.btn-update-summary-overlay:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.btn-update-summary-overlay svg {
+  width: 14px;
+  height: 14px;
+}
+
+.highlights-summary-markdown h1,
+.highlights-summary-markdown h2,
+.highlights-summary-markdown h3,
+.highlights-summary-markdown h4,
+.highlights-summary-markdown h5,
+.highlights-summary-markdown h6 {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+  font-weight: 600;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  color: rgba(0, 0, 0, 0.9);
+  line-height: 1.3;
+}
+
+.highlights-summary-markdown h1 {
+  font-size: 1.5rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  padding-bottom: 0.5rem;
+}
+
+.highlights-summary-markdown h2 {
+  font-size: 1.25rem;
+}
+
+.highlights-summary-markdown h3 {
+  font-size: 1.125rem;
+}
+
+.highlights-summary-markdown h4 {
+  font-size: 1rem;
+}
+
+.highlights-summary-markdown p {
+  margin-bottom: 1rem;
+  font-size: 0.9375rem;
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.highlights-summary-markdown ul,
+.highlights-summary-markdown ol {
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+}
+
+.highlights-summary-markdown li {
+  margin-bottom: 0.5rem;
+  font-size: 0.9375rem;
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.highlights-summary-markdown strong {
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.9);
+}
+
+.highlights-summary-markdown em {
+  font-style: italic;
+}
+
+.highlights-summary-markdown code {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 0.125rem 0.375rem;
+  border-radius: 3px;
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+  font-size: 0.875em;
+  color: rgba(0, 0, 0, 0.7);
+}
+
+.highlights-summary-markdown pre {
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  padding: 1rem;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+
+.highlights-summary-markdown pre code {
+  background: transparent;
+  padding: 0;
+  color: rgba(0, 0, 0, 0.85);
+  font-size: 0.875rem;
+}
+
+.highlights-summary-markdown blockquote {
+  border-left: 3px solid rgba(0, 0, 0, 0.15);
+  padding-left: 1rem;
+  margin-left: 0;
+  margin-bottom: 1rem;
+  color: rgba(0, 0, 0, 0.6);
+  font-style: italic;
+}
+
+.highlights-summary-markdown a {
+  color: #007AFF;
+  text-decoration: none;
+}
+
+.highlights-summary-markdown a:hover {
+  text-decoration: underline;
+}
+
+.highlights-summary-markdown hr {
+  border: none;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  margin: 1.5rem 0;
 }
 
 .mode-toggle {
@@ -2269,6 +2496,92 @@
 
 .highlight-connection-dot:hover {
   transform: scale(1.2);
+}
+
+.tooltip-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 20;
+  /* Dimensions will be set by JavaScript to match canvas display size */
+  transform-origin: 0 0;
+}
+
+.tooltip-layer > * {
+  pointer-events: auto;
+}
+
+.highlight-tooltip {
+  display: flex;
+  align-items: center;
+  background: white;
+  border-radius: 3.74px;
+  padding: 2.81px 3.74px;
+  box-shadow: 0 1.87px 5.62px rgba(0, 0, 0, 0.15);
+  gap: 1.87px;
+  white-space: nowrap;
+}
+
+.tooltip-color-options {
+  display: flex;
+  align-items: center;
+  gap: 1.87px;
+}
+
+.tooltip-color-btn {
+  width: 11.23px;
+  height: 11.23px;
+  border: 0.94px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+  margin: 0 1.87px;
+}
+
+.tooltip-color-btn:hover {
+  transform: scale(1.1);
+}
+
+.tooltip-color-btn.active {
+  border-color: #000;
+  box-shadow: 0 0 0 0.94px rgba(0, 0, 0, 0.1);
+}
+
+.tooltip-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 11.23px;
+  height: 11.23px;
+  border: none;
+  background: #000;
+  border-radius: 50%;
+  cursor: pointer;
+  color: white;
+  transition: transform 0.2s ease, background-color 0.2s ease;
+  padding: 0;
+  position: relative;
+}
+
+.tooltip-delete-btn:hover {
+  background: #333;
+  transform: scale(1.1);
+}
+
+.tooltip-delete-btn::before {
+  content: '×';
+  font-size: 9px;
+  font-weight: bold;
+  line-height: 1;
+  color: white;
+}
+
+.highlight-tooltip.sidebar-tooltip {
+  margin-top: -3.74px;
 }
 
 .highlight-connection-delete {
