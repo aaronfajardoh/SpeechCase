@@ -69,11 +69,16 @@ function App() {
   const [pageScale, setPageScale] = useState(1.5) // Scale for PDF rendering
   const [renderedPages, setRenderedPages] = useState([]) // Track which pages are rendered
   const [pageData, setPageData] = useState([]) // Store page rendering data
-  const [highlights, setHighlights] = useState([]) // Store highlight data: { page, x, y, width, height, text }
+  const [highlights, setHighlights] = useState([]) // Store highlight data: { page, x, y, width, height, text, connections }
   const [highlightHistory, setHighlightHistory] = useState([[]]) // History stack for undo/redo
   const [historyIndex, setHistoryIndex] = useState(0) // Current position in history
   const [interactionMode, setInteractionMode] = useState('read') // 'read' or 'highlight'
   const [highlightColor, setHighlightColor] = useState('yellow') // 'yellow', 'green', 'blue'
+  const [hoveredHighlightId, setHoveredHighlightId] = useState(null) // Track which highlight is being hovered
+  const [connectingFrom, setConnectingFrom] = useState(null) // Track connection start: { highlightId, dot: 'left' | 'right' }
+  const connectionLayerRefs = useRef({}) // Store connection layer refs by page number
+  const hoveredHighlightIdRef = useRef(null) // Ref for hover state to avoid closure issues
+  const [mousePosition, setMousePosition] = useState(null) // Track mouse position for temporary connection line: { x, y, page }
   const [isSelecting, setIsSelecting] = useState(false)
   const [selectionStart, setSelectionStart] = useState(null)
   const [currentSelection, setCurrentSelection] = useState(null)
@@ -1993,6 +1998,14 @@ function App() {
           highlightLayerDiv.style.height = canvasRect.height + 'px'
         }
         
+        // Set connection layer dimensions to match canvas display size
+        const connectionLayerDiv = connectionLayerRefs.current[pageNum]
+        if (connectionLayerDiv) {
+          const canvasRect = canvas.getBoundingClientRect()
+          connectionLayerDiv.style.width = canvasRect.width + 'px'
+          connectionLayerDiv.style.height = canvasRect.height + 'px'
+        }
+        
         // Set selection layer dimensions to match canvas display size
         const selectionLayerDiv = selectionLayerRefs.current[pageNum]
         if (selectionLayerDiv) {
@@ -2183,6 +2196,9 @@ function App() {
         span.style.whiteSpace = 'pre'
         // Ensure the span displays as inline-block so background covers full width
         span.style.display = 'inline-block'
+        // Allow pointer events to pass through to highlights when not actively selecting
+        // The highlight rectangles will capture hover events
+        span.style.pointerEvents = interactionMode === 'highlight' ? 'auto' : 'auto'
         span.dataset.page = pageNum
         span.dataset.charIndex = itemCharIndex
         
@@ -5353,6 +5369,24 @@ function App() {
     }
 
     const handleMouseDown = (e) => {
+      // Don't handle if clicking on a highlight (let highlights handle their own events)
+      if (e.target.closest('.highlight-rect, .highlight-connection-dot')) {
+        return
+      }
+      
+      // Only handle if clicking directly on a text span (not through a highlight)
+      const clickedElement = e.target
+      if (!clickedElement.classList.contains('text-layer') && 
+          !clickedElement.closest('.text-layer span')) {
+        return
+      }
+      
+      // Check if there's a highlight rectangle at this position
+      const highlightAtPoint = document.elementFromPoint(e.clientX, e.clientY)
+      if (highlightAtPoint && highlightAtPoint.closest('.highlight-rect')) {
+        return // Let the highlight handle it
+      }
+      
       // Only handle if clicking in a text layer
       let pageNum = null
       for (const [page, textLayer] of Object.entries(textLayerRefs.current)) {
@@ -5544,42 +5578,416 @@ function App() {
         renderHighlight(highlight, highlightLayer)
       }
     })
-  }, [highlights, pageData, renderedPages, pageScale])
+  }, [highlights, pageData, renderedPages, pageScale, hoveredHighlightId, connectingFrom])
+
+  // Update ref when hover state changes
+  useEffect(() => {
+    hoveredHighlightIdRef.current = hoveredHighlightId
+  }, [hoveredHighlightId])
+
+  // Update dot visibility on hover
+  useEffect(() => {
+    Object.values(highlightLayerRefs.current).forEach(layer => {
+      if (!layer) return
+      const dots = layer.querySelectorAll('.highlight-connection-dot')
+      dots.forEach(dot => {
+        const highlightId = dot.dataset.highlightId
+        if (hoveredHighlightId === highlightId || (connectingFrom && connectingFrom.highlightId === highlightId)) {
+          dot.style.opacity = '1'
+        } else {
+          dot.style.opacity = '0'
+        }
+      })
+    })
+  }, [hoveredHighlightId, connectingFrom])
+
+  // Track mouse position for temporary connection line
+  useEffect(() => {
+    if (!connectingFrom) {
+      setMousePosition(null)
+      return
+    }
+
+    const handleMouseMove = (e) => {
+      // Find which page the mouse is over
+      let pageNum = null
+      for (const [page, canvas] of Object.entries(canvasRefs.current)) {
+        if (canvas) {
+          const rect = canvas.getBoundingClientRect()
+          if (e.clientX >= rect.left && e.clientX <= rect.right &&
+              e.clientY >= rect.top && e.clientY <= rect.bottom) {
+            pageNum = parseInt(page)
+            break
+          }
+        }
+      }
+
+      if (pageNum !== null) {
+        const canvas = canvasRefs.current[pageNum]
+        if (canvas) {
+          const rect = canvas.getBoundingClientRect()
+          const x = e.clientX - rect.left
+          const y = e.clientY - rect.top
+          setMousePosition({ x, y, page: pageNum })
+        } else {
+          setMousePosition(null)
+        }
+      } else {
+        // Mouse is not over any canvas, clear position
+        setMousePosition(null)
+      }
+    }
+
+    const handleMouseLeave = (e) => {
+      // Check if mouse left the document or any canvas area
+      if (!e.relatedTarget || 
+          (!e.relatedTarget.closest('.pdf-canvas-wrapper') && 
+           !e.relatedTarget.closest('.pdf-page-wrapper'))) {
+        // Cancel connection when leaving the page area
+        setConnectingFrom(null)
+        setMousePosition(null)
+        setHoveredHighlightId(null)
+      }
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseleave', handleMouseLeave)
+    
+    // Also listen for mouse leave on the main container
+    const pdfContainer = document.querySelector('.pdf-pages-container')
+    if (pdfContainer) {
+      pdfContainer.addEventListener('mouseleave', handleMouseLeave)
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseleave', handleMouseLeave)
+      if (pdfContainer) {
+        pdfContainer.removeEventListener('mouseleave', handleMouseLeave)
+      }
+    }
+  }, [connectingFrom])
+
+  // Render connection lines - only show when hovering/clicking on dots or connected highlights
+  useEffect(() => {
+    // Clear all connection layers
+    Object.values(connectionLayerRefs.current).forEach(layer => {
+      if (layer) {
+        layer.innerHTML = ''
+      }
+    })
+
+    // Render temporary connection line if connecting (follows mouse)
+    // Only show if mouse is over a canvas/page
+    if (connectingFrom && mousePosition && mousePosition.page) {
+      const fromHighlight = highlights.find(h => h.id === connectingFrom.highlightId)
+      if (fromHighlight && fromHighlight.page === mousePosition.page) {
+        const connectionLayer = connectionLayerRefs.current[fromHighlight.page]
+        const canvas = canvasRefs.current[fromHighlight.page]
+        if (connectionLayer && canvas) {
+          const canvasRect = canvas.getBoundingClientRect()
+          const canvasWidth = canvas.width
+          const canvasHeight = canvas.height
+          const displayedWidth = canvasRect.width
+          const displayedHeight = canvasRect.height
+          
+          const displayScaleX = displayedWidth / canvasWidth
+          const displayScaleY = displayedHeight / canvasHeight
+          const scaleRatio = (pageScale / (fromHighlight.scale || pageScale)) * displayScaleX
+          const scaleRatioY = (pageScale / (fromHighlight.scale || pageScale)) * displayScaleY
+
+          const highlightRects = fromHighlight.rects || [{
+            x: fromHighlight.x || 0,
+            y: fromHighlight.y || 0,
+            width: fromHighlight.width || 0,
+            height: fromHighlight.height || 0
+          }]
+
+          const fromRect = connectingFrom.dot === 'left' ? highlightRects[0] : highlightRects[highlightRects.length - 1]
+          const fromX = connectingFrom.dot === 'left' 
+            ? fromRect.x * scaleRatio
+            : (fromRect.x + fromRect.width) * scaleRatio
+          const fromY = (fromRect.y + fromRect.height / 2) * scaleRatioY
+
+          // Use mouse position for the "to" point
+          const toX = mousePosition.x
+          const toY = mousePosition.y
+
+          // Create SVG for temporary line
+          const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+          svg.style.position = 'absolute'
+          svg.style.left = '0'
+          svg.style.top = '0'
+          svg.setAttribute('width', displayedWidth)
+          svg.setAttribute('height', displayedHeight)
+          svg.style.pointerEvents = 'none'
+          svg.style.zIndex = '1'
+
+          const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+          const midX = (fromX + toX) / 2
+          const pathData = `M ${fromX} ${fromY} Q ${midX} ${fromY} ${midX} ${(fromY + toY) / 2} T ${toX} ${toY}`
+          path.setAttribute('d', pathData)
+          path.setAttribute('stroke', getDotColor(fromHighlight.color || 'yellow'))
+          path.setAttribute('stroke-width', '2')
+          path.setAttribute('fill', 'none')
+          path.setAttribute('stroke-dasharray', '5,5')
+          path.style.opacity = '0.6'
+
+          svg.appendChild(path)
+          connectionLayer.appendChild(svg)
+        }
+      }
+      // If connecting, don't show existing connections, only the temporary line
+      return
+    }
+
+    // Only render existing connections if hovering over a highlight (not when connecting)
+    const activeHighlightId = hoveredHighlightId
+    if (!activeHighlightId) {
+      return // Don't render any connections if not hovering
+    }
+
+    // Find all highlights connected to the active highlight
+    const activeHighlight = highlights.find(h => h.id === activeHighlightId)
+    if (!activeHighlight) {
+      return
+    }
+
+    // Group connections by page
+    const connectionsByPage = new Map()
+    
+    // Only show connections FROM the active highlight (the specific connections that were created)
+    // We don't show connections TO the active highlight because those are already represented
+    // in the other highlight's connections array
+    if (activeHighlight.connections && activeHighlight.connections.length > 0) {
+      activeHighlight.connections.forEach(connection => {
+        const targetHighlight = highlights.find(h => h.id === connection.to)
+        if (targetHighlight && targetHighlight.page === activeHighlight.page) {
+          if (!connectionsByPage.has(activeHighlight.page)) {
+            connectionsByPage.set(activeHighlight.page, [])
+          }
+          // Only add this specific connection - from the exact dot to the exact dot
+          connectionsByPage.get(activeHighlight.page).push({
+            from: activeHighlight,
+            to: targetHighlight,
+            connection // This connection has the exact fromDot and toDot that were clicked
+          })
+        }
+      })
+    }
+
+    // Render connections for each page
+    connectionsByPage.forEach((pageConnections, pageNum) => {
+      const connectionLayer = connectionLayerRefs.current[pageNum]
+      if (!connectionLayer) return
+
+      // Get canvas for scaling
+      const canvas = canvasRefs.current[pageNum]
+      if (!canvas) return
+
+      const canvasRect = canvas.getBoundingClientRect()
+      const canvasWidth = canvas.width
+      const canvasHeight = canvas.height
+      const displayedWidth = canvasRect.width
+      const displayedHeight = canvasRect.height
+      
+      // Create one SVG per page
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      svg.style.position = 'absolute'
+      svg.style.left = '0'
+      svg.style.top = '0'
+      svg.setAttribute('width', displayedWidth)
+      svg.setAttribute('height', displayedHeight)
+      svg.style.pointerEvents = 'none'
+      svg.style.zIndex = '1'
+
+      pageConnections.forEach(({ from, to, connection }) => {
+        const displayScaleX = displayedWidth / canvasWidth
+        const displayScaleY = displayedHeight / canvasHeight
+        const scaleRatio = (pageScale / (from.scale || pageScale)) * displayScaleX
+        const scaleRatioY = (pageScale / (from.scale || pageScale)) * displayScaleY
+
+        // Get rectangles
+        const highlightRects = from.rects || [{
+          x: from.x || 0,
+          y: from.y || 0,
+          width: from.width || 0,
+          height: from.height || 0
+        }]
+        const targetRects = to.rects || [{
+          x: to.x || 0,
+          y: to.y || 0,
+          width: to.width || 0,
+          height: to.height || 0
+        }]
+
+        const fromRect = connection.fromDot === 'left' ? highlightRects[0] : highlightRects[highlightRects.length - 1]
+        const toRect = connection.toDot === 'left' ? targetRects[0] : targetRects[targetRects.length - 1]
+
+        const fromX = connection.fromDot === 'left' 
+          ? fromRect.x * scaleRatio
+          : (fromRect.x + fromRect.width) * scaleRatio
+        const fromY = (fromRect.y + fromRect.height / 2) * scaleRatioY
+
+        const toX = connection.toDot === 'left'
+          ? toRect.x * scaleRatio
+          : (toRect.x + toRect.width) * scaleRatio
+        const toY = (toRect.y + toRect.height / 2) * scaleRatioY
+
+        // Create SVG path for curved line
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+        const midX = (fromX + toX) / 2
+        const pathData = `M ${fromX} ${fromY} Q ${midX} ${fromY} ${midX} ${(fromY + toY) / 2} T ${toX} ${toY}`
+        path.setAttribute('d', pathData)
+        path.setAttribute('stroke', getDotColor(from.color || 'yellow'))
+        path.setAttribute('stroke-width', '2')
+        path.setAttribute('fill', 'none')
+        path.setAttribute('stroke-dasharray', '5,5')
+        path.style.opacity = '0.6'
+
+        svg.appendChild(path)
+      })
+
+      if (pageConnections.length > 0) {
+        connectionLayer.appendChild(svg)
+      }
+    })
+  }, [highlights, pageData, pageScale, hoveredHighlightId, connectingFrom, mousePosition])
+
+  // Sync highlight items with highlights (for undo/redo)
+  // Function to merge connected highlights of the same color
+  const mergeConnectedHighlights = useCallback((highlights) => {
+    if (!highlights || highlights.length === 0) return []
+    
+    // Build connection graph
+    const connections = new Map()
+    highlights.forEach(h => {
+      if (!connections.has(h.id)) {
+        connections.set(h.id, new Set())
+      }
+      if (h.connections) {
+        h.connections.forEach(conn => {
+          connections.get(h.id).add(conn.to)
+          if (!connections.has(conn.to)) {
+            connections.set(conn.to, new Set())
+          }
+          connections.get(conn.to).add(h.id)
+        })
+      }
+    })
+    
+    // Find connected components (groups of connected highlights)
+    const visited = new Set()
+    const groups = []
+    
+    const findConnectedGroup = (startId, group) => {
+      if (visited.has(startId)) return
+      visited.add(startId)
+      group.add(startId)
+      
+      const connected = connections.get(startId) || new Set()
+      connected.forEach(connectedId => {
+        const highlight = highlights.find(h => h.id === connectedId)
+        const startHighlight = highlights.find(h => h.id === startId)
+        // Only connect if same color
+        if (highlight && startHighlight && highlight.color === startHighlight.color) {
+          findConnectedGroup(connectedId, group)
+        }
+      })
+    }
+    
+    highlights.forEach(highlight => {
+      if (!visited.has(highlight.id)) {
+        const group = new Set()
+        findConnectedGroup(highlight.id, group)
+        if (group.size > 0) {
+          groups.push(Array.from(group))
+        }
+      }
+    })
+    
+    // Create merged items
+    const mergedItems = []
+    const processedIds = new Set()
+    
+    groups.forEach(group => {
+      if (group.length > 1) {
+        // Merge connected highlights
+        const groupHighlights = group.map(id => highlights.find(h => h.id === id)).filter(Boolean)
+        const sortedGroup = groupHighlights.sort((a, b) => {
+          // Sort by page, then by position
+          if (a.page !== b.page) return a.page - b.page
+          const aY = (a.rects && a.rects[0]?.y) || a.y || 0
+          const bY = (b.rects && b.rects[0]?.y) || b.y || 0
+          return aY - bY
+        })
+        
+        const mergedText = sortedGroup.map(h => h.text).filter(Boolean).join(' ')
+        const firstHighlight = sortedGroup[0]
+        
+        mergedItems.push({
+          id: firstHighlight.id, // Use first highlight's ID
+          text: mergedText,
+          color: firstHighlight.color || 'yellow',
+          order: mergedItems.length,
+          isMerged: true,
+          mergedIds: group
+        })
+        
+        group.forEach(id => processedIds.add(id))
+      }
+    })
+    
+    // Add unconnected highlights
+    highlights.forEach(highlight => {
+      if (!processedIds.has(highlight.id)) {
+        mergedItems.push({
+          id: highlight.id,
+          text: highlight.text || '',
+          color: highlight.color || 'yellow',
+          order: mergedItems.length,
+          isMerged: false
+        })
+      }
+    })
+    
+    return mergedItems.sort((a, b) => {
+      const aHighlight = highlights.find(h => h.id === a.id)
+      const bHighlight = highlights.find(h => h.id === b.id)
+      if (!aHighlight || !bHighlight) return 0
+      if (aHighlight.page !== bHighlight.page) return aHighlight.page - bHighlight.page
+      const aY = (aHighlight.rects && aHighlight.rects[0]?.y) || aHighlight.y || 0
+      const bY = (bHighlight.rects && bHighlight.rects[0]?.y) || bHighlight.y || 0
+      return aY - bY
+    }).map((item, index) => ({ ...item, order: index }))
+  }, [])
 
   // Sync highlight items with highlights (for undo/redo)
   useEffect(() => {
-    // Create a map of current highlight IDs
-    const highlightIds = new Set(highlights.map(h => h.id))
+    // Create merged items from connected highlights
+    const mergedItems = mergeConnectedHighlights(highlights)
     
-    // Update highlightItems to match highlights
+    // Update highlightItems
     setHighlightItems(prev => {
-      // Remove items that no longer exist in highlights
-      const filtered = prev.filter(item => highlightIds.has(item.id))
+      // Update existing items with new text/color, add new ones
+      const updated = mergedItems.map(mergedItem => {
+        const existing = prev.find(item => item.id === mergedItem.id)
+        if (existing) {
+          return { ...existing, ...mergedItem }
+        }
+        return mergedItem
+      })
       
-      // Add new highlights that don't have items yet
-      const existingIds = new Set(filtered.map(item => item.id))
-      const newItems = highlights
-        .filter(h => !existingIds.has(h.id))
-        .map((h, index) => ({
-          id: h.id,
-          text: h.text || '',
-          color: h.color || 'yellow',
-          order: filtered.length + index
-        }))
-      
-      // Combine and reorder
-      const combined = [...filtered, ...newItems]
-      return combined
-        .map((item, index) => ({ ...item, order: index }))
-        .sort((a, b) => {
-          // Try to maintain original order based on highlight order
-          const aIndex = highlights.findIndex(h => h.id === a.id)
-          const bIndex = highlights.findIndex(h => h.id === b.id)
-          return aIndex - bIndex
-        })
-        .map((item, index) => ({ ...item, order: index }))
+      // Remove items that no longer exist
+      const highlightIds = new Set(highlights.map(h => h.id))
+      return updated.filter(item => {
+        if (item.isMerged && item.mergedIds) {
+          return item.mergedIds.some(id => highlightIds.has(id))
+        }
+        return highlightIds.has(item.id)
+      })
     })
-  }, [highlights])
+  }, [highlights, mergeConnectedHighlights])
 
   // Update all existing highlight opacities to ensure they use the latest value
   useEffect(() => {
@@ -5663,18 +6071,36 @@ function App() {
     return colors[color] || colors.yellow
   }
 
+  // Helper function to get darker border color for hover
+  const getHighlightBorderColor = (color) => {
+    const colors = {
+      yellow: 'rgba(251, 188, 4, 0.8)',
+      green: 'rgba(52, 168, 83, 0.8)',
+      blue: 'rgba(66, 133, 244, 0.8)'
+    }
+    return colors[color] || colors.yellow
+  }
+
+  // Helper function to get dot color
+  const getDotColor = (color) => {
+    const colors = {
+      yellow: 'rgba(251, 188, 4, 1)',
+      green: 'rgba(52, 168, 83, 1)',
+      blue: 'rgba(66, 133, 244, 1)'
+    }
+    return colors[color] || colors.yellow
+  }
+
   const renderHighlight = (highlight, highlightLayer) => {
     const highlightBgColor = getHighlightColor(highlight.color || 'yellow')
+    const borderColor = getHighlightBorderColor(highlight.color || 'yellow')
+    const dotColor = getDotColor(highlight.color || 'yellow')
     
-    // Check if highlight already rendered - if so, update its opacity
+    // Remove existing highlights and dots for this highlight to re-render fresh
     const existingHighlights = highlightLayer.querySelectorAll(`[data-highlight-id="${highlight.id}"]`)
-    if (existingHighlights.length > 0) {
-      // Update existing highlights with new color
-      existingHighlights.forEach(existingHighlight => {
-        existingHighlight.style.backgroundColor = highlightBgColor
-      })
-      return
-    }
+    existingHighlights.forEach(el => el.remove())
+    const existingDots = highlightLayer.querySelectorAll(`[data-highlight-id="${highlight.id}"][data-dot]`)
+    existingDots.forEach(el => el.remove())
 
     // Get current page info to adjust coordinates if scale changed
     const pageInfo = pageData.find(p => p.pageNum === highlight.page)
@@ -5707,12 +6133,16 @@ function App() {
       height: highlight.height || 0
     }]
     
+    // Find the first and last rectangles for connection dots
+    const firstRect = rects[0]
+    const lastRect = rects[rects.length - 1]
+    
     // Render each rectangle separately
     rects.forEach((rect, index) => {
       const x = rect.x * scaleRatio
       const y = rect.y * scaleRatioY
       const width = rect.width * scaleRatio
-      const height = rect.height * scaleRatioY
+      const height = rect.height * scaleRatioY * 1.15 // Increase height by 15% downward
 
       const div = document.createElement('div')
       div.className = 'highlight-rect'
@@ -5720,15 +6150,337 @@ function App() {
       div.dataset.rectIndex = index
       div.style.position = 'absolute'
       div.style.left = x + 'px'
-      div.style.top = y + 'px'
+      div.style.top = y + 'px' // Top position stays the same
       div.style.width = width + 'px'
       div.style.height = height + 'px'
       div.style.backgroundColor = highlightBgColor
-      div.style.pointerEvents = 'none'
-      div.style.zIndex = '1'
+      div.style.pointerEvents = 'auto' // Enable pointer events for hover
+      div.style.zIndex = '10' // Higher z-index to be above text spans
+      div.style.cursor = 'default'
+      div.style.transition = 'border-color 0.2s ease'
+      
+      // Add hover effect
+      const handleMouseEnter = (e) => {
+        e.stopPropagation()
+        // Don't show hover if we just completed a connection (give it a moment to clear)
+        setHoveredHighlightId(highlight.id)
+        div.style.border = `2px solid ${borderColor}`
+        div.style.borderRadius = '2px'
+        // Also show dots immediately
+        const dots = highlightLayer.querySelectorAll(`[data-highlight-id="${highlight.id}"][data-dot]`)
+        dots.forEach(dot => {
+          dot.style.opacity = '1'
+        })
+      }
+      
+      div.addEventListener('mouseenter', handleMouseEnter)
+      div.addEventListener('mouseover', handleMouseEnter) // Also listen to mouseover
+      
+      div.addEventListener('mouseleave', (e) => {
+        e.stopPropagation()
+        // Use setTimeout to allow dot hover to work
+        setTimeout(() => {
+          if (hoveredHighlightIdRef.current === highlight.id) {
+            setHoveredHighlightId(null)
+            const dots = highlightLayer.querySelectorAll(`[data-highlight-id="${highlight.id}"][data-dot]`)
+            dots.forEach(dot => {
+              // Only hide if not hovering over the dot itself
+              if (!dot.matches(':hover')) {
+                dot.style.opacity = '0'
+              }
+            })
+          }
+        }, 150)
+        div.style.border = 'none'
+      })
       
       highlightLayer.appendChild(div)
     })
+    
+    // Render connection dots on first and last rectangles
+    if (firstRect && lastRect) {
+      const firstX = firstRect.x * scaleRatio
+      const firstY = firstRect.y * scaleRatioY
+      const firstHeight = firstRect.height * scaleRatioY
+      
+      const lastX = lastRect.x * scaleRatio
+      const lastY = lastRect.y * scaleRatioY
+      const lastWidth = lastRect.width * scaleRatio
+      const lastHeight = lastRect.height * scaleRatioY
+      
+      // Left dot on first rectangle
+      const leftDot = document.createElement('div')
+      leftDot.className = 'highlight-connection-dot'
+      leftDot.dataset.highlightId = highlight.id
+      leftDot.dataset.dot = 'left'
+      leftDot.style.position = 'absolute'
+      leftDot.style.left = (firstX - 5) + 'px'
+      leftDot.style.top = (firstY + firstHeight / 2 - 5) + 'px'
+      leftDot.style.width = '10px'
+      leftDot.style.height = '10px'
+      leftDot.style.borderRadius = '50%'
+      leftDot.style.backgroundColor = dotColor
+      leftDot.style.zIndex = '10'
+      leftDot.style.cursor = 'pointer'
+      leftDot.style.opacity = '0'
+      leftDot.style.transition = 'opacity 0.2s ease, transform 0.2s ease'
+      leftDot.style.pointerEvents = 'auto'
+      leftDot.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.3)'
+      leftDot.style.border = '2px solid white'
+      
+      // Right dot on last rectangle
+      const rightDot = document.createElement('div')
+      rightDot.className = 'highlight-connection-dot'
+      rightDot.dataset.highlightId = highlight.id
+      rightDot.dataset.dot = 'right'
+      rightDot.style.position = 'absolute'
+      rightDot.style.left = (lastX + lastWidth - 5) + 'px'
+      rightDot.style.top = (lastY + lastHeight / 2 - 5) + 'px'
+      rightDot.style.width = '10px'
+      rightDot.style.height = '10px'
+      rightDot.style.borderRadius = '50%'
+      rightDot.style.backgroundColor = dotColor
+      rightDot.style.zIndex = '10'
+      rightDot.style.cursor = 'pointer'
+      rightDot.style.opacity = '0'
+      rightDot.style.transition = 'opacity 0.2s ease, transform 0.2s ease'
+      rightDot.style.pointerEvents = 'auto'
+      rightDot.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.3)'
+      rightDot.style.border = '2px solid white'
+      
+      // Show dots on hover - handled by useEffect above
+      // Also keep dots visible when hovering over them
+      const showDotsAndConnections = () => {
+        setHoveredHighlightId(highlight.id)
+        leftDot.style.opacity = '1'
+        rightDot.style.opacity = '1'
+      }
+      
+      leftDot.addEventListener('mouseenter', showDotsAndConnections)
+      rightDot.addEventListener('mouseenter', showDotsAndConnections)
+      
+      // Also show connections when clicking on dots
+      const showConnectionsOnClick = () => {
+        setHoveredHighlightId(highlight.id)
+      }
+      
+      leftDot.addEventListener('click', showConnectionsOnClick)
+      rightDot.addEventListener('click', showConnectionsOnClick)
+      leftDot.addEventListener('mouseleave', () => {
+        // Only hide if not hovering over the highlight itself
+        setTimeout(() => {
+          if (hoveredHighlightIdRef.current !== highlight.id) {
+            leftDot.style.opacity = '0'
+            rightDot.style.opacity = '0'
+          }
+        }, 100)
+      })
+      rightDot.addEventListener('mouseleave', () => {
+        setTimeout(() => {
+          if (hoveredHighlightIdRef.current !== highlight.id) {
+            leftDot.style.opacity = '0'
+            rightDot.style.opacity = '0'
+          }
+        }, 100)
+      })
+      
+      // Handle dot clicks
+      const handleDotClick = (e, dotSide) => {
+        e.stopPropagation()
+        e.preventDefault()
+        
+        // Use functional update to get current state
+        setConnectingFrom(current => {
+          if (!current) {
+            // Start connection
+            setHoveredHighlightId(highlight.id) // Keep highlight hovered to show dots
+            return { highlightId: highlight.id, dot: dotSide }
+          } else {
+            // If clicking the same dot again, cancel connection
+            if (current.highlightId === highlight.id && current.dot === dotSide) {
+              setHoveredHighlightId(null)
+              return null // Cancel connection
+            }
+            
+            // Complete connection if same color and different highlight
+            setHighlights(prev => {
+              const fromHighlight = prev.find(h => h.id === current.highlightId)
+              
+              if (fromHighlight && fromHighlight.color === highlight.color && fromHighlight.id !== highlight.id) {
+                // Create connection - but first remove any existing connections from these dots
+                const updated = prev.map(h => {
+                  if (h.id === current.highlightId) {
+                    // Remove any existing connection from this dot
+                    const connections = (h.connections || []).filter(
+                      c => c.fromDot !== current.dot
+                    )
+                    // Also remove reverse connections from other highlights that were connected to this dot
+                    const newConnections = connections.map(conn => {
+                      // Find the target highlight and remove the reverse connection
+                      const targetHighlight = prev.find(th => th.id === conn.to)
+                      if (targetHighlight && targetHighlight.connections) {
+                        // This will be handled when we process the target highlight
+                      }
+                      return conn
+                    })
+                    
+                    // Add new connection
+                    const newConnection = {
+                      to: highlight.id,
+                      fromDot: current.dot,
+                      toDot: dotSide
+                    }
+                    return { ...h, connections: [...newConnections, newConnection] }
+                  }
+                  if (h.id === highlight.id) {
+                    // Remove any existing connection from this dot
+                    const connections = (h.connections || []).filter(
+                      c => c.fromDot !== dotSide
+                    )
+                    
+                    // Add new connection
+                    const newConnection = {
+                      to: current.highlightId,
+                      fromDot: dotSide,
+                      toDot: current.dot
+                    }
+                    return { ...h, connections: [...connections, newConnection] }
+                  }
+                  // For other highlights, remove any connections TO the dots we're connecting
+                  // (in case they were previously connected to these dots)
+                  const connections = (h.connections || []).filter(
+                    c => !(
+                      (c.to === current.highlightId && c.toDot === current.dot) ||
+                      (c.to === highlight.id && c.toDot === dotSide)
+                    )
+                  )
+                  return { ...h, connections }
+                })
+                return updated
+              }
+              return prev
+            })
+            // Clear hover state and remove borders immediately
+            setHoveredHighlightId(null)
+            // Also remove borders and hide dots from all highlight rectangles
+            Object.values(highlightLayerRefs.current).forEach(layer => {
+              if (layer) {
+                const allRects = layer.querySelectorAll('.highlight-rect')
+                allRects.forEach(rect => {
+                  rect.style.border = 'none'
+                })
+                const allDots = layer.querySelectorAll('.highlight-connection-dot')
+                allDots.forEach(dot => {
+                  dot.style.opacity = '0'
+                })
+              }
+            })
+            return null // Clear connection state
+          }
+        })
+      }
+      
+      leftDot.addEventListener('click', (e) => handleDotClick(e, 'left'))
+      rightDot.addEventListener('click', (e) => handleDotClick(e, 'right'))
+      
+      // Create delete button for dots that have connections
+      const createDeleteButton = (dot, dotSide) => {
+        // Check if this dot has any connections (from this highlight OR to this highlight)
+        const hasConnectionsFrom = highlight.connections && highlight.connections.some(
+          conn => conn.fromDot === dotSide
+        )
+        
+        // Check if any other highlight has a connection TO this highlight on this dot
+        const hasConnectionsTo = highlights.some(h => 
+          h.connections && h.connections.some(
+            conn => conn.to === highlight.id && conn.toDot === dotSide
+          )
+        )
+        
+        if (!hasConnectionsFrom && !hasConnectionsTo) return null
+        
+        const deleteBtn = document.createElement('div')
+        deleteBtn.className = 'highlight-connection-delete'
+        deleteBtn.style.position = 'absolute'
+        deleteBtn.style.left = (dotSide === 'left' ? firstX - 18 : lastX + lastWidth + 3) + 'px'
+        deleteBtn.style.top = (dotSide === 'left' ? firstY + firstHeight / 2 - 6 : lastY + lastHeight / 2 - 6) + 'px'
+        deleteBtn.style.width = '12px'
+        deleteBtn.style.height = '12px'
+        deleteBtn.style.borderRadius = '50%'
+        deleteBtn.style.backgroundColor = '#000'
+        deleteBtn.style.color = '#fff'
+        deleteBtn.style.display = 'flex'
+        deleteBtn.style.alignItems = 'center'
+        deleteBtn.style.justifyContent = 'center'
+        deleteBtn.style.fontSize = '8px'
+        deleteBtn.style.fontWeight = 'bold'
+        deleteBtn.style.lineHeight = '1'
+        deleteBtn.style.cursor = 'pointer'
+        deleteBtn.style.zIndex = '11'
+        deleteBtn.style.opacity = '0'
+        deleteBtn.style.transition = 'opacity 0.2s ease'
+        deleteBtn.style.pointerEvents = 'auto'
+        deleteBtn.textContent = '×'
+        
+        // Show delete button when hovering over the dot
+        const showDelete = () => {
+          deleteBtn.style.opacity = '1'
+        }
+        
+        const hideDelete = () => {
+          setTimeout(() => {
+            if (!dot.matches(':hover') && !deleteBtn.matches(':hover')) {
+              deleteBtn.style.opacity = '0'
+            }
+          }, 100)
+        }
+        
+        dot.addEventListener('mouseenter', showDelete)
+        dot.addEventListener('mouseleave', hideDelete)
+        deleteBtn.addEventListener('mouseenter', showDelete)
+        deleteBtn.addEventListener('mouseleave', hideDelete)
+        
+        // Handle delete click
+        deleteBtn.addEventListener('click', (e) => {
+          e.stopPropagation()
+          e.preventDefault()
+          
+          // Remove all connections from this dot
+          setHighlights(prev => {
+            return prev.map(h => {
+              if (h.id === highlight.id) {
+                // Remove connections from this highlight where fromDot matches
+                const filteredConnections = (h.connections || []).filter(
+                  conn => conn.fromDot !== dotSide
+                )
+                return { ...h, connections: filteredConnections }
+              } else {
+                // Remove connections TO this highlight where toDot matches
+                const filteredConnections = (h.connections || []).filter(
+                  conn => !(conn.to === highlight.id && conn.toDot === dotSide)
+                )
+                return { ...h, connections: filteredConnections }
+              }
+            })
+          })
+          
+          // Clear hover state immediately
+          setTimeout(() => {
+            setHoveredHighlightId(null)
+          }, 0)
+        })
+        
+        return deleteBtn
+      }
+      
+      const leftDeleteBtn = createDeleteButton(leftDot, 'left')
+      const rightDeleteBtn = createDeleteButton(rightDot, 'right')
+      
+      highlightLayer.appendChild(leftDot)
+      highlightLayer.appendChild(rightDot)
+      if (leftDeleteBtn) highlightLayer.appendChild(leftDeleteBtn)
+      if (rightDeleteBtn) highlightLayer.appendChild(rightDeleteBtn)
+    }
   }
 
   // Download PDF with highlights
@@ -6189,6 +6941,7 @@ function App() {
                     highlightItems={highlightItems}
                     setHighlightItems={setHighlightItems}
                     documentId={documentId}
+                    highlights={highlights}
                   />
                 )}
               </div>
@@ -6301,6 +7054,12 @@ function App() {
                         if (el) highlightLayerRefs.current[pageInfo.pageNum] = el
                       }}
                       className="highlight-layer"
+                    />
+                    <div
+                      ref={(el) => {
+                        if (el) connectionLayerRefs.current[pageInfo.pageNum] = el
+                      }}
+                      className="connection-layer"
                     />
                     <div
                       ref={(el) => {

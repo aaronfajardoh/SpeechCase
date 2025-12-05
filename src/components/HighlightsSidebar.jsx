@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react'
 import { IconHighlighter } from './Icons.jsx'
 
 // Sidebar tab: highlights
-const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId }) => {
+const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, highlights }) => {
   const [editingId, setEditingId] = useState(null)
   const [editingText, setEditingText] = useState('')
   const [draggedId, setDraggedId] = useState(null)
