@@ -240,11 +240,13 @@ const TimelineSidebar = ({
               const rawDate = getBestDate(event)
               const displayDate = formatDateForDisplay(rawDate, index)
               const isSelected = selectedEvent === index
+              const importance = event.importance || 'medium'
+              const importanceClass = `importance-${importance.toLowerCase()}`
               
               return (
                 <div 
                   key={index} 
-                  className={`timeline-item ${isSelected ? 'selected' : ''}`}
+                  className={`timeline-item ${isSelected ? 'selected' : ''} ${importanceClass}`}
                   onClick={(e) => handleEventClick(e, index)}
                   data-event-index={index}
                 >

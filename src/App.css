@@ -794,7 +794,7 @@
 .timeline-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 1rem;
   padding: 0.75rem 0.5rem;
   border-bottom: 1px solid rgba(95, 99, 104, 0.3);
   margin-bottom: 0.5rem;
@@ -805,6 +805,8 @@
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  flex: 1;
+  min-width: 0;
 }
 
 .timeline-header h3 {
@@ -835,6 +837,8 @@
   cursor: pointer;
   transition: all 0.18s ease;
   white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .btn-expand-timeline:hover {
@@ -969,6 +973,41 @@
   line-height: 1.3;
   word-wrap: break-word;
   overflow-wrap: break-word;
+}
+
+/* High Importance Event Styling in TimelineSidebar */
+.timeline-item.importance-high .timeline-event-title {
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.timeline-item.importance-high .timeline-event-date {
+  font-weight: 700;
+  color: #8ab4f8;
+  letter-spacing: 0.02em;
+}
+
+.timeline-item.importance-high .timeline-dot {
+  border-color: #8ab4f8;
+  border-width: 2.5px;
+  box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.4),
+    0 0 8px rgba(138, 180, 248, 0.3);
+}
+
+.timeline-item.importance-high:hover .timeline-dot,
+.timeline-item.importance-high.selected .timeline-dot {
+  background: #8ab4f8;
+  box-shadow: 0 0 0 4px rgba(138, 180, 248, 0.6),
+    0 0 20px rgba(138, 180, 248, 0.7);
+  transform: scale(1.15);
+}
+
+.timeline-item.importance-high:hover {
+  background: rgba(138, 180, 248, 0.12);
+}
+
+.timeline-item.importance-high.selected {
+  background: rgba(138, 180, 248, 0.18);
 }
 
 /* Timeline Loading States */
@@ -1415,7 +1454,7 @@
 
 .timeline-stage-labels {
   position: absolute;
-  top: -2rem;
+  top: calc(-2rem + 65px);
   left: 0;
   right: 0;
   height: 1.5rem;
@@ -1503,11 +1542,11 @@
 }
 
 .timeline-event-icon.icon-above {
-  bottom: calc(50% + 100px); /* Position above the label */
+  bottom: calc(50% + 130px); /* Position above the label, 30px further up */
 }
 
 .timeline-event-icon.icon-below {
-  top: calc(50% + 100px); /* Position below the label */
+  top: calc(50% + 130px); /* Position below the label, 30px further down */
 }
 
 .timeline-event-marker:hover .timeline-event-icon {
