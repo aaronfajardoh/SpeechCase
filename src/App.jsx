@@ -114,6 +114,7 @@ function App() {
   const [timelineError, setTimelineError] = useState(null) // Timeline error message
   const [isTimelineExpanded, setIsTimelineExpanded] = useState(false) // Timeline expanded in main view
   const [selectedEvent, setSelectedEvent] = useState(null) // Selected event for details tooltip
+  const [timelineIcons, setTimelineIcons] = useState({}) // Icons for timeline events
   const fileInputRef = useRef(null)
   const utteranceRef = useRef(null)
   const synthRef = useRef(null)
@@ -4192,6 +4193,7 @@ function App() {
         setDocumentId(newDocumentId)
         setTimeline(null) // Clear previous timeline
         setTimelineError(null)
+        setTimelineIcons({}) // Clear previous icons
         setIsPDFProcessing(true)
         
         // Process PDF in background (don't block UI)
@@ -4313,14 +4315,24 @@ function App() {
         console.log('Timeline generation failed:', data);
         setTimelineError(data.message || 'Could not generate timeline from this document.')
         setTimeline(null)
+        setTimelineIcons({})
         return
       }
 
       setTimeline(data.timeline || [])
+      
+      // If icons are included in the response, store them
+      if (data.icons && Object.keys(data.icons).length > 0) {
+        console.log(`Timeline loaded with ${Object.keys(data.icons).length} pre-generated icons`)
+        setTimelineIcons(data.icons)
+      } else {
+        setTimelineIcons({}) // Clear icons if none provided
+      }
     } catch (error) {
       console.error('Error generating timeline:', error)
       setTimelineError(error.message || 'Failed to generate timeline')
       setTimeline(null)
+      setTimelineIcons({})
     } finally {
       setIsTimelineLoading(false)
     }
@@ -7175,6 +7187,8 @@ function App() {
                 selectedEvent={selectedEvent}
                 onEventClick={setSelectedEvent}
                 onCloseDetails={() => setSelectedEvent(null)}
+                documentId={documentId}
+                initialIcons={timelineIcons}
               />
             </div>
           </div>

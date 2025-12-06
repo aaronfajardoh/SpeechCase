@@ -5,12 +5,29 @@ import { IconClose } from './Icons.jsx'
 // - Horizontal line with dots
 // - Proportional spacing based on event dates
 // - Labels alternate above/below the line and never overlap
-const ProportionalTimeline = ({ events, selectedEvent, onEventClick, onCloseDetails }) => {
+const ProportionalTimeline = ({ events, selectedEvent, onEventClick, onCloseDetails, documentId, initialIcons }) => {
   const containerRef = useRef(null)
   const trackRef = useRef(null)
 
   // Visible width of the viewport (used as the "ideal" line length)
   const [viewportWidth, setViewportWidth] = useState(0)
+  
+  // Store SVG icons for remarkable events
+  const [eventIcons, setEventIcons] = useState(initialIcons || {})
+  const [isLoadingIcons, setIsLoadingIcons] = useState(false)
+  const iconsFetchedRef = useRef(false)
+  
+  // Update icons if initialIcons prop changes (from timeline generation)
+  useEffect(() => {
+    if (initialIcons && Object.keys(initialIcons).length > 0) {
+      console.log('ProportionalTimeline: Received initial icons from timeline generation')
+      setEventIcons(initialIcons)
+      // Mark as fetched so we don't re-fetch
+      if (events && events.length > 0 && documentId) {
+        iconsFetchedRef.current = `${documentId}-${events.length}`
+      }
+    }
+  }, [initialIcons, events, documentId])
 
   // Choose the best available date string from an event
   const getBestDate = (event) => {
@@ -221,6 +238,106 @@ const ProportionalTimeline = ({ events, selectedEvent, onEventClick, onCloseDeta
     return () => window.removeEventListener('resize', updateWidth)
   }, [])
 
+  // Fetch icons for remarkable events (high importance)
+  useEffect(() => {
+    console.log('ProportionalTimeline: useEffect triggered', { 
+      eventsLength: events?.length, 
+      documentId,
+      hasEventIcons: Object.keys(eventIcons).length 
+    })
+    
+    if (!events || events.length === 0) {
+      console.log('ProportionalTimeline: No events, skipping icon fetch')
+      return
+    }
+    
+    if (!documentId) {
+      console.log('ProportionalTimeline: No documentId, skipping icon fetch')
+      return
+    }
+
+    // Check if we've already fetched icons for this set of events
+    // Use a combination of documentId and events length as a key
+    const eventsKey = `${documentId}-${events.length}`
+    if (iconsFetchedRef.current === eventsKey) {
+      console.log('ProportionalTimeline: Icons already fetched for this timeline')
+      return
+    }
+
+    // Check if there are any high-importance events
+    const highImportanceEvents = events.filter(
+      event => (event.importance || '').toLowerCase() === 'high'
+    )
+    
+    console.log(`ProportionalTimeline: Found ${highImportanceEvents.length} high-importance events`)
+
+    if (highImportanceEvents.length === 0) {
+      console.log('ProportionalTimeline: No high-importance events, skipping icon fetch')
+      iconsFetchedRef.current = eventsKey
+      return
+    }
+
+    // Check if we already have icons for these events
+    // Use a ref to check current state without causing re-renders
+    const currentIcons = eventIcons
+    const needsIcons = events.some((event, index) => {
+      const isHighImportance = (event.importance || '').toLowerCase() === 'high'
+      return isHighImportance && !currentIcons[index]
+    })
+
+    if (!needsIcons) {
+      console.log('ProportionalTimeline: All high-importance events already have icons')
+      iconsFetchedRef.current = eventsKey
+      return
+    }
+
+    console.log('ProportionalTimeline: Fetching icons for remarkable events...')
+    setIsLoadingIcons(true)
+    
+    fetch('/api/ai/timeline-icons', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        timeline: events,
+        documentId
+      })
+    })
+      .then(async res => {
+        if (!res.ok) {
+          const text = await res.text()
+          console.error(`Timeline icons API error (${res.status}):`, text)
+          throw new Error(`API error: ${res.status} - ${text.substring(0, 100)}`)
+        }
+        return res.json()
+      })
+      .then(data => {
+        if (data.success && data.icons) {
+          console.log(`Received ${Object.keys(data.icons).length} icons for timeline events`)
+          setEventIcons(prev => {
+            const updated = { ...prev }
+            Object.keys(data.icons).forEach(index => {
+              if (!updated[index]) {
+                updated[index] = data.icons[index]
+              }
+            })
+            return updated
+          })
+          iconsFetchedRef.current = eventsKey
+        } else {
+          console.log('No icons returned from API:', data)
+        }
+      })
+      .catch(error => {
+        console.error('Error fetching timeline icons:', error)
+        // Don't mark as fetched on error so we can retry
+      })
+      .finally(() => {
+        setIsLoadingIcons(false)
+      })
+  }, [events, documentId]) // Only re-fetch if events or documentId changes
+
   // Get brief description: short, single-sentence-ish summary
   const getBriefDescription = (text, maxWords = 4) => {
     if (!text) return ''
@@ -352,6 +469,8 @@ const ProportionalTimeline = ({ events, selectedEvent, onEventClick, onCloseDeta
 
             const importance = event.importance || 'medium'
             const importanceClass = getImportanceClass(importance)
+            const isRemarkable = importance.toLowerCase() === 'high'
+            const eventIcon = eventIcons[index]
 
             return (
               <div
@@ -361,6 +480,15 @@ const ProportionalTimeline = ({ events, selectedEvent, onEventClick, onCloseDeta
                 } ${importanceClass}`}
                 style={{ left: `${leftPercent}%` }}
               >
+                {/* Custom SVG Icon for remarkable events */}
+                {isRemarkable && eventIcon && (
+                  <div
+                    className={`timeline-event-icon ${isAbove ? 'icon-above' : 'icon-below'}`}
+                    style={{ backgroundColor: 'transparent' }}
+                    dangerouslySetInnerHTML={{ __html: eventIcon }}
+                  />
+                )}
+
                 {/* Label above or below the dot */}
                 <div
                   className={`timeline-event-label ${isAbove ? 'label-above' : 'label-below'} ${importanceClass}`}

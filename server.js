@@ -7,6 +7,7 @@ import textToSpeech from '@google-cloud/text-to-speech';
 import { chunkText, addMetadataTags } from './services/chunking.js';
 import { initializeOpenAI, initializeDeepSeek, generateEmbedding, generateEmbeddingsBatch } from './services/embeddings.js';
 import { vectorStore } from './services/vectorStore.js';
+import { generateEventIcon, generateEventIconsBatch } from './services/iconGenerator.js';
 import OpenAI from 'openai';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1080,15 +1081,78 @@ When identifying stages, be thoughtful: only create stages if the narrative natu
     }
 
     console.log(`Timeline generated successfully with ${timeline.length} events`);
+    
+    // Generate icons for remarkable events in the background (non-blocking)
+    // This way icons are ready when the timeline loads
+    let icons = {};
+    try {
+      console.log('Generating icons for remarkable timeline events...');
+      const iconMap = await generateEventIconsBatch(timeline, chatClient);
+      iconMap.forEach((svg, index) => {
+        icons[index] = svg;
+      });
+      console.log(`Generated ${Object.keys(icons).length} icons for timeline`);
+    } catch (iconError) {
+      console.error('Error generating timeline icons (non-critical):', iconError);
+      // Don't fail the timeline generation if icons fail
+    }
+    
     res.json({
       success: true,
       timeline,
       eventCount: timeline.length,
-      documentId
+      documentId,
+      icons // Include icons in the timeline response
     });
   } catch (error) {
     console.error('Error generating timeline:', error);
     res.status(500).json({ error: 'Failed to generate timeline', details: error.message });
+  }
+});
+
+/**
+ * Generate SVG icons for remarkable timeline events
+ * POST /api/ai/timeline-icons
+ * Body: { timeline: Array, documentId: string }
+ */
+app.post('/api/ai/timeline-icons', async (req, res) => {
+  console.log('Timeline icons endpoint hit');
+  try {
+    const chatClient = deepSeekClient || openaiClient;
+    
+    if (!chatClient) {
+      console.log('No AI client available for icon generation');
+      return res.status(503).json({ error: 'No AI API configured. Please set DEEPSEEK_API_KEY or OPENAI_API_KEY environment variable.' });
+    }
+
+    const { timeline, documentId } = req.body;
+
+    if (!timeline || !Array.isArray(timeline) || timeline.length === 0) {
+      console.log('Invalid timeline data received');
+      return res.status(400).json({ error: 'timeline array is required' });
+    }
+
+    console.log(`Generating icons for ${timeline.length} events, documentId: ${documentId}`);
+    
+    // Generate icons for remarkable events (high importance)
+    const iconMap = await generateEventIconsBatch(timeline, chatClient);
+
+    // Convert Map to object for JSON response
+    const icons = {};
+    iconMap.forEach((svg, index) => {
+      icons[index] = svg;
+    });
+
+    console.log(`Generated ${Object.keys(icons).length} icons`);
+
+    res.json({
+      success: true,
+      icons,
+      count: Object.keys(icons).length
+    });
+  } catch (error) {
+    console.error('Error generating timeline icons:', error);
+    res.status(500).json({ error: 'Failed to generate timeline icons', details: error.message });
   }
 });
 

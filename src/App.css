@@ -1471,6 +1471,60 @@
   top: calc(50% + 16px); /* 16px clearance below the line/dot */
 }
 
+/* Event Icons for Remarkable Events */
+.timeline-event-icon {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 64px;
+  height: 64px;
+  z-index: 3;
+  pointer-events: none;
+  opacity: 0.95;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.timeline-event-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* Ensure icons are visible on dark background */
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6)) drop-shadow(0 0 2px rgba(138, 180, 248, 0.3));
+  /* Force transparent background */
+  background: transparent !important;
+}
+
+.timeline-event-icon svg * {
+  /* Ensure no white backgrounds on any child elements */
+  background: transparent !important;
+}
+
+.timeline-event-icon.icon-above {
+  bottom: calc(50% + 100px); /* Position above the label */
+}
+
+.timeline-event-icon.icon-below {
+  top: calc(50% + 100px); /* Position below the label */
+}
+
+.timeline-event-marker:hover .timeline-event-icon {
+  opacity: 1;
+  transform: translateX(-50%) scale(1.1);
+}
+
+.timeline-event-marker.selected .timeline-event-icon {
+  opacity: 1;
+  transform: translateX(-50%) scale(1.15);
+  filter: drop-shadow(0 4px 12px rgba(138, 180, 248, 0.6));
+}
+
+.timeline-event-marker.selected .timeline-event-icon svg {
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.4)) drop-shadow(0 0 12px rgba(138, 180, 248, 0.5));
+}
+
 .timeline-event-label:hover {
   transform: translateX(-50%) translateY(-1px);
   border-color: #8ab4f8;
