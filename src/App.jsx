@@ -650,74 +650,119 @@ function App() {
           return false
         }
 
-        const utterance = new SpeechSynthesisUtterance(textToRead)
-        utterance.lang = 'en-US'
-        utterance.rate = playbackSpeedRef.current
-        utterance.pitch = 1.0
-        utterance.volume = 1.0
+        // Split text into segments with header detection for browser TTS
+        // Note: documentId is not available in Media Session context, so we'll use on-the-fly detection
+        const segments = splitTextForBrowserTTS(textToRead, null)
+        console.log(`Media Session: Split text into ${segments.length} segments, ${segments.filter(s => s.isHeader).length} headers detected`)
 
-        utterance.onboundary = (event) => {
-          if (event.name === 'word' || event.name === 'sentence') {
-            const absolutePosition = position + event.charIndex
-            currentPlaybackPositionRef.current = absolutePosition
-            lastBoundaryPositionRef.current = absolutePosition
-          }
-        }
-
-        utterance.onstart = () => {
-          setIsPlaying(true)
-          currentPlaybackPositionRef.current = position
-          playbackStartPositionRef.current = position
-          playbackStartTimeRef.current = Date.now()
-          lastBoundaryPositionRef.current = position
-          
-          if ('mediaSession' in navigator) {
-            navigator.mediaSession.playbackState = 'playing'
-            navigator.mediaSession.metadata = new MediaMetadata({
-              title: pdfFileRef.current ? pdfFileRef.current.name : 'SpeechCase',
-              artist: 'Text-to-Speech',
-              album: 'PDF Reader'
-            })
-          }
-        }
+        let currentSegmentIndex = 0
+        let totalTextOffset = 0
         
-        utterance.onend = () => {
-          setIsPlaying(false)
-          currentPlaybackPositionRef.current = currentText.length
-          playbackStartTimeRef.current = null
-          
-          if ('mediaSession' in navigator) {
-            // Keep as 'paused' instead of 'none' so macOS continues to route media keys
-            navigator.mediaSession.playbackState = 'paused'
-          }
-        }
-        
-        utterance.onerror = (event) => {
-          // Ignore "interrupted" errors - these are expected when pausing/cancelling speech
-          if (event.error === 'interrupted') {
+        // Function to speak next segment
+        const speakNextSegment = () => {
+          if (currentSegmentIndex >= segments.length) {
+            // All segments done
             setIsPlaying(false)
+            currentPlaybackPositionRef.current = position + textToRead.length
             playbackStartTimeRef.current = null
-            
             if ('mediaSession' in navigator) {
-              // Keep as 'paused' instead of 'none' so macOS continues to route media keys
               navigator.mediaSession.playbackState = 'paused'
             }
             return
           }
-          
-          // Only show errors for actual problems
-          setError('Error during speech: ' + event.error)
-          setIsPlaying(false)
-          playbackStartTimeRef.current = null
-          
-          if ('mediaSession' in navigator) {
-            // Keep as 'paused' instead of 'none' so macOS continues to route media keys
-            navigator.mediaSession.playbackState = 'paused'
-          }
-        }
 
-        utteranceRef.current = utterance
-        synthRef.current.speak(utterance)
+          const segment = segments[currentSegmentIndex]
+          if (!segment.text || segment.text.trim().length === 0) {
+            currentSegmentIndex++
+            speakNextSegment()
+            return
+          }
+
+          // If this segment is after a header, add delay
+          if (currentSegmentIndex > 0 && segments[currentSegmentIndex - 1].isHeader) {
+            const delay = segments[currentSegmentIndex - 1].delay
+            setTimeout(() => {
+              speakNextSegment()
+            }, delay)
+            return
+          }
+
+          // Create utterance for this segment
+          const utterance = new SpeechSynthesisUtterance(segment.text)
+          utterance.lang = 'en-US'
+          utterance.rate = playbackSpeedRef.current
+          utterance.pitch = 1.0
+          utterance.volume = 1.0
+
+          const segmentStartInText = totalTextOffset
+          totalTextOffset += segment.text.length + (currentSegmentIndex < segments.length - 1 ? 1 : 0)
+
+          utterance.onboundary = (event) => {
+            if (event.name === 'word' || event.name === 'sentence') {
+              const absolutePosition = position + segmentStartInText + event.charIndex
+              currentPlaybackPositionRef.current = absolutePosition
+              lastBoundaryPositionRef.current = absolutePosition
+            }
+          }
+
+          utterance.onstart = () => {
+            if (currentSegmentIndex === 0) {
+              setIsPlaying(true)
+              currentPlaybackPositionRef.current = position
+              playbackStartPositionRef.current = position
+              playbackStartTimeRef.current = Date.now()
+              lastBoundaryPositionRef.current = position
+              
+              if ('mediaSession' in navigator) {
+                navigator.mediaSession.playbackState = 'playing'
+                navigator.mediaSession.metadata = new MediaMetadata({
+                  title: pdfFileRef.current ? pdfFileRef.current.name : 'SpeechCase',
+                  artist: 'Text-to-Speech',
+                  album: 'PDF Reader'
+                })
+              }
+            }
+          }
+          
+          utterance.onend = () => {
+            currentSegmentIndex++
+            if (segment.isHeader) {
+              setTimeout(() => {
+                speakNextSegment()
+              }, segment.delay)
+            } else {
+              speakNextSegment()
+            }
+          }
+          
+          utterance.onerror = (event) => {
+            // Ignore "interrupted" errors - these are expected when pausing/cancelling speech
+            if (event.error === 'interrupted') {
+              setIsPlaying(false)
+              playbackStartTimeRef.current = null
+              
+              if ('mediaSession' in navigator) {
+                navigator.mediaSession.playbackState = 'paused'
+              }
+              return
+            }
+            
+            // Only show errors for actual problems
+            setError('Error during speech: ' + event.error)
+            setIsPlaying(false)
+            playbackStartTimeRef.current = null
+            
+            if ('mediaSession' in navigator) {
+              navigator.mediaSession.playbackState = 'paused'
+            }
+          }
+
+          utteranceRef.current = utterance
+          synthRef.current.speak(utterance)
+        }
+        
+        // Start speaking the first segment
+        speakNextSegment()
         return true
       }
     }
@@ -1191,16 +1236,191 @@ function App() {
     return spanishScore > englishScore ? 'es' : 'en'
   }
 
+  // Client-side header detection (simplified version for browser TTS)
+  // This is a lightweight version that works in the browser
+  const detectHeaderClient = (text, followingText = '') => {
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+      return { isHeader: false, confidence: 0 };
+    }
+
+    const trimmed = text.trim();
+    let confidence = 0;
+
+    // Count words and capitalized words
+    const words = trimmed.split(/\s+/).filter(w => w.length > 0);
+    const wordCount = words.length;
+    const capitalizedCount = words.filter(w => {
+      const cleanWord = w.replace(/[^\w]/g, '');
+      return cleanWord.length > 0 && /^[A-Z]/.test(cleanWord);
+    }).length;
+    const capitalizedRatio = wordCount > 0 ? capitalizedCount / wordCount : 0;
+
+    // Signal A: Title-case detection
+    if (capitalizedRatio >= 0.5 && wordCount > 1) {
+      confidence += 0.25;
+    } else if (capitalizedRatio >= 0.3 && wordCount > 1) {
+      confidence += 0.15;
+    }
+    if (capitalizedRatio >= 0.6 && !/[.!?]$/.test(trimmed)) {
+      confidence += 0.1;
+    }
+
+    // Signal B: Punctuation
+    const lastChar = trimmed[trimmed.length - 1];
+    const hasEndingPunctuation = /[.!?,]/.test(lastChar);
+    const endsWithColon = lastChar === ':';
+    
+    if (!hasEndingPunctuation) {
+      confidence += 0.2;
+    } else if (endsWithColon) {
+      confidence += 0.15;
+    } else {
+      confidence -= 0.2;
+    }
+
+    // Signal C: Length
+    if (wordCount >= 2 && wordCount <= 15) {
+      confidence += 0.15;
+    } else if (wordCount === 1) {
+      confidence += 0.05;
+    } else if (wordCount > 15) {
+      confidence -= 0.15;
+    }
+
+    // Signal D: Following text
+    if (followingText && followingText.trim().length > 0) {
+      const firstWord = followingText.trim().split(/\s+/)[0];
+      if (firstWord && /^[A-Z]/.test(firstWord.replace(/[^\w]/g, ''))) {
+        confidence += 0.15;
+      }
+    }
+
+    // Signal E: No verbs (simplified check)
+    const commonVerbs = /\b(is|are|was|were|be|been|being|have|has|had|do|does|did|will|would|can|could|should|may|might|get|got|go|went|make|made|take|took|see|saw|say|said|come|came|know|knew|think|thought|want|wanted|use|used|find|found|give|gave|tell|told|work|worked|call|called|try|tried|ask|asked|need|needed|feel|felt|become|became|leave|left|put|mean|meant|keep|kept|let|begin|began|seem|seemed|help|helped|show|showed|hear|heard|play|played|run|ran|move|moved|live|lived|believe|believed|bring|brought|happen|happened|write|wrote|sit|sat|stand|stood|lose|lost|pay|paid|meet|met|include|included|continue|continued|learn|learned|change|changed|lead|led|understand|understood|watch|watched|follow|followed|stop|stopped|create|created|speak|spoke|read|spend|spent|grow|grew|open|opened|walk|walked|win|won|offer|offered|remember|remembered|love|loved|consider|considered|appear|appeared|buy|bought|wait|waited|serve|served|die|died|send|sent|build|built|stay|stayed|fall|fell|cut|reach|reached|kill|killed|raise|raised|pass|passed|sell|sold|decide|decided|return|returned|explain|explained|develop|developed|carry|carried|break|broke|receive|received|agree|agreed|support|supported|hit|produce|produced|eat|ate|cover|covered|catch|caught|draw|drew|choose|chose)\b/i;
+    const hasVerbs = commonVerbs.test(trimmed.toLowerCase());
+    
+    if (!hasVerbs && wordCount > 1) {
+      confidence += 0.2;
+    } else if (hasVerbs && wordCount > 3) {
+      confidence -= 0.2;
+    }
+
+    confidence = Math.max(0, Math.min(1, confidence));
+    return { isHeader: confidence >= 0.4, confidence };
+  }
+
+  // Split text into segments with header detection for browser TTS
+  // Returns array of { text, isHeader, delay }
+  const splitTextForBrowserTTS = (text, documentId = null) => {
+    if (!text || typeof text !== 'string') {
+      return [{ text: '', isHeader: false, delay: 0 }];
+    }
+
+    // First, split by sentence endings and double newlines
+    let parts = text.split(/(?<=[.!?])\s+|(?<=\n\n)/);
+    
+    // Further split parts that might contain headers (short title-case phrase followed by capitalized sentence)
+    const refinedParts = [];
+    for (const part of parts) {
+      if (!part.trim()) continue;
+      
+      // Look for pattern: short phrase (2-15 words, mostly title case, no ending punctuation)
+      // followed by space and a capitalized sentence start
+      // Try to find the BEST boundary where a header might end (prefer longer matches)
+      const words = part.split(/\s+/);
+      
+      // Check each potential split point, but start from longest and work backwards
+      // This ensures we find "Drivers of Value Capture" before "Drivers of"
+      // Also check single-word headers (like "Competition")
+      // Prefer longer matches when confidence is similar (within 0.15)
+      let bestSplit = null;
+      let bestConfidence = 0;
+      let bestWordCount = 0;
+      
+      // Check from 15 words down to 1 word (to catch single-word headers like "Competition")
+      for (let wordCount = Math.min(15, words.length - 1); wordCount >= 1; wordCount--) {
+        const potentialHeader = words.slice(0, wordCount).join(' ');
+        const rest = words.slice(wordCount).join(' ');
+        
+        if (rest.length === 0) continue;
+        
+        // Check if potential header looks like a header and rest starts with capitalized word
+        const restFirstWord = rest.trim().split(/\s+/)[0];
+        if (!restFirstWord || !/^[A-Z]/.test(restFirstWord.replace(/[^\w]/g, ''))) {
+          continue; // Rest doesn't start with capital, not a good split point
+        }
+        
+        // Check if potential header is actually a header
+        const detection = detectHeaderClient(potentialHeader, rest.trim().substring(0, 100));
+        
+        // For single-word headers, require higher confidence (0.5) to avoid false positives
+        // For multi-word headers, 0.4 is sufficient
+        const minConfidence = wordCount === 1 ? 0.5 : 0.4;
+        
+        if (detection.isHeader && detection.confidence >= minConfidence) {
+          // Prefer longer matches when confidence is similar (within 0.15)
+          // This ensures "Drivers of Value Capture" is chosen over "Drivers of Value"
+          const isBetter = detection.confidence > bestConfidence + 0.15 || 
+                          (detection.confidence >= bestConfidence - 0.15 && wordCount > bestWordCount);
+          
+          if (isBetter) {
+            bestSplit = {
+              header: potentialHeader.trim(),
+              rest: rest.trim(),
+              confidence: detection.confidence
+            };
+            bestConfidence = detection.confidence;
+            bestWordCount = wordCount;
+          }
+        }
+      }
+      
+      // If we found a good header split (confidence >= 0.4)
+      if (bestSplit && bestConfidence >= 0.4) {
+        refinedParts.push(bestSplit.header);
+        if (bestSplit.rest.length > 0) {
+          refinedParts.push(bestSplit.rest);
+        }
+      } else {
+        // No good header boundary found, keep the part as-is
+        refinedParts.push(part.trim());
+      }
+    }
+    
+    // Filter out empty parts
+    parts = refinedParts.filter(p => p && p.trim().length > 0);
+    
+    const segments = [];
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i].trim();
+      if (part.length === 0) continue;
+      
+      // Check first 200 chars for header detection
+      const partToCheck = part.substring(0, 200);
+      const followingText = i < parts.length - 1 ? parts[i + 1].trim().substring(0, 100) : '';
+      
+      const detection = detectHeaderClient(partToCheck, followingText);
+      
+      segments.push({
+        text: part,
+        isHeader: detection.isHeader,
+        delay: detection.isHeader ? 500 : 0 // 500ms pause after headers
+      });
+    }
+    
+    return segments;
+  }
+
   // Function to call Google TTS API for Spanish text
-  const synthesizeGoogleTTS = async (text, rate = 1.0) => {
+  const synthesizeGoogleTTS = async (text, rate = 1.0, documentId = null) => {
     try {
-      console.log('Calling Google TTS API with text length:', text.length, 'rate:', rate)
+      console.log('Calling Google TTS API with text length:', text.length, 'rate:', rate, 'documentId:', documentId)
       const response = await fetch('/api/tts', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ text, rate }),
+        body: JSON.stringify({ text, rate, documentId }),
       })
 
       if (!response.ok) {
@@ -1299,7 +1519,7 @@ function App() {
       if (textBytes <= maxBytes) {
         // Single chunk - play directly
         setIsTTSLoading(true)
-        const response = await synthesizeGoogleTTS(text, rate)
+        const response = await synthesizeGoogleTTS(text, rate, documentId)
         setIsTTSLoading(false)
         const { audioContent, mimeType } = response
 
@@ -1512,7 +1732,7 @@ function App() {
           
           try {
             console.log(`Preloading chunk ${chunkIndex + 1} of ${allChunks.length}`)
-            const response = await synthesizeGoogleTTS(allChunks[chunkIndex], rate)
+            const response = await synthesizeGoogleTTS(allChunks[chunkIndex], rate, documentId)
             chunkCache.set(chunkIndex, response)
             console.log(`Chunk ${chunkIndex + 1} preloaded and cached`)
           } catch (err) {
@@ -4248,8 +4468,15 @@ function App() {
       })
 
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Failed to process PDF')
+        let errorData;
+        try {
+          errorData = await response.json()
+        } catch (jsonError) {
+          // If response is not valid JSON, create a generic error
+          const statusText = response.statusText || 'Unknown error'
+          throw new Error(`Failed to process PDF: ${response.status} ${statusText}`)
+        }
+        throw new Error(errorData.error || errorData.details || 'Failed to process PDF')
       }
 
       const result = await response.json()
@@ -4445,57 +4672,90 @@ function App() {
         return false
       }
 
-      // Create new utterance
-      const utterance = new SpeechSynthesisUtterance(textToRead)
-      // Set language based on detected language (use Spanish voice for Spanish, English for English)
-      utterance.lang = langToUse === 'es' ? 'es-ES' : 'en-US'
-      utterance.rate = playbackSpeed
-      utterance.pitch = 1.0
-      utterance.volume = 1.0
+      // Split text into segments with header detection
+      const segments = splitTextForBrowserTTS(textToRead, documentId)
+      const headerCount = segments.filter(s => s.isHeader).length
+      console.log(`Split text into ${segments.length} segments for browser TTS, ${headerCount} headers detected`)
+      if (headerCount > 0) {
+        console.log('Headers found:', segments.filter(s => s.isHeader).map(s => `"${s.text.substring(0, 50)}${s.text.length > 50 ? '...' : ''}"`))
+      }
 
       // Track if utterance actually starts (Chrome can silently reject)
       let utteranceStarted = false
       let utteranceStartTimeout = null
+      let currentSegmentIndex = 0
+      let totalTextOffset = 0 // Track position in original textToRead
+      
+      // Function to speak next segment
+      const speakNextSegment = () => {
+        if (currentSegmentIndex >= segments.length) {
+          // All segments done
+          setIsPlaying(false)
+          currentPlaybackPositionRef.current = position + textToRead.length
+          playbackStartTimeRef.current = null
+          if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'paused'
+          }
+          return
+        }
 
-      // Track position using boundary events (fires when speaking each word)
-      utterance.onboundary = (event) => {
-        if (event.name === 'word' || event.name === 'sentence') {
-          // ELEGANT SOLUTION: Don't trust TTS position data - use it only to identify the word being spoken
-          // Then find the next matching word in our sequential textItems array
-          
-          const normalizeWord = (str) => str.trim().toLowerCase().replace(/[^\w]/g, '')
-          
-          // Extract the word being spoken from textToRead
-          const getWordAt = (text, pos) => {
-            if (pos < 0 || pos >= text.length) return null
-            let start = pos
-            let end = pos
-            while (start > 0 && /\S/.test(text[start - 1])) start--
-            while (end < text.length && /\S/.test(text[end])) end++
-            return text.substring(start, end)
-          }
-          
-          // Get the word being spoken (this is reliable - TTS correctly identifies words)
-          const spokenWord = getWordAt(textToRead, event.charIndex)
-          if (!spokenWord) {
-            return // Invalid event
-          }
-          
-          const spokenWordNormalized = normalizeWord(spokenWord)
-          if (!spokenWordNormalized) {
-            return // Empty word
-          }
-          
-          // Find the next matching word in our textItems array (forward from last highlighted)
-          const textItems = textItemsRef.current
-          if (!textItems || textItems.length === 0) {
-            return
-          }
-          
-          // Get the starting point: last highlighted charIndex, or start of textToRead
-          const startCharIndex = lastHighlightedCharIndexRef.current !== null 
-            ? lastHighlightedCharIndexRef.current 
-            : position
+        const segment = segments[currentSegmentIndex]
+        if (!segment.text || segment.text.trim().length === 0) {
+          currentSegmentIndex++
+          speakNextSegment()
+          return
+        }
+
+        // Create utterance for this segment
+        const utterance = new SpeechSynthesisUtterance(segment.text)
+        utterance.lang = langToUse === 'es' ? 'es-ES' : 'en-US'
+        utterance.rate = playbackSpeed
+        utterance.pitch = 1.0
+        utterance.volume = 1.0
+
+        // Calculate segment start position in original text
+        const segmentStartInText = totalTextOffset
+        totalTextOffset += segment.text.length + (currentSegmentIndex < segments.length - 1 ? 1 : 0) // +1 for space/newline between segments
+
+        // Track position using boundary events (fires when speaking each word)
+        utterance.onboundary = (event) => {
+          if (event.name === 'word' || event.name === 'sentence') {
+            // ELEGANT SOLUTION: Don't trust TTS position data - use it only to identify the word being spoken
+            // Then find the next matching word in our sequential textItems array
+            
+            const normalizeWord = (str) => str.trim().toLowerCase().replace(/[^\w]/g, '')
+            
+            // Extract the word being spoken from segment text
+            const getWordAt = (text, pos) => {
+              if (pos < 0 || pos >= text.length) return null
+              let start = pos
+              let end = pos
+              while (start > 0 && /\S/.test(text[start - 1])) start--
+              while (end < text.length && /\S/.test(text[end])) end++
+              return text.substring(start, end)
+            }
+            
+            // Get the word being spoken (this is reliable - TTS correctly identifies words)
+            const spokenWord = getWordAt(segment.text, event.charIndex)
+            if (!spokenWord) {
+              return // Invalid event
+            }
+            
+            const spokenWordNormalized = normalizeWord(spokenWord)
+            if (!spokenWordNormalized) {
+              return // Empty word
+            }
+            
+            // Find the next matching word in our textItems array (forward from last highlighted)
+            const textItems = textItemsRef.current
+            if (!textItems || textItems.length === 0) {
+              return
+            }
+            
+            // Get the starting point: last highlighted charIndex, or start of textToRead
+            const startCharIndex = lastHighlightedCharIndexRef.current !== null 
+              ? lastHighlightedCharIndexRef.current 
+              : position + segmentStartInText
           
           // ZERO LAG SOLUTION: Highlight the word that TTS is speaking RIGHT NOW
           // TTS boundary events fire when STARTING to speak a word, so we should highlight that word
@@ -4591,63 +4851,64 @@ function App() {
         }
       }
 
-      utterance.onstart = () => {
-        utteranceStarted = true
-        if (utteranceStartTimeout) {
-          clearTimeout(utteranceStartTimeout)
-          utteranceStartTimeout = null
+        utterance.onstart = () => {
+          utteranceStarted = true
+          if (utteranceStartTimeout) {
+            clearTimeout(utteranceStartTimeout)
+            utteranceStartTimeout = null
+          }
+          
+          // Only set playing state and initialize on first segment
+          if (currentSegmentIndex === 0) {
+            setIsPlaying(true)
+            currentPlaybackPositionRef.current = position
+            playbackStartPositionRef.current = position
+            playbackStartTimeRef.current = Date.now()
+            lastBoundaryPositionRef.current = position
+            previousBoundaryPositionRef.current = position
+            
+            // Reset page tracking when starting new playback
+            currentReadingPageRef.current = null
+            lastValidHighlightPositionRef.current = null
+            lastHighlightedCharIndexRef.current = null
+            lastHighlightedElementRef.current = null
+            
+            // Highlight the starting position
+            highlightCurrentReading(position)
+            
+            // Update Media Session metadata for macOS media key support
+            if ('mediaSession' in navigator) {
+              console.log('Setting Media Session playbackState to "playing"')
+              navigator.mediaSession.playbackState = 'playing'
+              navigator.mediaSession.metadata = new MediaMetadata({
+                title: pdfFile ? pdfFile.name : 'SpeechCase',
+                artist: 'Text-to-Speech',
+                album: 'PDF Reader'
+              })
+              console.log('Media Session state updated. PlaybackState:', navigator.mediaSession.playbackState)
+            }
+          }
         }
         
-        setIsPlaying(true)
-        // Ensure position is tracked
-        currentPlaybackPositionRef.current = position
-        playbackStartPositionRef.current = position
-        playbackStartTimeRef.current = Date.now()
-        lastBoundaryPositionRef.current = position
-        previousBoundaryPositionRef.current = position // Initialize previous position
-        
-        // Reset page tracking when starting new playback
-        currentReadingPageRef.current = null
-        lastValidHighlightPositionRef.current = null
-        lastHighlightedCharIndexRef.current = null
-        lastHighlightedElementRef.current = null
-        
-        // Highlight the starting position
-        highlightCurrentReading(position)
-        
-        // Update Media Session metadata for macOS media key support
-        if ('mediaSession' in navigator) {
-          console.log('Setting Media Session playbackState to "playing"')
-          navigator.mediaSession.playbackState = 'playing'
-          navigator.mediaSession.metadata = new MediaMetadata({
-            title: pdfFile ? pdfFile.name : 'SpeechCase',
-            artist: 'Text-to-Speech',
-            album: 'PDF Reader'
-          })
-          console.log('Media Session state updated. PlaybackState:', navigator.mediaSession.playbackState)
+        utterance.onend = () => {
+          if (utteranceStartTimeout) {
+            clearTimeout(utteranceStartTimeout)
+            utteranceStartTimeout = null
+          }
+          
+          // Move to next segment
+          currentSegmentIndex++
+          
+          // If this was a header, add delay before next segment
+          if (segment.isHeader) {
+            setTimeout(() => {
+              speakNextSegment()
+            }, segment.delay)
+          } else {
+            // Continue immediately to next segment
+            speakNextSegment()
+          }
         }
-      }
-      utterance.onend = () => {
-        if (utteranceStartTimeout) {
-          clearTimeout(utteranceStartTimeout)
-          utteranceStartTimeout = null
-        }
-        
-        setIsPlaying(false)
-        // Update position to end when finished
-        currentPlaybackPositionRef.current = extractedText.length
-        playbackStartTimeRef.current = null
-        
-        // Clear the reading highlight
-        clearReadingHighlight()
-        
-        // Update Media Session metadata
-        // Keep as 'paused' instead of 'none' so macOS continues to route media keys
-        if ('mediaSession' in navigator) {
-          navigator.mediaSession.playbackState = 'paused'
-          console.log('Media Session playbackState set to "paused" (end)')
-        }
-      }
       utterance.onerror = (event) => {
         if (utteranceStartTimeout) {
           clearTimeout(utteranceStartTimeout)
@@ -4686,30 +4947,34 @@ function App() {
         }
       }
 
-      utteranceRef.current = utterance
-      
-      try {
-        synthRef.current.speak(utterance)
+        utteranceRef.current = utterance
         
-        // Chrome sometimes silently rejects utterances - check if it actually started
-        // Wait a bit to see if onstart fires
-        utteranceStartTimeout = setTimeout(() => {
-          if (!utteranceStarted && utteranceRef.current === utterance) {
-            console.warn('Utterance may have been rejected by browser (Chrome issue)')
-            setError('Speech synthesis failed to start. This can happen in Chrome. Try refreshing the page or using a different browser.')
-            setIsPlaying(false)
-            utteranceRef.current = null
-            clearReadingHighlight()
-          }
-        }, 500)
-        
-        return true
-      } catch (error) {
-        console.error('Error calling speech synthesis speak():', error)
-        setError('Error starting speech: ' + error.message)
-        utteranceRef.current = null
-        return false
+        try {
+          synthRef.current.speak(utterance)
+          
+          // Chrome sometimes silently rejects utterances - check if it actually started
+          // Wait a bit to see if onstart fires
+          utteranceStartTimeout = setTimeout(() => {
+            if (!utteranceStarted && utteranceRef.current === utterance && currentSegmentIndex === 0) {
+              console.warn('Utterance may have been rejected by browser (Chrome issue)')
+              setError('Speech synthesis failed to start. This can happen in Chrome. Try refreshing the page or using a different browser.')
+              setIsPlaying(false)
+              utteranceRef.current = null
+              clearReadingHighlight()
+            }
+          }, 500)
+        } catch (error) {
+          console.error('Error calling speech synthesis speak():', error)
+          setError('Error starting speech: ' + error.message)
+          utteranceRef.current = null
+          setIsPlaying(false)
+          return false
+        }
       }
+      
+      // Start speaking the first segment
+      speakNextSegment()
+      return true
     }
   }
 

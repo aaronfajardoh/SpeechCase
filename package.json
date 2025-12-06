@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server.js",
-    "heroku-postbuild": "npm run build"
+    "heroku-postbuild": "npm run build",
+    "test:headers": "node tests/headerDetection.test.js"
   },
   "dependencies": {
     "@google-cloud/text-to-speech": "^6.4.0",

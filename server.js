@@ -89,41 +89,98 @@ if (hasOpenAIKey) {
 }
 
 // Helper function to split text into chunks under 5000 bytes
+// Handles SSML tags by ensuring they're not split
 function splitTextIntoChunks(text, maxBytes = 4500) {
   const chunks = [];
   let currentChunk = '';
   let currentBytes = 0;
 
-  // Split by sentences first, then by words if needed
-  const sentences = text.match(/[^.!?]+[.!?]+[\])'"`'"]*|.+/g) || [text];
-
-  for (const sentence of sentences) {
-    const sentenceBytes = Buffer.byteLength(sentence, 'utf8');
-
-    // If a single sentence is too long, split by words
-    if (sentenceBytes > maxBytes) {
-      const words = sentence.split(/(\s+)/);
-      for (const word of words) {
-        const wordBytes = Buffer.byteLength(word, 'utf8');
+  // Check if text contains SSML tags
+  const hasSSML = text.includes('<break') || text.includes('<speak>');
+  
+  // If SSML, split more carefully to avoid breaking tags
+  if (hasSSML) {
+    // Split by SSML tags first, then by sentences
+    const parts = text.split(/(<break[^>]*\/>|<\/?speak>)/);
+    
+    for (const part of parts) {
+      if (!part) continue;
+      
+      const partBytes = Buffer.byteLength(part, 'utf8');
+      
+      // If this part is an SSML tag, always add it to current chunk (don't split tags)
+      if (part.match(/^<break[^>]*\/>$|^<\/?speak>$/)) {
+        currentChunk += part;
+        currentBytes += partBytes;
+        continue;
+      }
+      
+      // For regular text, split by sentences
+      const sentences = part.match(/[^.!?]+[.!?]+[\])'"`'"]*|.+/g) || [part];
+      
+      for (const sentence of sentences) {
+        const sentenceBytes = Buffer.byteLength(sentence, 'utf8');
         
-        if (currentBytes + wordBytes > maxBytes && currentChunk) {
-          chunks.push(currentChunk);
-          currentChunk = word;
-          currentBytes = wordBytes;
+        // If a single sentence is too long, split by words
+        if (sentenceBytes > maxBytes) {
+          const words = sentence.split(/(\s+)/);
+          for (const word of words) {
+            const wordBytes = Buffer.byteLength(word, 'utf8');
+            
+            if (currentBytes + wordBytes > maxBytes && currentChunk) {
+              chunks.push(currentChunk);
+              currentChunk = word;
+              currentBytes = wordBytes;
+            } else {
+              currentChunk += word;
+              currentBytes += wordBytes;
+            }
+          }
         } else {
-          currentChunk += word;
-          currentBytes += wordBytes;
+          // If adding this sentence would exceed the limit, save current chunk
+          if (currentBytes + sentenceBytes > maxBytes && currentChunk) {
+            chunks.push(currentChunk);
+            currentChunk = sentence;
+            currentBytes = sentenceBytes;
+          } else {
+            currentChunk += sentence;
+            currentBytes += sentenceBytes;
+          }
         }
       }
-    } else {
-      // If adding this sentence would exceed the limit, save current chunk
-      if (currentBytes + sentenceBytes > maxBytes && currentChunk) {
-        chunks.push(currentChunk);
-        currentChunk = sentence;
-        currentBytes = sentenceBytes;
+    }
+  } else {
+    // No SSML - use original splitting logic
+    const sentences = text.match(/[^.!?]+[.!?]+[\])'"`'"]*|.+/g) || [text];
+
+    for (const sentence of sentences) {
+      const sentenceBytes = Buffer.byteLength(sentence, 'utf8');
+
+      // If a single sentence is too long, split by words
+      if (sentenceBytes > maxBytes) {
+        const words = sentence.split(/(\s+)/);
+        for (const word of words) {
+          const wordBytes = Buffer.byteLength(word, 'utf8');
+          
+          if (currentBytes + wordBytes > maxBytes && currentChunk) {
+            chunks.push(currentChunk);
+            currentChunk = word;
+            currentBytes = wordBytes;
+          } else {
+            currentChunk += word;
+            currentBytes += wordBytes;
+          }
+        }
       } else {
-        currentChunk += sentence;
-        currentBytes += sentenceBytes;
+        // If adding this sentence would exceed the limit, save current chunk
+        if (currentBytes + sentenceBytes > maxBytes && currentChunk) {
+          chunks.push(currentChunk);
+          currentChunk = sentence;
+          currentBytes = sentenceBytes;
+        } else {
+          currentChunk += sentence;
+          currentBytes += sentenceBytes;
+        }
       }
     }
   }
@@ -134,6 +191,88 @@ function splitTextIntoChunks(text, maxBytes = 4500) {
   }
 
   return chunks;
+}
+
+/**
+ * Insert SSML pause markers after detected headers in text
+ * @param {string} text - Text to process
+ * @param {string} documentId - Optional document ID to look up header info from vector store
+ * @returns {string} Text with SSML break tags inserted after headers
+ */
+function insertHeaderPauses(text, documentId = null) {
+  if (!text || typeof text !== 'string') {
+    return text;
+  }
+
+  // Try to use vector store header information if documentId is provided
+  let headerPositions = [];
+  if (documentId) {
+    const chunks = vectorStore.getDocumentChunks(documentId);
+    if (chunks && chunks.length > 0) {
+      // Find chunks marked as headers and their positions in the original text
+      // Note: This is approximate since we need to match chunk text to positions in the full text
+      for (const chunk of chunks) {
+        if (chunk.tags && chunk.tags.includes('header')) {
+          // Find the position of this chunk's text in the full text
+          const chunkText = chunk.text.substring(0, 200); // Use first 200 chars for matching
+          const position = text.indexOf(chunkText);
+          if (position !== -1) {
+            // Find the end of the header (end of first sentence or first 200 chars)
+            const headerEnd = Math.min(
+              position + chunkText.length,
+              text.indexOf('.', position) !== -1 ? text.indexOf('.', position) + 1 : position + chunkText.length,
+              text.indexOf('\n', position) !== -1 ? text.indexOf('\n', position) : position + chunkText.length
+            );
+            headerPositions.push({ start: position, end: headerEnd });
+          }
+        }
+      }
+    }
+  }
+
+  // If no header positions from vector store, detect headers on-the-fly
+  if (headerPositions.length === 0) {
+    // Split text into segments (by sentences or line breaks)
+    const segments = text.split(/(?<=[.!?])\s+|(?<=\n\n)/);
+    
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i].trim();
+      if (segment.length === 0) continue;
+      
+      const segmentToCheck = segment.substring(0, 200);
+      const followingText = i < segments.length - 1 ? segments[i + 1].trim() : '';
+      
+      const detection = detectHeader(segmentToCheck, followingText);
+      
+      if (detection.isHeader) {
+        const start = text.indexOf(segment);
+        if (start !== -1) {
+          // Find end of header (end of segment, or first sentence end)
+          let end = start + segment.length;
+          const sentenceEnd = text.indexOf('.', start);
+          if (sentenceEnd !== -1 && sentenceEnd < end) {
+            end = sentenceEnd + 1;
+          }
+          headerPositions.push({ start, end });
+        }
+      }
+    }
+  }
+
+  // Sort positions by start index (descending) so we can insert from end to start
+  headerPositions.sort((a, b) => b.start - a.start);
+
+  // Insert SSML break tags after each header
+  let result = text;
+  for (const { start, end } of headerPositions) {
+    // Insert break tag after the header
+    const before = result.substring(0, end);
+    const after = result.substring(end);
+    // Insert SSML break (500ms pause)
+    result = before + '<break time="500ms"/>' + after;
+  }
+
+  return result;
 }
 
 // Endpoint to get text chunks (for streaming)
@@ -161,20 +300,35 @@ app.post('/api/tts/chunks', (req, res) => {
 // Google TTS endpoint for Spanish text
 app.post('/api/tts', async (req, res) => {
   try {
-    const { text, rate = 1.0 } = req.body;
+    const { text, rate = 1.0, documentId = null } = req.body;
 
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: 'Text is required' });
     }
 
-    // Check if text exceeds 5000 bytes
-    const textBytes = Buffer.byteLength(text, 'utf8');
+    // Insert header pauses if headers are detected
+    let processedText = text;
+    try {
+      processedText = insertHeaderPauses(text, documentId);
+    } catch (headerError) {
+      console.warn('Error inserting header pauses, using original text:', headerError);
+      processedText = text; // Fall back to original text
+    }
+
+    // Check if text exceeds 5000 bytes (account for SSML tags)
+    const textBytes = Buffer.byteLength(processedText, 'utf8');
     const maxBytes = 4500; // Use 4500 to be safe (under 5000 limit)
 
     if (textBytes <= maxBytes) {
       // Text is small enough, process normally
+      // Wrap in SSML if it contains SSML tags, otherwise use plain text
+      const useSSML = processedText.includes('<break');
+      const inputText = useSSML 
+        ? `<speak>${processedText}</speak>`
+        : processedText;
+
       const request = {
-        input: { text },
+        input: useSSML ? { ssml: inputText } : { text: inputText },
         voice: {
           languageCode: 'es-US',
           name: 'es-US-Neural2-B',
@@ -197,18 +351,24 @@ app.post('/api/tts', async (req, res) => {
     } else {
       // Text is too long, split into chunks
       console.log(`Text is ${textBytes} bytes, splitting into chunks...`);
-      const chunks = splitTextIntoChunks(text, maxBytes);
+      const chunks = splitTextIntoChunks(processedText, maxBytes);
       console.log(`Split into ${chunks.length} chunks`);
 
       const audioChunks = [];
 
       // Process each chunk
       for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i].trim();
+        let chunk = chunks[i].trim();
         if (!chunk) continue;
 
+        // Wrap in SSML if it contains SSML tags
+        const useSSML = chunk.includes('<break');
+        const inputText = useSSML 
+          ? `<speak>${chunk}</speak>`
+          : chunk;
+
         const request = {
-          input: { text: chunk },
+          input: useSSML ? { ssml: inputText } : { text: inputText },
           voice: {
             languageCode: 'es-US',
             name: 'es-US-Neural2-B',
@@ -313,6 +473,7 @@ app.post('/api/ai/process-pdf', async (req, res) => {
     });
   } catch (error) {
     console.error('Error processing PDF:', error);
+    console.error('Error stack:', error.stack);
     // Don't expose internal error details, but provide helpful message
     if (error.message && error.message.includes('API key')) {
       res.status(401).json({ 

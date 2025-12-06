@@ -3,6 +3,8 @@
  * Splits text into semantically meaningful chunks with overlap and metadata
  */
 
+import { detectHeader } from './headerDetection.js';
+
 /**
  * Chunks text into smaller pieces with overlap for better context preservation
  * @param {string} text - The text to chunk
@@ -176,6 +178,29 @@ export function addMetadataTags(chunks, fullText) {
     const text = originalText.toLowerCase();
 
     // -----------------------------------------------------------------------
+    // Header detection
+    // -----------------------------------------------------------------------
+    // Check if the beginning of the chunk is a header
+    // Use first 200 characters or first sentence, whichever is shorter
+    let headerDetection = null;
+    try {
+      const headerCheckText = originalText.substring(0, 200);
+      let followingText = '';
+      if (index < chunks.length - 1 && chunks[index + 1] && chunks[index + 1].text) {
+        followingText = chunks[index + 1].text.substring(0, 100);
+      }
+      headerDetection = detectHeader(headerCheckText, followingText);
+      
+      if (headerDetection && headerDetection.isHeader) {
+        tags.push('header');
+      }
+    } catch (headerError) {
+      // Silently fail header detection - it's not critical
+      console.warn('Header detection error:', headerError);
+      headerDetection = null;
+    }
+
+    // -----------------------------------------------------------------------
     // Entity / content detection
     // -----------------------------------------------------------------------
 
@@ -334,6 +359,8 @@ export function addMetadataTags(chunks, fullText) {
         hasDialogue: tags.includes('has_dialogue'),
         hasCharacters: tags.includes('has_characters'),
         hasTimeline: tags.includes('has_timeline'),
+        isHeader: tags.includes('header'),
+        headerConfidence: headerDetection ? headerDetection.confidence : null,
         // New, richer temporal metadata for downstream consumers (e.g. timeline UI)
         temporal: {
           hasTimelineWords,
