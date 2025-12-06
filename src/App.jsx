@@ -7482,13 +7482,7 @@ function App() {
               </div>
             )}
 
-            {interactionMode === 'highlight' && highlights.length > 0 && (
-              <div className="control-group">
-                <div className="highlights-count">
-                  {highlights.length} highlight{highlights.length !== 1 ? 's' : ''}
-                </div>
-              </div>
-            )}
+            
 
             <div className="control-group controls-buttons">
               <div className="playback-controls-row">

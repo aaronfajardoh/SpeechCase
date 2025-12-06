@@ -315,12 +315,26 @@ const ProportionalTimeline = ({ events, selectedEvent, onEventClick, onCloseDeta
         {hasStages && stageBoundaries.length > 0 && (
           <div className="timeline-stage-labels">
             {stageBoundaries.map((boundary, idx) => {
-              const leftPercent = boundary.position * 100
-              const isFirst = idx === 0
+              // Calculate center position of the stage
+              let centerPosition
+              if (idx === 0) {
+                // First stage: center between start (0) and next boundary
+                const nextPosition = stageBoundaries.length > 1 ? stageBoundaries[1].position : 1.0
+                centerPosition = (0 + nextPosition) / 2
+              } else if (idx === stageBoundaries.length - 1) {
+                // Last stage: center between its boundary and end (1.0)
+                centerPosition = (boundary.position + 1.0) / 2
+              } else {
+                // Middle stages: center between current boundary and next boundary
+                const nextPosition = stageBoundaries[idx + 1].position
+                centerPosition = (boundary.position + nextPosition) / 2
+              }
+              
+              const leftPercent = centerPosition * 100
               return (
                 <div
                   key={`stage-label-${boundary.stage}-${idx}`}
-                  className={`timeline-stage-label-start ${isFirst ? 'first-stage' : ''}`}
+                  className="timeline-stage-label-start"
                   style={{ left: `${leftPercent}%` }}
                 >
                   {boundary.stage}

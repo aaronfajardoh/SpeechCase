@@ -639,11 +639,7 @@ If two events cannot be ordered with certainty, keep original order but flag unc
 
 5. Identify Stages (if applicable)
 
-If the text lends itself to being divided into distinct stages, phases, or periods, identify these stages and assign each event to its corresponding stage. Examples of stages might include:
-- "Initial Setup" / "Growth Phase" / "Crisis" / "Resolution"
-- "Planning" / "Implementation" / "Evaluation"
-- "Early Years" / "Expansion" / "Maturity"
-- Or any other natural divisions in the narrative
+If the text lends itself to being divided into distinct stages, phases, or periods, identify these stages and assign each event to its corresponding stage. 
 
 If the text does not naturally separate into stages (e.g., it's a continuous narrative without clear phases), you may omit the stage field or set it to null.
 
