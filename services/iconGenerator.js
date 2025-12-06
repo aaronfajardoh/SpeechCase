@@ -25,48 +25,37 @@ async function createIllustrationPrompt(event, chatClient) {
       messages: [
         {
           role: 'system',
-          content: `You are an expert at converting event descriptions into concrete, specific visual illustrations. Your job is to analyze an event and create a precise description of what should be drawn as an icon.
+          content: `Convert events into EXTREMELY SIMPLE icon descriptions. ONE object, 2-4 words max.
 
-Your output should be a single, specific sentence that describes exactly what visual elements should appear in the icon. Be concrete and specific - describe the actual objects, symbols, or scenes that should be illustrated.
+RULES:
+- ONE object: "crown", "document", "hands", "arrow", "phone", "book"
+- ONE symbol if needed: "with checkmark", "with arrow", "with warning"
+- NO scenes, NO people, NO backgrounds, NO text, NO multiple objects
+- Think: single emoji or app icon
 
 Examples:
-- Event: "Uber received cease-and-desist orders from regulatory agencies"
-  → "A document with a forbidden/stop icon (circle with diagonal line) on it"
+- "CEO appointed" → "A crown"
+- "Funding received" → "A money bag with checkmark"  
+- "Partnership" → "Two hands"
+- "Launch" → "A rocket"
+- "Stock rises" → "Rising arrow"
+- "Regulatory issue" → "Document with warning triangle"
+- "Expansion" → "Map with pin"
+- "Office on iOS" → "Phone with app icon"
+- "CEO anniversary" → "Crown with number badge"
+- "Communication reading" → "Book with heart"
 
-- Event: "Company launched its first product"
-  → "A rocket ship taking off with a product box attached"
-
-- Event: "Received $10 million in funding"
-  → "A money bag or stack of dollar bills with a checkmark"
-
-- Event: "Partnership agreement signed with major corporation"
-  → "Two hands shaking with a contract document in the background"
-
-- Event: "Expanded operations to 5 new cities"
-  → "A map with multiple location pins or buildings growing"
-
-- Event: "UberCab official launch in San Francisco"
-  → "A taxi car with a launch rocket or celebration elements"
-
-Be specific about:
-- The main object(s) to draw
-- Any symbols or icons that should be included (forbidden signs, checkmarks, arrows, etc.)
-- The composition or arrangement
-- Any text or labels (though keep it minimal - prefer symbols)
-
-Return ONLY the illustration description, nothing else.`
+Return ONLY the description. 2-4 words. ONE object.`
         },
         {
           role: 'user',
-          content: `Convert this timeline event into a concrete illustration description:
+          content: `Event: "${eventText}"
 
-Event: "${eventText}"
-
-What specific visual elements should be drawn to represent this event? Describe exactly what should appear in the icon. Be concrete and specific about objects, symbols, and composition.`
+ONE simple object (2-4 words max). What represents this?`
         }
       ],
-      temperature: 0.5,
-      max_tokens: 150
+      temperature: 0.3, // Lower temperature for simpler, more consistent descriptions
+      max_tokens: 100 // Reduced - descriptions should be very short
     });
 
     const illustrationDescription = completion.choices[0]?.message?.content?.trim();
@@ -123,23 +112,19 @@ ARTISTIC STYLE REQUIREMENTS:
    - Include small details that add character (smiles, eyes, expressions)
    - Make it feel hand-drawn and friendly, not corporate or sterile
 
-2. EVENT REPRESENTATION (CRITICAL):
-   - The icon MUST tell the specific story of THIS event, not be generic
-   - "Uber launch" → A cute cartoon car with a smile, maybe with a taxi sign
-   - "Funding received" → A happy cartoon money bag or dollar bill with eyes
-   - "Partnership" → Two cartoon characters shaking hands or hugging
-   - "Expansion" → A cartoon building growing or a map with a happy pin
-   - "Legal issue" → A cartoon gavel or warning sign with a concerned expression
-   - "Product launch" → The actual product as a cute cartoon character
-   - Think: "How would a child draw this event?" - simple but expressive
+2. SIMPLICITY IS KEY:
+   - Keep it to 2-4 simple shapes maximum
+   - ONE main object (crown, document, hands, arrow, etc.)
+   - ONE simple symbol if needed (checkmark, arrow, warning sign)
+   - NO complex scenes, NO multiple people, NO backgrounds
+   - Think: "What's the simplest emoji-style icon?"
 
 3. Design Specifications:
    - ViewBox: "0 0 64 64"
-   - Use 3-5 shapes for detail and character (not just 2-3)
-   - Bold outlines: stroke-width="2.5" to "3.5"
-   - Rounded corners everywhere (rx, ry attributes)
-   - Add small decorative elements (stars, sparkles, lines) for personality
-   - Make it instantly recognizable and memorable
+   - Use 2-4 simple shapes (rect, circle, path, line)
+   - Bold outlines: stroke-width="2" to "3"
+   - Rounded corners (rx, ry attributes)
+   - Simple and clean - must work at 64x64px
 
 4. Color Palette (MUST use these exact colors):
    - Primary: #8ab4f8 (bright blue - main character/element)
@@ -177,51 +162,75 @@ Return ONLY the SVG code. Make it artistic, cartoonish, and specific to the even
         },
         {
           role: 'user',
-          content: `Create a fun, cartoonish, artistic SVG icon based on this specific illustration description:
+          content: `Create a SIMPLE, cartoonish SVG icon based on this description:
 
-Illustration to create: "${illustrationDescription}"
+Description: "${illustrationDescription}"
 
-Original event context: "${eventText}"
+CRITICAL: Keep it VERY SIMPLE. Use 2-4 shapes maximum. ONE main object, maybe ONE simple symbol.
 
-Create the SVG icon exactly as described. Make it:
-- Cartoonish and artistic with personality
-- Specific to the illustration description (not generic)
-- Expressive and memorable
-- Clear and recognizable at 64x64px
+Examples:
+- "A crown" → Simple crown shape (2-3 rectangles/circles)
+- "A money bag with checkmark" → Simple bag shape + checkmark line
+- "Two hands shaking" → Two simple hand shapes
+- "A rising arrow" → Simple arrow path going up
+- "A document with warning" → Simple rectangle + triangle
 
-Draw exactly what is described in the illustration description.`
+Create ONLY the SVG code. Keep it simple - 2-4 shapes max.`
         }
       ],
       temperature: 0.7,
-      max_tokens: 800 // Reduced for faster generation
+      max_tokens: 1200 // Increased to allow for more complex SVGs
     });
 
     const svgContent = completion.choices[0]?.message?.content?.trim();
     
     if (!svgContent) {
+      console.warn(`[Icon Gen] SVG generation returned empty content for "${eventTitle}"`);
       return null;
     }
+
+    console.log(`[Icon Gen] Raw SVG response (first 200 chars): "${svgContent.substring(0, 200)}..."`);
 
     // Clean up the response - remove markdown code blocks if present
     let cleanedSvg = svgContent
       .replace(/```svg\n?/g, '')
       .replace(/```\n?/g, '')
       .replace(/```html\n?/g, '')
+      .replace(/```xml\n?/g, '')
       .trim();
 
     // Ensure it starts with <svg
     if (!cleanedSvg.startsWith('<svg')) {
-      // Try to extract SVG from the response
+      // Try to extract SVG from the response (more lenient - look for SVG anywhere)
       const svgMatch = cleanedSvg.match(/<svg[\s\S]*?<\/svg>/i);
       if (svgMatch) {
         cleanedSvg = svgMatch[0];
+        console.log(`[Icon Gen] Extracted SVG from response`);
       } else {
+        console.warn(`[Icon Gen] No SVG found in response for "${eventTitle}". Response: "${svgContent.substring(0, 300)}"`);
         return null;
       }
     }
 
     // Validate it's a proper SVG
     if (!cleanedSvg.includes('</svg>')) {
+      console.warn(`[Icon Gen] SVG missing closing tag for "${eventTitle}"`);
+      return null;
+    }
+    
+    // Basic validation - check if it has at least one shape element
+    const hasShape = /<(rect|circle|ellipse|path|polygon|polyline|line|g)/i.test(cleanedSvg);
+    if (!hasShape) {
+      console.warn(`[Icon Gen] SVG has no shape elements for "${eventTitle}"`);
+      console.warn(`[Icon Gen] SVG content: "${cleanedSvg.substring(0, 500)}"`);
+      return null;
+    }
+    
+    // Additional check - make sure SVG is not just empty or whitespace
+    const svgWithoutTags = cleanedSvg.replace(/<\/?svg[^>]*>/gi, '').trim();
+    if (svgWithoutTags.length < 10) {
+      console.warn(`[Icon Gen] SVG appears to be empty or too short for "${eventTitle}"`);
+      console.warn(`[Icon Gen] SVG content: "${cleanedSvg}"`);
       return null;
     }
 
@@ -347,9 +356,11 @@ Draw exactly what is described in the illustration description.`
       );
     }
 
+    console.log(`[Icon Gen] Successfully processed SVG for "${eventTitle}" (${processedSvg.length} chars)`);
     return processedSvg;
   } catch (error) {
-    console.error('Error generating event icon:', error);
+    console.error(`[Icon Gen] Error generating event icon for "${eventTitle}":`, error);
+    console.error(`[Icon Gen] Error stack:`, error.stack);
     return null;
   }
 }
@@ -386,111 +397,12 @@ export async function generateEventIconsBatch(events, chatClient) {
     return iconMap;
   }
 
-  // Use AI to determine which events are appropriate for icons
-  // Some events like "meeting held" or "discussion" might not need icons
-  let remarkableEvents = highImportanceEvents;
+  // Generate icons for ALL high-importance events
+  // High-importance events are already significant milestones, so they should all get icons
+  // Skip AI selection entirely to ensure we don't miss any important events
+  const remarkableEvents = highImportanceEvents;
   
-  try {
-    const eventSummaries = highImportanceEvents.map(({ event, index }) => ({
-      index,
-      title: event.event || '',
-      description: event.description || ''
-    }));
-
-    const selectionPrompt = `You are selecting which timeline events should have visual icons. 
-
-CRITICAL: Be GENEROUS and INCLUSIVE. Include almost all events unless they are truly abstract or meaningless.
-
-INCLUDE these types of events (include most of them):
-- Launches, product releases, service launches
-- Funding rounds, investments, valuations
-- Regulatory actions, legal issues, cease-and-desist orders
-- Major milestones, achievements, growth milestones
-- Company changes, rebranding, renaming
-- Expansions, scaling, market entries
-- Key partnerships, agreements
-- Revenue milestones, financial achievements
-- Any event with a concrete action or outcome
-
-ONLY EXCLUDE:
-- Truly abstract events like "discussion held" or "meeting occurred" with no concrete outcome
-- Very minor administrative events with no significance
-
-Events to review:
-${eventSummaries.map((e, i) => `${i + 1}. "${e.title}" - ${e.description.substring(0, 200)}`).join('\n')}
-
-Return a JSON array of ALL indices (0-based) that should have icons. Be very inclusive - if an event has any significance, include it. Return something like [0, 1, 2, 3, 4, 5, 6] for most events.`;
-
-    const selectionCompletion = await chatClient.chat.completions.create({
-      model: chatClient.baseURL?.includes('deepseek') ? 'deepseek-chat' : 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are selecting which timeline events should have visual icons. Be GENEROUS and INCLUSIVE - include almost all events. Return ONLY a JSON array of indices (0-based), nothing else. Example: [0, 1, 2, 3, 4, 5, 6]'
-        },
-        {
-          role: 'user',
-          content: selectionPrompt
-        }
-      ],
-      temperature: 0.2, // Lower temperature for more consistent, inclusive selection
-      max_tokens: 150 // Increased to allow for more indices
-    });
-
-    const selectionText = selectionCompletion.choices[0]?.message?.content?.trim();
-    console.log(`AI selection response: "${selectionText}"`);
-    let selectedIndices = [];
-    
-    try {
-      // Try to parse as JSON array
-      const parsed = JSON.parse(selectionText);
-      if (Array.isArray(parsed)) {
-        selectedIndices = parsed.filter(idx => typeof idx === 'number' && idx >= 0 && idx < highImportanceEvents.length);
-        console.log(`Parsed ${selectedIndices.length} indices from AI response:`, selectedIndices);
-      }
-    } catch (e) {
-      console.log('JSON parse failed, trying to extract numbers from text');
-      // If parsing fails, try to extract numbers from the text
-      const numbers = selectionText.match(/\d+/g);
-      if (numbers) {
-        selectedIndices = numbers.map(n => parseInt(n)).filter(idx => idx >= 0 && idx < highImportanceEvents.length);
-        console.log(`Extracted ${selectedIndices.length} indices from text:`, selectedIndices);
-      }
-    }
-
-    // If AI selection succeeded, use selected events
-    // But if AI is too conservative (selects less than 50% of high-importance events), use all of them
-    if (selectedIndices.length > 0) {
-      const selectedCount = selectedIndices.length;
-      const totalHighImportance = highImportanceEvents.length;
-      const selectionRatio = selectedCount / totalHighImportance;
-      
-      console.log(`AI selected ${selectedCount} out of ${totalHighImportance} high-importance events (${(selectionRatio * 100).toFixed(0)}%)`);
-      
-      if (selectionRatio < 0.5) {
-        console.warn(`WARNING: AI selection is too conservative (${(selectionRatio * 100).toFixed(0)}%). Using ALL high-importance events instead.`);
-        remarkableEvents = highImportanceEvents;
-      } else {
-        remarkableEvents = selectedIndices.map(idx => highImportanceEvents[idx]);
-        console.log(`Using AI-selected events: ${remarkableEvents.length} events`);
-      }
-    } else {
-      console.log('AI selection returned empty, using ALL high-importance events as fallback');
-      // If AI fails completely, just use all high-importance events
-      // They're already marked as high importance, so they should get icons
-      remarkableEvents = highImportanceEvents;
-      console.log(`Fallback: Using all ${remarkableEvents.length} high-importance events`);
-    }
-
-    console.log(`Selected ${remarkableEvents.length} events for icon generation out of ${highImportanceEvents.length} high-importance events`);
-  } catch (error) {
-    console.error('Error selecting events for icons, using filtered high-importance events:', error);
-      console.error('Error in AI selection, using ALL high-importance events as fallback');
-      // If there's an error, just use all high-importance events
-      // They're already marked as high importance, so they should get icons
-      remarkableEvents = highImportanceEvents;
-      console.log(`Error fallback: Using all ${remarkableEvents.length} high-importance events`);
-  }
+  console.log(`[Icon Selection] Using ALL ${highImportanceEvents.length} high-importance events for icon generation (skipping AI selection)`);
 
   // Generate icons in parallel batches for speed (3 at a time to avoid rate limits)
   console.log(`Generating icons for ${remarkableEvents.length} remarkable events`);
