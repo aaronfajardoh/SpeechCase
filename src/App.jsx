@@ -960,6 +960,19 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sidebarView, isSidebarCollapsed])
 
+  // Re-render PDF pages when returning from expanded timeline view
+  // Canvas content is lost when hidden, so we need to re-render when visible again
+  useEffect(() => {
+    if (!isTimelineExpanded && pdfDoc && totalPages > 0 && pageData.length > 0) {
+      // Wait for DOM to be ready and PDF viewer to be visible
+      const timeoutId = setTimeout(() => {
+        renderPages()
+      }, 200)
+      return () => clearTimeout(timeoutId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTimelineExpanded])
+
   // Auto-scroll sidebar to keep current page visible
   useEffect(() => {
     if (currentPage > 0 && !isMobile) {
