@@ -19,7 +19,6 @@ async function classifyFooterWithLLM(candidateText, surroundingContext, apiUrl =
   }
 
   try {
-    console.log(`[Footer Filter] Calling API for: "${candidateText.substring(0, 50)}..."`);
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
@@ -32,16 +31,14 @@ async function classifyFooterWithLLM(candidateText, surroundingContext, apiUrl =
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`API error: ${response.status} - ${errorText}`);
+      throw new Error(`API error: ${response.status}`);
     }
 
     const result = await response.json();
-    console.log(`[Footer Filter] API response: isFooter=${result.isFooter}`);
     return result.isFooter === true;
   } catch (error) {
     // Fallback: on error, don't treat as footer (safety)
-    console.warn('[Footer Filter] API error:', error.message);
+    console.warn('Footer classification API error:', error.message);
     return false;
   }
 }
@@ -128,50 +125,31 @@ export async function filterHeadersAndFooters(
     };
   });
 
-  const llmCandidateCount = repetitionFiltered.filter(c => c.needsLLMCheck).length;
-  if (llmCandidateCount > 0) {
-    console.log(`[Footer Filter] Page ${pageData.pageNum || 'unknown'}: ${repetitionFiltered.length} items, ${llmCandidateCount} need LLM check`);
-  }
 
   // Second pass: LLM classification for footer candidates
   if (useLLMClassification) {
     const llmChecks = [];
-    let candidateCount = 0;
     
     for (const candidate of repetitionFiltered) {
       if (candidate.needsLLMCheck && candidate.keep) {
-        candidateCount++;
         const surroundingContext = buildSurroundingContext(items, candidate.index);
-        const candidateText = candidate.item.str;
-        
-        console.log(`[Footer Filter] Checking candidate ${candidateCount}: "${candidateText.substring(0, 50)}..."`);
-        
         llmChecks.push(
-          classifyFooterWithLLM(candidateText, surroundingContext, apiUrl)
+          classifyFooterWithLLM(candidate.item.str, surroundingContext, apiUrl)
             .then(isFooter => {
               if (isFooter) {
-                console.log(`[Footer Filter] ✓ Classified as footer: "${candidateText.substring(0, 50)}..."`);
                 candidate.keep = false;
-              } else {
-                console.log(`[Footer Filter] ✗ Not a footer: "${candidateText.substring(0, 50)}..."`);
               }
             })
             .catch(error => {
               // On error, keep the item (safety fallback)
-              console.warn('[Footer Filter] LLM classification error for item:', error.message);
+              console.warn('LLM classification error for item:', error.message);
             })
         );
       }
     }
 
-    if (candidateCount > 0) {
-      console.log(`[Footer Filter] Processing ${candidateCount} footer candidate(s) with LLM...`);
-      // Wait for all LLM checks to complete
-      await Promise.all(llmChecks);
-      console.log(`[Footer Filter] Completed LLM classification for ${candidateCount} candidate(s)`);
-    } else {
-      console.log('[Footer Filter] No footer candidates found for LLM classification');
-    }
+    // Wait for all LLM checks to complete
+    await Promise.all(llmChecks);
   }
 
   // Return only items that should be kept

@@ -306,11 +306,8 @@ app.post('/api/pdf/classify-footer', async (req, res) => {
       return res.status(400).json({ error: 'candidateText is required' });
     }
 
-    console.log('[Footer API] Received classification request for:', candidateText.substring(0, 100));
-
     const chatClient = deepSeekClient || openaiClient;
     if (!chatClient) {
-      console.warn('[Footer API] No AI client available');
       // Fallback: if no AI client, return false (don't treat as footer)
       return res.json({ isFooter: false, reason: 'No AI client available' });
     }
@@ -355,7 +352,6 @@ ${candidateText}`;
     const answer = response.choices[0]?.message?.content?.trim().toLowerCase();
     const isFooter = answer === 'yes';
 
-    console.log(`[Footer API] LLM response: "${answer}" -> isFooter: ${isFooter}`);
     res.json({ isFooter });
   } catch (error) {
     // Fallback: on error, don't treat as footer (safety)

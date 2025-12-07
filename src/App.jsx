@@ -1137,132 +1137,6 @@ function App() {
 
   // Diagnostic function to detect missing text segments
   // Compares extractedText with what's actually rendered in textItems
-  const diagnoseMissingText = () => {
-    if (!extractedText || textItems.length === 0) {
-      console.log('[Diagnostic] No text or textItems to compare')
-      return
-    }
-
-    console.log('[Diagnostic] Starting text alignment check...')
-    console.log(`[Diagnostic] extractedText length: ${extractedText.length}`)
-    console.log(`[Diagnostic] textItems count: ${textItems.length}`)
-
-    // Build a map of all character positions covered by textItems
-    const coveredPositions = new Set()
-    const textItemMap = new Map() // charIndex -> textItem
-    
-    textItems.forEach(item => {
-      if (item.charIndex !== undefined && item.str) {
-        for (let i = 0; i < item.str.length; i++) {
-          const pos = item.charIndex + i
-          coveredPositions.add(pos)
-        }
-        textItemMap.set(item.charIndex, item)
-      }
-    })
-
-    // Find gaps in coverage
-    const gaps = []
-    let inGap = false
-    let gapStart = null
-    let lastCovered = -1
-
-    for (let i = 0; i < extractedText.length; i++) {
-      const isCovered = coveredPositions.has(i)
-      
-      if (!isCovered && !inGap) {
-        // Start of a gap
-        inGap = true
-        gapStart = i
-      } else if (isCovered && inGap) {
-        // End of a gap
-        const gapText = extractedText.substring(gapStart, i)
-        gaps.push({
-          start: gapStart,
-          end: i - 1,
-          length: i - gapStart,
-          text: gapText.substring(0, 100) + (gapText.length > 100 ? '...' : ''),
-          contextBefore: extractedText.substring(Math.max(0, gapStart - 50), gapStart),
-          contextAfter: extractedText.substring(i, Math.min(extractedText.length, i + 50))
-        })
-        inGap = false
-        gapStart = null
-      }
-      
-      if (isCovered) {
-        lastCovered = i
-      }
-    }
-
-    // Check for gap at the end
-    if (inGap) {
-      const gapText = extractedText.substring(gapStart)
-      gaps.push({
-        start: gapStart,
-        end: extractedText.length - 1,
-        length: extractedText.length - gapStart,
-        text: gapText.substring(0, 100) + (gapText.length > 100 ? '...' : ''),
-        contextBefore: extractedText.substring(Math.max(0, gapStart - 50), gapStart),
-        contextAfter: ''
-      })
-    }
-
-    if (gaps.length > 0) {
-      console.warn(`[Diagnostic] Found ${gaps.length} text gaps (missing segments):`)
-      gaps.forEach((gap, idx) => {
-        console.warn(`[Diagnostic] Gap ${idx + 1}: positions ${gap.start}-${gap.end} (${gap.length} chars)`)
-        console.warn(`[Diagnostic]   Text: "${gap.text}"`)
-        console.warn(`[Diagnostic]   Context before: "...${gap.contextBefore}"`)
-        console.warn(`[Diagnostic]   Context after: "${gap.contextAfter}..."`)
-      })
-    } else {
-      console.log('[Diagnostic] ✓ No gaps found - all text is covered by textItems')
-    }
-
-    // Check for character index misalignments
-    const misalignments = []
-    textItems.forEach(item => {
-      if (item.charIndex !== undefined && item.str) {
-        const extractedAtPos = extractedText.substring(item.charIndex, item.charIndex + item.str.length)
-        const normalizedExtracted = extractedAtPos.replace(/\s+/g, ' ').trim()
-        const normalizedItem = item.str.replace(/\s+/g, ' ').trim()
-        
-        if (normalizedExtracted !== normalizedItem && normalizedItem.length > 0) {
-          misalignments.push({
-            charIndex: item.charIndex,
-            expected: item.str,
-            found: extractedAtPos,
-            page: item.page
-          })
-        }
-      }
-    })
-
-    if (misalignments.length > 0) {
-      console.warn(`[Diagnostic] Found ${misalignments.length} character index misalignments:`)
-      misalignments.slice(0, 10).forEach((m, idx) => {
-        console.warn(`[Diagnostic] Misalignment ${idx + 1} at position ${m.charIndex} (page ${m.page}):`)
-        console.warn(`[Diagnostic]   Expected: "${m.expected}"`)
-        console.warn(`[Diagnostic]   Found: "${m.found}"`)
-      })
-      if (misalignments.length > 10) {
-        console.warn(`[Diagnostic] ... and ${misalignments.length - 10} more misalignments`)
-      }
-    } else {
-      console.log('[Diagnostic] ✓ No character index misalignments found')
-    }
-
-    return { gaps, misalignments }
-  }
-
-  // Expose diagnostic function globally for debugging
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      window.diagnoseTextAlignment = diagnoseMissingText
-      console.log('[Diagnostic] Diagnostic function available: call window.diagnoseTextAlignment() in console')
-    }
-  }, [extractedText, textItems])
-
   // Smart filtering: identifies headers/footers by repetition across pages
   // Only filters text that appears in header/footer regions AND repeats across multiple pages
   const buildRepetitionMap = async (pdf, totalPages) => {
@@ -2416,7 +2290,6 @@ function App() {
           
           // Update page data in background (won't interrupt if TTS is playing)
           setPageData(enhancedPages)
-          console.log('Page data enhanced with LLM footer classification')
         } catch (error) {
           console.warn('Background page enhancement failed:', error)
           // Keep using initial pages - no interruption
@@ -4688,11 +4561,8 @@ function App() {
           }
           
           if (!hasFooterCandidates) {
-            console.log('No footer candidates for LLM classification - skipping background process')
             return
           }
-          
-          console.log('Starting background LLM footer classification...')
           let enhancedText = ''
           for (const pageData of pageTextItems) {
             const filteredItems = await filterHeadersAndFootersWithLLM(pageData, textToPages)
@@ -4711,9 +4581,6 @@ function App() {
           // Only update if text changed (to avoid unnecessary re-renders)
           if (finalText !== initialText) {
             setExtractedText(finalText)
-            console.log('Footer classification completed - text updated in background')
-          } else {
-            console.log('Footer classification completed - no changes detected')
           }
         } catch (error) {
           console.warn('Background footer classification failed:', error)
@@ -4727,18 +4594,6 @@ function App() {
         console.log('Detected language:', detected, 'for text length:', initialText.length)
         setDetectedLanguage(detected)
       }
-
-      // Run diagnostic after text extraction and initial rendering
-      // Use a longer delay to ensure text layer is fully rendered
-      setTimeout(() => {
-        if (initialText && initialText.length > 0) {
-          console.log('[Diagnostic] Running text alignment diagnostic...')
-          const diagnosticResult = diagnoseMissingText()
-          if (diagnosticResult && (diagnosticResult.gaps.length > 0 || diagnosticResult.misalignments.length > 0)) {
-            console.error('[Diagnostic] Text alignment issues detected! Check console for details.')
-          }
-        }
-      }, 2000) // Wait 2 seconds for text layer to render
 
       // Process PDF for AI features (chunking and embeddings)
       if (initialText && initialText.length > 0) {
