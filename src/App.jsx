@@ -7611,6 +7611,7 @@ function App() {
                     highlights={highlights}
                     onColorChange={handleChangeHighlightColor}
                     onDelete={handleDeleteHighlight}
+                    pdfFileName={pdfFile?.name}
                   />
                 )}
               </div>

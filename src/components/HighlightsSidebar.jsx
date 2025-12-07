@@ -1,9 +1,10 @@
 import React, { useState, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { IconHighlighter, IconRefresh, IconTrash } from './Icons.jsx'
+import { IconHighlighter, IconRefresh, IconTrash, IconCopy, IconDownload } from './Icons.jsx'
+import { Document, Packer, Paragraph, TextRun } from 'docx'
 
 // Sidebar tab: highlights
-const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, highlights, onColorChange, onDelete }) => {
+const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, highlights, onColorChange, onDelete, pdfFileName }) => {
   const [hoveredItemId, setHoveredItemId] = useState(null)
   const [tooltipPosition, setTooltipPosition] = useState(null)
   const isHoveringTooltipRef = useRef(false)
@@ -253,6 +254,88 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
     generateSummary()
   }
 
+  // Copy summary to clipboard
+  const handleCopySummary = async () => {
+    if (!summaryText) return
+
+    try {
+      // Convert markdown to plain text for copying
+      // Remove markdown syntax (basic conversion)
+      const plainText = summaryText
+        .replace(/#{1,6}\s+/g, '') // Remove headers
+        .replace(/\*\*(.+?)\*\*/g, '$1') // Remove bold
+        .replace(/\*(.+?)\*/g, '$1') // Remove italic
+        .replace(/\[(.+?)\]\(.+?\)/g, '$1') // Remove links
+        .replace(/`(.+?)`/g, '$1') // Remove inline code
+        .replace(/```[\s\S]*?```/g, '') // Remove code blocks
+        .trim()
+
+      await navigator.clipboard.writeText(plainText)
+    } catch (error) {
+      console.error('Failed to copy summary:', error)
+      alert('Failed to copy summary to clipboard')
+    }
+  }
+
+  // Download summary as DOCX
+  const handleDownloadSummary = async () => {
+    if (!summaryText) return
+
+    try {
+      // Convert markdown to plain text for the document
+      const plainText = summaryText
+        .replace(/#{1,6}\s+/g, '') // Remove headers
+        .replace(/\*\*(.+?)\*\*/g, '$1') // Remove bold
+        .replace(/\*(.+?)\*/g, '$1') // Remove italic
+        .replace(/\[(.+?)\]\(.+?\)/g, '$1') // Remove links
+        .replace(/`(.+?)`/g, '$1') // Remove inline code
+        .replace(/```[\s\S]*?```/g, '') // Remove code blocks
+        .trim()
+
+      // Split text into paragraphs
+      const paragraphs = plainText
+        .split(/\n\n+/)
+        .filter(p => p.trim())
+        .map(text => 
+          new Paragraph({
+            children: [new TextRun(text.trim())],
+            spacing: { after: 200 }
+          })
+        )
+
+      // Create document
+      const doc = new Document({
+        sections: [{
+          properties: {},
+          children: paragraphs
+        }]
+      })
+
+      // Generate and download
+      const blob = await Packer.toBlob(doc)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      
+      // Create filename: "Summary - [pdf name].docx"
+      let fileName = 'Summary.docx'
+      if (pdfFileName) {
+        // Remove .pdf extension if present and add .docx
+        const baseName = pdfFileName.replace(/\.pdf$/i, '')
+        fileName = `Summary - ${baseName}.docx`
+      }
+      
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Failed to download summary:', error)
+      alert('Failed to download summary as DOCX')
+    }
+  }
+
   // Get formatting class based on color
   const getFormattingClass = (color) => {
     switch (color) {
@@ -282,19 +365,39 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
       <div className="highlights-editor">
         {/* Tab Navigation */}
         <div className="highlights-tabs">
-          <button
-            className={`highlights-tab ${activeTab === 'highlights' ? 'active' : ''}`}
-            onClick={() => setActiveTab('highlights')}
-          >
-            Highlights
-          </button>
-          {summaryText && (
+          <div className="highlights-tabs-left">
             <button
-              className={`highlights-tab ${activeTab === 'summary' ? 'active' : ''}`}
-              onClick={() => setActiveTab('summary')}
+              className={`highlights-tab ${activeTab === 'highlights' ? 'active' : ''}`}
+              onClick={() => setActiveTab('highlights')}
             >
-              Summary
+              Highlights
             </button>
+            {summaryText && (
+              <button
+                className={`highlights-tab ${activeTab === 'summary' ? 'active' : ''}`}
+                onClick={() => setActiveTab('summary')}
+              >
+                Summary
+              </button>
+            )}
+          </div>
+          {activeTab === 'summary' && summaryText && (
+            <div className="highlights-summary-actions">
+              <button
+                className="btn-summary-action btn-copy-summary"
+                onClick={handleCopySummary}
+                title="Copy summary to clipboard"
+              >
+                <IconCopy size={14} />
+              </button>
+              <button
+                className="btn-summary-action btn-download-summary"
+                onClick={handleDownloadSummary}
+                title="Download summary as DOCX"
+              >
+                <IconDownload size={14} />
+              </button>
+            </div>
           )}
         </div>
 
