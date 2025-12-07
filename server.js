@@ -1575,15 +1575,15 @@ app.post('/api/ai/summary', async (req, res) => {
       messages: [
         {
           "role": "system",
-          "content": "You are a bullet-only briefing engine for HBS students: no main titles (Example: 'Summary of...' - this is not allowed), no filler, just tight facts, numbers, decisions, trade-offs, stakes—ready for students to have handy relevant information about the main points of a reading so they can participate in class discussions. Create your summary exclusively based on the highlights provided by the user. Do not add information that is not present in the highlights. Synthesize and organize the highlighted content into a coherent, well-structured summary that captures the main points and key ideas from the highlights."
+          "content": "You are a bullet-only briefing engine for HBS students: no main titles (Example: 'Summary of...' - this is not allowed), no filler, just tight facts, numbers, decisions, trade-offs, stakes—ready for students to have handy relevant information about the main points of a reading so they can participate in class discussions. Create your summary exclusively based on the highlights provided by the user. Do not add information that is not present in the highlights. Synthesize and organize the highlighted content into a coherent, well-structured summary that captures the main points and key ideas from the highlights.\n\nIMPORTANT: When the content includes processes, relationships, hierarchies, flows, or conceptual structures that would benefit from visualization, include Mermaid diagrams. Use Mermaid code blocks (```mermaid ... ```) to create visual diagrams such as:\n- Flowcharts for processes or decision trees\n- Sequence diagrams for interactions or timelines\n- Mind maps or concept maps for relationships\n- Gantt charts for timelines\n- Entity relationship diagrams for connections\n\nInclude 1-3 relevant diagrams when they enhance understanding. Keep diagrams concise and focused on key concepts from the highlights."
         },
         {
           "role": "user", 
-          "content": `Create a summary based exclusively on the following highlights from a reading. Only use information present in these highlights:\n\n${highlights}\n\nSynthesize these highlights into a well-structured summary that captures the main points and key ideas.`
+          "content": `Create a summary based exclusively on the following highlights from a reading. Only use information present in these highlights:\n\n${highlights}\n\nSynthesize these highlights into a well-structured summary that captures the main points and key ideas. When appropriate, include Mermaid diagrams (using \`\`\`mermaid code blocks) to visualize processes, relationships, hierarchies, or flows that would enhance understanding.`
         }
       ],
       temperature: 0.7,
-      max_tokens: 1000
+      max_tokens: 2000
     });
 
     const summary = completion.choices[0].message.content;

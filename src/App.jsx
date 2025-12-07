@@ -40,6 +40,8 @@ import TimelineSidebar from './components/TimelineSidebar.jsx'
 import CharactersSidebar from './components/CharactersSidebar.jsx'
 import ChatSidebar from './components/ChatSidebar.jsx'
 import HighlightsSidebar from './components/HighlightsSidebar.jsx'
+import SummaryFullView from './components/SummaryFullView.jsx'
+import HighlightsFullView from './components/HighlightsFullView.jsx'
 
 // Set up PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`
@@ -113,6 +115,9 @@ function App() {
   const [isTimelineLoading, setIsTimelineLoading] = useState(false) // Timeline loading state
   const [timelineError, setTimelineError] = useState(null) // Timeline error message
   const [isTimelineExpanded, setIsTimelineExpanded] = useState(false) // Timeline expanded in main view
+  const [isSummaryExpanded, setIsSummaryExpanded] = useState(false) // Summary expanded in main view
+  const [isHighlightsExpanded, setIsHighlightsExpanded] = useState(false) // Highlights expanded in main view
+  const [summaryText, setSummaryText] = useState('') // Store summary text for full view
   const [selectedEvent, setSelectedEvent] = useState(null) // Selected event for details tooltip
   const [timelineIcons, setTimelineIcons] = useState({}) // Icons for timeline events
   const fileInputRef = useRef(null)
@@ -7612,6 +7617,17 @@ function App() {
                     onColorChange={handleChangeHighlightColor}
                     onDelete={handleDeleteHighlight}
                     pdfFileName={pdfFile?.name}
+                    onExpandSummary={() => {
+                      setIsSummaryExpanded(true)
+                      setIsSidebarCollapsed(true)
+                    }}
+                    onExpandHighlights={() => {
+                      setIsHighlightsExpanded(true)
+                      setIsSidebarCollapsed(true)
+                    }}
+                    onSummaryGenerated={(text) => {
+                      setSummaryText(text)
+                    }}
                   />
                 )}
               </div>
@@ -7626,8 +7642,26 @@ function App() {
           </div>
         )}
         
-        {/* Main Content Area - Shows PDF or Timeline based on isTimelineExpanded */}
-        {isTimelineExpanded && timeline && timeline.length > 0 ? (
+        {/* Main Content Area - Shows PDF, Timeline, Summary, or Highlights based on expanded state */}
+        {isSummaryExpanded && summaryText ? (
+          <SummaryFullView
+            summaryText={summaryText}
+            pdfFileName={pdfFile?.name}
+            onMinimize={() => {
+              setIsSummaryExpanded(false)
+              setIsSidebarCollapsed(false)
+            }}
+          />
+        ) : isHighlightsExpanded && highlightItems.length > 0 ? (
+          <HighlightsFullView
+            highlightItems={highlightItems}
+            pdfFileName={pdfFile?.name}
+            onMinimize={() => {
+              setIsHighlightsExpanded(false)
+              setIsSidebarCollapsed(false)
+            }}
+          />
+        ) : isTimelineExpanded && timeline && timeline.length > 0 ? (
           <div className="timeline-full-view">
             <div className="timeline-full-view-header">
               <div className="timeline-full-view-title">

@@ -1,10 +1,11 @@
 import React, { useState, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { IconHighlighter, IconRefresh, IconTrash, IconCopy, IconDownload } from './Icons.jsx'
+import { IconHighlighter, IconRefresh, IconTrash, IconCopy, IconDownload, IconExpand } from './Icons.jsx'
 import { Document, Packer, Paragraph, TextRun } from 'docx'
+import MermaidDiagram from './MermaidDiagram.jsx'
 
 // Sidebar tab: highlights
-const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, highlights, onColorChange, onDelete, pdfFileName }) => {
+const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, highlights, onColorChange, onDelete, pdfFileName, onExpandSummary, onExpandHighlights, onSummaryGenerated }) => {
   const [hoveredItemId, setHoveredItemId] = useState(null)
   const [tooltipPosition, setTooltipPosition] = useState(null)
   const isHoveringTooltipRef = useRef(false)
@@ -236,6 +237,10 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
       // Store summary and switch to summary tab
       setSummaryText(data.summary)
       setActiveTab('summary')
+      // Notify parent component of the generated summary
+      if (onSummaryGenerated) {
+        onSummaryGenerated(data.summary)
+      }
     } catch (error) {
       console.error('Error generating summary:', error)
       alert(`Failed to generate summary: ${error.message}`)
@@ -267,7 +272,8 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
         .replace(/\*(.+?)\*/g, '$1') // Remove italic
         .replace(/\[(.+?)\]\(.+?\)/g, '$1') // Remove links
         .replace(/`(.+?)`/g, '$1') // Remove inline code
-        .replace(/```[\s\S]*?```/g, '') // Remove code blocks
+        .replace(/```mermaid[\s\S]*?```/g, '[Diagram]') // Replace Mermaid diagrams with placeholder
+        .replace(/```[\s\S]*?```/g, '') // Remove other code blocks
         .trim()
 
       await navigator.clipboard.writeText(plainText)
@@ -289,7 +295,8 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
         .replace(/\*(.+?)\*/g, '$1') // Remove italic
         .replace(/\[(.+?)\]\(.+?\)/g, '$1') // Remove links
         .replace(/`(.+?)`/g, '$1') // Remove inline code
-        .replace(/```[\s\S]*?```/g, '') // Remove code blocks
+        .replace(/```mermaid[\s\S]*?```/g, '[Diagram]') // Replace Mermaid diagrams with placeholder
+        .replace(/```[\s\S]*?```/g, '') // Remove other code blocks
         .trim()
 
       // Split text into paragraphs
@@ -333,6 +340,77 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
     } catch (error) {
       console.error('Failed to download summary:', error)
       alert('Failed to download summary as DOCX')
+    }
+  }
+
+  // Copy highlights to clipboard
+  const handleCopyHighlights = async () => {
+    if (!highlightItems || highlightItems.length === 0) return
+
+    try {
+      const text = highlightItems
+        .map(item => {
+          if (item.color === 'blue') {
+            return `• ${item.text}`
+          }
+          return item.text
+        })
+        .join('\n\n')
+
+      await navigator.clipboard.writeText(text)
+    } catch (error) {
+      console.error('Failed to copy highlights:', error)
+      alert('Failed to copy highlights to clipboard')
+    }
+  }
+
+  // Download highlights as DOCX
+  const handleDownloadHighlights = async () => {
+    if (!highlightItems || highlightItems.length === 0) return
+
+    try {
+      // Create paragraphs from highlights
+      const paragraphs = highlightItems.map(item => {
+        let text = item.text
+        if (item.color === 'blue') {
+          text = `• ${text}`
+        }
+        return new Paragraph({
+          children: [new TextRun(text)],
+          spacing: { after: 200 }
+        })
+      })
+
+      // Create document
+      const doc = new Document({
+        sections: [{
+          properties: {},
+          children: paragraphs
+        }]
+      })
+
+      // Generate and download
+      const blob = await Packer.toBlob(doc)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      
+      // Create filename: "Highlights - [pdf name].docx"
+      let fileName = 'Highlights.docx'
+      if (pdfFileName) {
+        // Remove .pdf extension if present and add .docx
+        const baseName = pdfFileName.replace(/\.pdf$/i, '')
+        fileName = `Highlights - ${baseName}.docx`
+      }
+      
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Failed to download highlights:', error)
+      alert('Failed to download highlights as DOCX')
     }
   }
 
@@ -396,6 +474,38 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
                 title="Download summary as DOCX"
               >
                 <IconDownload size={14} />
+              </button>
+              <button
+                className="btn-summary-action btn-expand-summary"
+                onClick={onExpandSummary}
+                title="Expand to full view"
+              >
+                <IconExpand size={14} />
+              </button>
+            </div>
+          )}
+          {activeTab === 'highlights' && highlightItems.length > 0 && (
+            <div className="highlights-summary-actions">
+              <button
+                className="btn-summary-action btn-copy-highlights"
+                onClick={handleCopyHighlights}
+                title="Copy highlights to clipboard"
+              >
+                <IconCopy size={14} />
+              </button>
+              <button
+                className="btn-summary-action btn-download-highlights"
+                onClick={handleDownloadHighlights}
+                title="Download highlights as DOCX"
+              >
+                <IconDownload size={14} />
+              </button>
+              <button
+                className="btn-summary-action btn-expand-highlights"
+                onClick={onExpandHighlights}
+                title="Expand to full view"
+              >
+                <IconExpand size={14} />
               </button>
             </div>
           )}
@@ -615,7 +725,27 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
                 >
                   <IconRefresh size={14} />
                 </button>
-                <ReactMarkdown>{summaryText}</ReactMarkdown>
+                <ReactMarkdown
+                  components={{
+                    code({ node, inline, className, children, ...props }) {
+                      const match = /language-(\w+)/.exec(className || '')
+                      const language = match ? match[1] : ''
+                      const codeString = String(children).replace(/\n$/, '')
+                      
+                      if (!inline && language === 'mermaid') {
+                        return <MermaidDiagram chart={codeString} />
+                      }
+                      
+                      return (
+                        <code className={className} {...props}>
+                          {children}
+                        </code>
+                      )
+                    }
+                  }}
+                >
+                  {summaryText}
+                </ReactMarkdown>
               </div>
             </div>
           )}
