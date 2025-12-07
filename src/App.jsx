@@ -7617,6 +7617,7 @@ function App() {
                     onColorChange={handleChangeHighlightColor}
                     onDelete={handleDeleteHighlight}
                     pdfFileName={pdfFile?.name}
+                    summaryText={summaryText}
                     onExpandSummary={() => {
                       setIsSummaryExpanded(true)
                       setIsSidebarCollapsed(true)

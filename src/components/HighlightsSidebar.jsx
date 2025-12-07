@@ -1,12 +1,11 @@
 import React, { useState, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { IconHighlighter, IconRefresh, IconTrash, IconCopy, IconDownload, IconExpand } from './Icons.jsx'
-import { Document, Packer, Paragraph, TextRun } from 'docx'
 import MermaidDiagram from './MermaidDiagram.jsx'
 import { markdownToClipboardHtml, copyHtmlToClipboard } from '../utils/clipboardUtils.js'
 
 // Sidebar tab: highlights
-const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, highlights, onColorChange, onDelete, pdfFileName, onExpandSummary, onExpandHighlights, onSummaryGenerated }) => {
+const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, highlights, onColorChange, onDelete, pdfFileName, onExpandSummary, onExpandHighlights, onSummaryGenerated, summaryText: externalSummaryText }) => {
   const [hoveredItemId, setHoveredItemId] = useState(null)
   const [tooltipPosition, setTooltipPosition] = useState(null)
   const isHoveringTooltipRef = useRef(false)
@@ -17,8 +16,11 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
   const [dropPosition, setDropPosition] = useState(null) // { itemId, position: 'before' | 'after', inline: boolean }
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false)
   const [activeTab, setActiveTab] = useState('highlights') // 'highlights' | 'summary'
-  const [summaryText, setSummaryText] = useState('') // Store the summary separately
+  const [localSummaryText, setLocalSummaryText] = useState('') // Store the summary locally as fallback
   const editInputRef = useRef(null)
+  
+  // Use external summary text if provided, otherwise use local state
+  const summaryText = externalSummaryText || localSummaryText
 
   // Handle double-click to edit
   const handleDoubleClick = (item) => {
@@ -235,8 +237,8 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
 
       const data = await response.json()
       
-      // Store summary and switch to summary tab
-      setSummaryText(data.summary)
+      // Store summary locally and switch to summary tab
+      setLocalSummaryText(data.summary)
       setActiveTab('summary')
       // Notify parent component of the generated summary
       if (onSummaryGenerated) {
@@ -299,48 +301,70 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
     if (!summaryText) return
 
     try {
-      // Convert markdown to plain text for the document
-      const plainText = summaryText
-        .replace(/#{1,6}\s+/g, '') // Remove headers
-        .replace(/\*\*(.+?)\*\*/g, '$1') // Remove bold
-        .replace(/\*(.+?)\*/g, '$1') // Remove italic
-        .replace(/\[(.+?)\]\(.+?\)/g, '$1') // Remove links
-        .replace(/`(.+?)`/g, '$1') // Remove inline code
-        .replace(/```mermaid[\s\S]*?```/g, '[Diagram]') // Replace Mermaid diagrams with placeholder
-        .replace(/```[\s\S]*?```/g, '') // Remove other code blocks
-        .trim()
-
-      // Split text into paragraphs
-      const paragraphs = plainText
-        .split(/\n\n+/)
-        .filter(p => p.trim())
-        .map(text => 
-          new Paragraph({
-            children: [new TextRun(text.trim())],
-            spacing: { after: 200 }
-          })
-        )
-
-      // Create document
-      const doc = new Document({
-        sections: [{
-          properties: {},
-          children: paragraphs
-        }]
-      })
-
-      // Generate and download
-      const blob = await Packer.toBlob(doc)
+      // Use the same HTML generation that works for copy
+      // This includes properly formatted text and embedded Mermaid diagrams as images
+      const htmlContent = await markdownToClipboardHtml(summaryText)
+      
+      // Wrap in a proper HTML document structure for better Word compatibility
+      const fullHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.5em;
+      margin-bottom: 0.5em;
+      font-weight: 600;
+    }
+    h1 { font-size: 2em; }
+    h2 { font-size: 1.5em; }
+    h3 { font-size: 1.25em; }
+    ul, ol {
+      margin: 1em 0;
+      padding-left: 2em;
+    }
+    li {
+      margin: 0.5em 0;
+    }
+    p {
+      margin: 1em 0;
+    }
+    img {
+      max-width: 100%;
+      height: auto;
+    }
+  </style>
+</head>
+<body>
+${htmlContent}
+</body>
+</html>`
+      
+      console.log('Creating HTML file for download (Word can open HTML and save as DOCX)')
+      
+      // Create HTML blob - users can open in Word and save as DOCX
+      // Word will preserve formatting and images when opening HTML
+      const blob = new Blob([fullHtml], { type: 'text/html' })
+      
+      console.log('HTML blob generated, size:', blob.size, 'bytes')
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
       
-      // Create filename: "Summary - [pdf name].docx"
-      let fileName = 'Summary.docx'
+      // Create filename: "Summary - [pdf name].html" (Word can open and save as DOCX)
+      let fileName = 'Summary.html'
       if (pdfFileName) {
-        // Remove .pdf extension if present and add .docx
+        // Remove .pdf extension if present and add .html
         const baseName = pdfFileName.replace(/\.pdf$/i, '')
-        fileName = `Summary - ${baseName}.docx`
+        fileName = `Summary - ${baseName}.html`
       }
       
       link.download = fileName
