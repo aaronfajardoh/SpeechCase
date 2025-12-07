@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import { IconHighlighter, IconRefresh, IconTrash, IconCopy, IconDownload, IconExpand } from './Icons.jsx'
 import { Document, Packer, Paragraph, TextRun } from 'docx'
 import MermaidDiagram from './MermaidDiagram.jsx'
+import { markdownToClipboardHtml, copyHtmlToClipboard } from '../utils/clipboardUtils.js'
 
 // Sidebar tab: highlights
 const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, highlights, onColorChange, onDelete, pdfFileName, onExpandSummary, onExpandHighlights, onSummaryGenerated }) => {
@@ -264,8 +265,10 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
     if (!summaryText) return
 
     try {
-      // Convert markdown to plain text for copying
-      // Remove markdown syntax (basic conversion)
+      // Convert markdown with diagrams to HTML for clipboard
+      const htmlContent = await markdownToClipboardHtml(summaryText)
+      
+      // Create plain text fallback
       const plainText = summaryText
         .replace(/#{1,6}\s+/g, '') // Remove headers
         .replace(/\*\*(.+?)\*\*/g, '$1') // Remove bold
@@ -275,8 +278,16 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
         .replace(/```mermaid[\s\S]*?```/g, '[Diagram]') // Replace Mermaid diagrams with placeholder
         .replace(/```[\s\S]*?```/g, '') // Remove other code blocks
         .trim()
-
-      await navigator.clipboard.writeText(plainText)
+      
+      // Wrap HTML in proper structure for Google Docs/Word compatibility
+      // Google Docs prefers a simpler structure without DOCTYPE
+      // Ensure no background colors are applied
+      const wrappedHtml = `<html><head><meta charset="utf-8"><style>body { background: transparent !important; color: black !important; } * { background: transparent !important; }</style></head><body style="background: transparent; color: black;">${htmlContent}</body></html>`
+      
+      const success = await copyHtmlToClipboard(wrappedHtml, plainText)
+      if (!success) {
+        alert('Failed to copy summary to clipboard')
+      }
     } catch (error) {
       console.error('Failed to copy summary:', error)
       alert('Failed to copy summary to clipboard')

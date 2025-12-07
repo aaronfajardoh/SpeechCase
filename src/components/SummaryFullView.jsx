@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import { IconHighlighter, IconCopy, IconDownload, IconChevronLeft } from './Icons.jsx'
 import { Document, Packer, Paragraph, TextRun } from 'docx'
 import MermaidDiagram from './MermaidDiagram.jsx'
+import { markdownToClipboardHtml, copyHtmlToClipboard } from '../utils/clipboardUtils.js'
 
 const SummaryFullView = ({ summaryText, pdfFileName, onMinimize, onCopy, onDownload }) => {
   // Copy summary to clipboard
@@ -10,18 +11,31 @@ const SummaryFullView = ({ summaryText, pdfFileName, onMinimize, onCopy, onDownl
     if (!summaryText) return
 
     try {
-      // Convert markdown to plain text for copying
+      // Convert markdown with diagrams to HTML for clipboard
+      const htmlContent = await markdownToClipboardHtml(summaryText)
+      
+      // Create plain text fallback
       const plainText = summaryText
         .replace(/#{1,6}\s+/g, '') // Remove headers
         .replace(/\*\*(.+?)\*\*/g, '$1') // Remove bold
         .replace(/\*(.+?)\*/g, '$1') // Remove italic
         .replace(/\[(.+?)\]\(.+?\)/g, '$1') // Remove links
         .replace(/`(.+?)`/g, '$1') // Remove inline code
-        .replace(/```[\s\S]*?```/g, '') // Remove code blocks
+        .replace(/```mermaid[\s\S]*?```/g, '[Diagram]') // Replace Mermaid diagrams
+        .replace(/```[\s\S]*?```/g, '') // Remove other code blocks
         .trim()
-
-      await navigator.clipboard.writeText(plainText)
-      if (onCopy) onCopy()
+      
+      // Wrap HTML in proper structure for Google Docs/Word compatibility
+      // Google Docs prefers a simpler structure without DOCTYPE
+      // Ensure no background colors are applied
+      const wrappedHtml = `<html><head><meta charset="utf-8"><style>body { background: transparent !important; color: black !important; } * { background: transparent !important; }</style></head><body style="background: transparent; color: black;">${htmlContent}</body></html>`
+      
+      const success = await copyHtmlToClipboard(wrappedHtml, plainText)
+      if (success && onCopy) {
+        onCopy()
+      } else if (!success) {
+        alert('Failed to copy summary to clipboard')
+      }
     } catch (error) {
       console.error('Failed to copy summary:', error)
       alert('Failed to copy summary to clipboard')
