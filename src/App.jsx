@@ -1128,9 +1128,140 @@ function App() {
   }, [pdfDoc, pageData])
 
   // Helper function to normalize text for comparison (removes extra whitespace, lowercases)
+  // IMPORTANT: This normalization is used for repetition detection only
+  // It should NOT cause different text items to be treated as identical
   const normalizeText = (text) => {
+    if (!text || typeof text !== 'string') return ''
     return text.trim().toLowerCase().replace(/\s+/g, ' ')
   }
+
+  // Diagnostic function to detect missing text segments
+  // Compares extractedText with what's actually rendered in textItems
+  const diagnoseMissingText = () => {
+    if (!extractedText || textItems.length === 0) {
+      console.log('[Diagnostic] No text or textItems to compare')
+      return
+    }
+
+    console.log('[Diagnostic] Starting text alignment check...')
+    console.log(`[Diagnostic] extractedText length: ${extractedText.length}`)
+    console.log(`[Diagnostic] textItems count: ${textItems.length}`)
+
+    // Build a map of all character positions covered by textItems
+    const coveredPositions = new Set()
+    const textItemMap = new Map() // charIndex -> textItem
+    
+    textItems.forEach(item => {
+      if (item.charIndex !== undefined && item.str) {
+        for (let i = 0; i < item.str.length; i++) {
+          const pos = item.charIndex + i
+          coveredPositions.add(pos)
+        }
+        textItemMap.set(item.charIndex, item)
+      }
+    })
+
+    // Find gaps in coverage
+    const gaps = []
+    let inGap = false
+    let gapStart = null
+    let lastCovered = -1
+
+    for (let i = 0; i < extractedText.length; i++) {
+      const isCovered = coveredPositions.has(i)
+      
+      if (!isCovered && !inGap) {
+        // Start of a gap
+        inGap = true
+        gapStart = i
+      } else if (isCovered && inGap) {
+        // End of a gap
+        const gapText = extractedText.substring(gapStart, i)
+        gaps.push({
+          start: gapStart,
+          end: i - 1,
+          length: i - gapStart,
+          text: gapText.substring(0, 100) + (gapText.length > 100 ? '...' : ''),
+          contextBefore: extractedText.substring(Math.max(0, gapStart - 50), gapStart),
+          contextAfter: extractedText.substring(i, Math.min(extractedText.length, i + 50))
+        })
+        inGap = false
+        gapStart = null
+      }
+      
+      if (isCovered) {
+        lastCovered = i
+      }
+    }
+
+    // Check for gap at the end
+    if (inGap) {
+      const gapText = extractedText.substring(gapStart)
+      gaps.push({
+        start: gapStart,
+        end: extractedText.length - 1,
+        length: extractedText.length - gapStart,
+        text: gapText.substring(0, 100) + (gapText.length > 100 ? '...' : ''),
+        contextBefore: extractedText.substring(Math.max(0, gapStart - 50), gapStart),
+        contextAfter: ''
+      })
+    }
+
+    if (gaps.length > 0) {
+      console.warn(`[Diagnostic] Found ${gaps.length} text gaps (missing segments):`)
+      gaps.forEach((gap, idx) => {
+        console.warn(`[Diagnostic] Gap ${idx + 1}: positions ${gap.start}-${gap.end} (${gap.length} chars)`)
+        console.warn(`[Diagnostic]   Text: "${gap.text}"`)
+        console.warn(`[Diagnostic]   Context before: "...${gap.contextBefore}"`)
+        console.warn(`[Diagnostic]   Context after: "${gap.contextAfter}..."`)
+      })
+    } else {
+      console.log('[Diagnostic] ✓ No gaps found - all text is covered by textItems')
+    }
+
+    // Check for character index misalignments
+    const misalignments = []
+    textItems.forEach(item => {
+      if (item.charIndex !== undefined && item.str) {
+        const extractedAtPos = extractedText.substring(item.charIndex, item.charIndex + item.str.length)
+        const normalizedExtracted = extractedAtPos.replace(/\s+/g, ' ').trim()
+        const normalizedItem = item.str.replace(/\s+/g, ' ').trim()
+        
+        if (normalizedExtracted !== normalizedItem && normalizedItem.length > 0) {
+          misalignments.push({
+            charIndex: item.charIndex,
+            expected: item.str,
+            found: extractedAtPos,
+            page: item.page
+          })
+        }
+      }
+    })
+
+    if (misalignments.length > 0) {
+      console.warn(`[Diagnostic] Found ${misalignments.length} character index misalignments:`)
+      misalignments.slice(0, 10).forEach((m, idx) => {
+        console.warn(`[Diagnostic] Misalignment ${idx + 1} at position ${m.charIndex} (page ${m.page}):`)
+        console.warn(`[Diagnostic]   Expected: "${m.expected}"`)
+        console.warn(`[Diagnostic]   Found: "${m.found}"`)
+      })
+      if (misalignments.length > 10) {
+        console.warn(`[Diagnostic] ... and ${misalignments.length - 10} more misalignments`)
+      }
+    } else {
+      console.log('[Diagnostic] ✓ No character index misalignments found')
+    }
+
+    return { gaps, misalignments }
+  }
+
+  // Expose diagnostic function globally for debugging
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.diagnoseTextAlignment = diagnoseMissingText
+      console.log('[Diagnostic] Diagnostic function available: call window.diagnoseTextAlignment() in console')
+    }
+  }, [extractedText, textItems])
 
   // Smart filtering: identifies headers/footers by repetition across pages
   // Only filters text that appears in header/footer regions AND repeats across multiple pages
@@ -1144,13 +1275,23 @@ function App() {
       const textContent = await page.getTextContent()
       
       const pageItems = []
-      textContent.items.forEach((item) => {
+      textContent.items.forEach((item, itemIndex) => {
+        // Skip empty items
+        if (!item.str || item.str.trim().length === 0) {
+          return
+        }
+        
         const normalized = normalizeText(item.str)
         if (normalized.length > 0) {
-          if (!textToPages.has(normalized)) {
-            textToPages.set(normalized, new Set())
+          // Use a composite key to prevent false collisions: normalized text + original text length
+          // This helps distinguish between text that happens to normalize to the same string
+          // but is actually different (e.g., "Chapter 1" vs "Chapter 1" with different spacing)
+          const compositeKey = `${normalized}|${item.str.length}`
+          
+          if (!textToPages.has(compositeKey)) {
+            textToPages.set(compositeKey, new Set())
           }
-          textToPages.get(normalized).add(pageNum)
+          textToPages.get(compositeKey).add(pageNum)
           
           // Store item with position info
           const tx = pdfjsLib.Util.transform(viewport.transform, item.transform)
@@ -1159,8 +1300,10 @@ function App() {
           
           pageItems.push({
             item,
-            normalized,
-            yPos
+            normalized: compositeKey, // Store composite key for filtering
+            originalNormalized: normalized, // Keep original for logging
+            yPos,
+            itemIndex // Store original index for debugging
           })
         }
       })
@@ -1170,34 +1313,71 @@ function App() {
     return { textToPages, pageTextItems }
   }
 
-  // Filter headers and footers using repetition detection
-  const filterHeadersAndFooters = (pageData, textToPages, minRepetitions = 2) => {
+  // Sync version for immediate rendering (no LLM, fast)
+  // CRITICAL: Only filters text that is BOTH in header/footer region AND repeats across pages
+  // This prevents false positives from normalization collisions
+  const filterHeadersAndFootersSync = (pageData, textToPages, minRepetitions = 2) => {
     const { items, viewport } = pageData
     const headerThreshold = viewport.height * 0.15 // Top 15% of page
-    const footerThreshold = viewport.height * 0.85 // Bottom 15% of page
+    const footerThreshold = viewport.height * 0.80 // Bottom 20% of page
     
-    return items.filter(({ item, normalized, yPos }) => {
+    const filtered = items.filter(({ item, normalized, originalNormalized, yPos }) => {
       const isInHeader = yPos <= headerThreshold
       const isInFooter = yPos >= footerThreshold
       const isInHeaderFooterRegion = isInHeader || isInFooter
       
+      // Always keep text that's NOT in header/footer regions
       if (!isInHeaderFooterRegion) {
-        // Not in header/footer region, keep it
         return true
       }
       
-      // In header/footer region - check if it repeats across pages
-      const pagesWithThisText = textToPages.get(normalized)
+      // For text in header/footer regions, check if it repeats
+      // Use the composite key (normalized) for lookup, or fall back to simple normalized if composite key format not used
+      const lookupKey = normalized.includes('|') ? normalized : normalizeText(item.str) + '|' + item.str.length
+      const pagesWithThisText = textToPages.get(lookupKey)
       const repetitionCount = pagesWithThisText ? pagesWithThisText.size : 0
+      
+      // Get normalized text length (extract from composite key if needed)
+      let normalizedLength
+      if (originalNormalized) {
+        normalizedLength = originalNormalized.length
+      } else if (normalized.includes('|')) {
+        normalizedLength = normalized.split('|')[0].length
+      } else {
+        normalizedLength = normalized.length
+      }
       
       // Filter if:
       // 1. Text appears on multiple pages (likely header/footer), OR
       // 2. Text is very short (1-3 chars) and in header/footer region (likely page numbers, dates)
+      // BUT: Only filter if it's actually in the header/footer region (already checked above)
       const isLikelyHeaderFooter = repetitionCount >= minRepetitions || 
-                                   (normalized.length <= 3 && isInHeaderFooterRegion)
+                                 (normalizedLength <= 3 && isInHeaderFooterRegion)
       
       return !isLikelyHeaderFooter
-    }).map(({ item }) => item) // Return just the original items
+    }).map(({ item }) => item)
+    
+    // Debug: Log if significant filtering occurred
+    if (items.length - filtered.length > 0) {
+      console.log(`[Filter] Page ${pageData.pageNum || 'unknown'}: Filtered ${items.length - filtered.length} of ${items.length} items`)
+    }
+    
+    return filtered
+  }
+
+  // Async version with LLM classification (for background processing)
+  const filterHeadersAndFootersWithLLM = async (pageData, textToPages, minRepetitions = 2) => {
+    try {
+      const { filterHeadersAndFooters } = await import('./services/pdfProcessing/footerFilter.js')
+      return await filterHeadersAndFooters(pageData, textToPages, {
+        minRepetitions,
+        apiUrl: '/api/pdf/classify-footer',
+        useLLMClassification: true
+      })
+    } catch (error) {
+      console.warn('LLM footer classification failed, using sync version:', error)
+      return filterHeadersAndFootersSync(pageData, textToPages, minRepetitions)
+    }
   }
 
   // Simple language detection based on common Spanish characters and words
@@ -2152,8 +2332,8 @@ function App() {
         const pageData = pageTextItems.find(p => p.pageNum === pageNum)
         if (!pageData) continue
         
-        // Filter out headers and footers using repetition detection
-        const filteredItems = filterHeadersAndFooters(pageData, textToPages)
+        // Filter out headers and footers using repetition detection (sync for immediate rendering)
+        const filteredItems = filterHeadersAndFootersSync(pageData, textToPages)
         
         // Get original textContent for rendering (we'll use filtered items)
         const textContent = await page.getTextContent()
@@ -2162,7 +2342,8 @@ function App() {
           items: filteredItems
         }
         
-        const pageText = filteredItems.map(item => item.str).join(' ')
+        // Build pageText consistently: trim items to avoid double spaces, join with single space
+        const pageText = filteredItems.map(item => item.str.trim()).filter(str => str.length > 0).join(' ')
 
         pages.push({
           pageNum,
@@ -2174,10 +2355,73 @@ function App() {
           textContent: filteredTextContent
         })
 
-        pageCharOffset += pageText.length + 2 // +2 for page break
+        // Calculate offset for next page: current page text + '\n\n' (except for last page)
+        // Page 1 ends at position (pageText.length - 1)
+        // '\n\n' is at positions pageText.length and (pageText.length + 1)
+        // Page 2 starts at position (pageText.length + 2)
+        if (pageNum < totalPages) {
+          pageCharOffset += pageText.length + 2 // +2 for '\n\n' after this page
+        } else {
+          pageCharOffset += pageText.length // Last page has no trailing '\n\n'
+        }
       }
 
       setPageData(pages)
+      
+      // Background: Re-process pages with LLM classification (non-blocking)
+      // This enhances the page data without blocking initial rendering
+      setTimeout(async () => {
+        try {
+          const enhancedPages = []
+          let pageCharOffset = 0
+          
+          for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+            const page = await pdfDoc.getPage(pageNum)
+            const viewport = page.getViewport({ scale: pageScale })
+            const pageData = pageTextItems.find(p => p.pageNum === pageNum)
+            if (!pageData) continue
+            
+            // Re-filter with LLM classification
+            const filteredItems = await filterHeadersAndFootersWithLLM(pageData, textToPages)
+            
+            const textContent = await page.getTextContent()
+            const filteredTextContent = {
+              ...textContent,
+              items: filteredItems
+            }
+            
+            // Build pageText consistently: trim items to avoid double spaces, join with single space
+            const pageText = filteredItems.map(item => item.str.trim()).filter(str => str.length > 0).join(' ')
+            
+            enhancedPages.push({
+              pageNum,
+              viewport: {
+                width: viewport.width,
+                height: viewport.height
+              },
+              pageCharOffset,
+              textContent: filteredTextContent
+            })
+            
+            // Calculate offset for next page: current page text + '\n\n' (except for last page)
+            // Page 1 ends at position (pageText.length - 1)
+            // '\n\n' is at positions pageText.length and (pageText.length + 1)
+            // Page 2 starts at position (pageText.length + 2)
+            if (pageNum < totalPages) {
+              pageCharOffset += pageText.length + 2 // +2 for '\n\n' after this page
+            } else {
+              pageCharOffset += pageText.length // Last page has no trailing '\n\n'
+            }
+          }
+          
+          // Update page data in background (won't interrupt if TTS is playing)
+          setPageData(enhancedPages)
+          console.log('Page data enhanced with LLM footer classification')
+        } catch (error) {
+          console.warn('Background page enhancement failed:', error)
+          // Keep using initial pages - no interruption
+        }
+      }, 100) // Small delay to ensure initial render completes
     } catch (err) {
       console.error('Error initializing pages:', err)
       setError('Error loading PDF pages: ' + err.message)
@@ -2365,11 +2609,20 @@ function App() {
     textLayerDiv.style.height = displayedHeight + 'px'
 
     // Build text position mapping
+    // CRITICAL: Use trimmed items to match extractedText construction
+    // extractedText is built by trimming items and joining with ' ', so we must do the same here
     const pageTextItems = []
     let charIndex = 0
     let isFirstItem = true
 
     textContent.items.forEach((item) => {
+      // Trim item to match extractedText construction (avoids double spaces)
+      const trimmedStr = item.str.trim()
+      // Skip empty items (they're filtered out in extractedText)
+      if (trimmedStr.length === 0) {
+        return
+      }
+      
       const tx = pdfjsLib.Util.transform(viewport.transform, item.transform)
       const angle = Math.atan2(tx[1], tx[0])
       const fontHeight = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3])
@@ -2378,20 +2631,20 @@ function App() {
       const baseX = tx[4] * scaleX
       const baseY = (tx[5] - fontHeight) * scaleY
       
-      // Account for space between items (extractedText joins items with ' ')
+      // Account for space between items (extractedText joins trimmed items with ' ')
       // The first item doesn't have a preceding space, but subsequent items do
       if (!isFirstItem) {
         charIndex += 1 // Add space between items
       }
       isFirstItem = false
       
-      // Split the text item into words and spaces
+      // Split the trimmed text item into words and spaces
       // Group consecutive word characters together as words
       // Keep spaces and punctuation as separate segments for seamless highlighting
       const words = []
       let currentWord = ''
-      for (let i = 0; i < item.str.length; i++) {
-        const char = item.str[i]
+      for (let i = 0; i < trimmedStr.length; i++) {
+        const char = trimmedStr[i]
         if (/\w/.test(char)) {
           // Word character - add to current word
           currentWord += char
@@ -2479,7 +2732,8 @@ function App() {
         currentX = wordX + measureTextWidth(word, fontFamily, fontSize)
       })
       
-      charIndex += item.str.length
+      // Use trimmed length to match extractedText construction
+      charIndex += trimmedStr.length
     })
 
     // Update text items for this page
@@ -4389,26 +4643,105 @@ function App() {
       // First, build a map of text repetition across pages
       const { textToPages, pageTextItems } = await buildRepetitionMap(pdf, pdf.numPages)
       
-      // Then filter each page based on repetition
+      // Initial extraction with sync version for immediate display
+      // Build text consistently: trim items to avoid double spaces, join with single space
       let fullText = ''
       for (const pageData of pageTextItems) {
-        const filteredItems = filterHeadersAndFooters(pageData, textToPages)
-        const pageText = filteredItems.map(item => item.str).join(' ')
-        fullText += pageText + '\n\n'
+        const filteredItems = filterHeadersAndFootersSync(pageData, textToPages)
+        // Trim each item to remove leading/trailing spaces, then join with single space
+        // This ensures consistent spacing that matches textItems construction
+        const pageText = filteredItems.map(item => item.str.trim()).filter(str => str.length > 0).join(' ')
+        if (pageText.length > 0) {
+          if (fullText.length > 0) {
+            fullText += '\n\n' // Add page break before this page's text
+          }
+          fullText += pageText
+        }
       }
 
-      const finalText = fullText.trim()
-      setExtractedText(finalText)
+      const initialText = fullText
+      setExtractedText(initialText)
+      
+      // Background: Re-process with LLM classification (non-blocking)
+      // This updates the text seamlessly without interrupting TTS
+      // Only processes footer candidates in bottom 20% that weren't already filtered
+      setTimeout(async () => {
+        try {
+          // Check if there are any footer candidates that need LLM classification
+          let hasFooterCandidates = false
+          const minRepetitions = 2
+          for (const pageData of pageTextItems) {
+            const { items, viewport } = pageData
+            const footerThreshold = viewport.height * 0.80
+            for (const { normalized, yPos } of items) {
+              if (yPos >= footerThreshold) {
+                const pagesWithThisText = textToPages.get(normalized)
+                const repetitionCount = pagesWithThisText ? pagesWithThisText.size : 0
+                // Candidate if in footer region, not already filtered, and not too short
+                if (repetitionCount < minRepetitions && normalized.length > 3) {
+                  hasFooterCandidates = true
+                  break
+                }
+              }
+            }
+            if (hasFooterCandidates) break
+          }
+          
+          if (!hasFooterCandidates) {
+            console.log('No footer candidates for LLM classification - skipping background process')
+            return
+          }
+          
+          console.log('Starting background LLM footer classification...')
+          let enhancedText = ''
+          for (const pageData of pageTextItems) {
+            const filteredItems = await filterHeadersAndFootersWithLLM(pageData, textToPages)
+            // Trim each item to remove leading/trailing spaces, then join with single space
+            // This ensures consistent spacing that matches textItems construction
+            const pageText = filteredItems.map(item => item.str.trim()).filter(str => str.length > 0).join(' ')
+            if (pageText.length > 0) {
+              if (enhancedText.length > 0) {
+                enhancedText += '\n\n' // Add page break before this page's text
+              }
+              enhancedText += pageText
+            }
+          }
+          const finalText = enhancedText
+          
+          // Only update if text changed (to avoid unnecessary re-renders)
+          if (finalText !== initialText) {
+            setExtractedText(finalText)
+            console.log('Footer classification completed - text updated in background')
+          } else {
+            console.log('Footer classification completed - no changes detected')
+          }
+        } catch (error) {
+          console.warn('Background footer classification failed:', error)
+          // Keep using initial text - no interruption
+        }
+      }, 100) // Small delay to ensure initial render completes
       
       // Auto-detect language
-      if (language === 'auto' && finalText) {
-        const detected = detectLanguage(finalText)
-        console.log('Detected language:', detected, 'for text length:', finalText.length)
+      if (language === 'auto' && initialText) {
+        const detected = detectLanguage(initialText)
+        console.log('Detected language:', detected, 'for text length:', initialText.length)
         setDetectedLanguage(detected)
       }
 
+      // Run diagnostic after text extraction and initial rendering
+      // Use a longer delay to ensure text layer is fully rendered
+      setTimeout(() => {
+        if (initialText && initialText.length > 0) {
+          console.log('[Diagnostic] Running text alignment diagnostic...')
+          const diagnosticResult = diagnoseMissingText()
+          if (diagnosticResult && (diagnosticResult.gaps.length > 0 || diagnosticResult.misalignments.length > 0)) {
+            console.error('[Diagnostic] Text alignment issues detected! Check console for details.')
+          }
+        }
+      }, 2000) // Wait 2 seconds for text layer to render
+
       // Process PDF for AI features (chunking and embeddings)
-      if (finalText && finalText.length > 0) {
+      if (initialText && initialText.length > 0) {
         const newDocumentId = `${file.name}-${Date.now()}`
         setDocumentId(newDocumentId)
         setTimeline(null) // Clear previous timeline
@@ -4417,10 +4750,10 @@ function App() {
         setIsPDFProcessing(true)
         
         // Process PDF in background (don't block UI)
-        processPDFForAI(newDocumentId, finalText, {
+        processPDFForAI(newDocumentId, initialText, {
           fileName: file.name,
           pageCount: pdf.numPages,
-          textLength: finalText.length
+          textLength: initialText.length
         }).then(() => {
           setIsPDFProcessing(false)
         }).catch(err => {
@@ -6972,14 +7305,23 @@ function App() {
       if (isEncrypted) {
         // Render each page as an image and embed it using PDF.js
         // Use the PDF.js document that's already loaded in state (pdfDoc)
+        // For encrypted PDFs, pdf-lib can't parse the structure, so use PDF.js for everything
         pages = []
-        for (let i = 0; i < sourcePdfDoc.getPageCount(); i++) {
-          const sourcePage = sourcePdfDoc.getPage(i)
-          const { width, height } = sourcePage.getSize()
-          
+        if (!pdfDoc) {
+          throw new Error('PDF.js document not available for encrypted PDF')
+        }
+        
+        const numPages = pdfDoc.numPages
+        for (let i = 0; i < numPages; i++) {
           // Render page to canvas using PDF.js (which we already have loaded in state)
           const pdfjsPage = await pdfDoc.getPage(i + 1) // pdfDoc state is PDF.js document, 1-indexed
           const viewport = pdfjsPage.getViewport({ scale: 2.0 }) // Higher scale for better quality
+          
+          // Get page dimensions from PDF.js viewport (convert from points to PDF units)
+          // PDF.js viewport dimensions are in points (1/72 inch), which is the same as PDF units
+          const width = viewport.width
+          const height = viewport.height
+          
           const canvas = document.createElement('canvas')
           canvas.width = viewport.width
           canvas.height = viewport.height

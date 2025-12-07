@@ -297,6 +297,73 @@ app.post('/api/tts/chunks', (req, res) => {
   }
 });
 
+// Footer classification endpoint using DeepSeek LLM
+app.post('/api/pdf/classify-footer', async (req, res) => {
+  try {
+    const { candidateText, surroundingContext } = req.body;
+
+    if (!candidateText || typeof candidateText !== 'string') {
+      return res.status(400).json({ error: 'candidateText is required' });
+    }
+
+    console.log('[Footer API] Received classification request for:', candidateText.substring(0, 100));
+
+    const chatClient = deepSeekClient || openaiClient;
+    if (!chatClient) {
+      console.warn('[Footer API] No AI client available');
+      // Fallback: if no AI client, return false (don't treat as footer)
+      return res.json({ isFooter: false, reason: 'No AI client available' });
+    }
+
+    const prompt = `You are analyzing text extracted from a PDF page. Some pages contain narrative text and may also contain footer text such as references, explanations, citations, or glossary-like clarifications.
+
+The text below is a *candidate* block located near the bottom of a page. Determine whether it is **likely to be footer-like material** rather than part of the main narrative.  
+
+Consider characteristics such as:
+- It reads like a definition, citation, reference entry, or explanatory footnote  
+- It does not continue naturally from the surrounding narrative  
+- It feels self-contained or meta-textual  
+- It looks like a caption, annotation, or academic explanation  
+- It shifts tone compared to the surrounding text  
+- It breaks the narrative flow  
+
+Do NOT rely on formatting cues like capitalization or line breaks (the PDF text extraction removes formatting).  
+
+Respond strictly with:  
+"yes" → this looks like a footer  
+"no"  → this looks like normal narrative text
+
+---
+Surrounding Context:
+${surroundingContext || '(no context available)'}
+
+Candidate Block:
+${candidateText}`;
+
+    const response = await chatClient.chat.completions.create({
+      model: chatClient.baseURL?.includes('deepseek') ? 'deepseek-chat' : 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: 0,
+      max_tokens: 10 // Just need "yes" or "no"
+    });
+
+    const answer = response.choices[0]?.message?.content?.trim().toLowerCase();
+    const isFooter = answer === 'yes';
+
+    console.log(`[Footer API] LLM response: "${answer}" -> isFooter: ${isFooter}`);
+    res.json({ isFooter });
+  } catch (error) {
+    // Fallback: on error, don't treat as footer (safety)
+    console.warn('Footer classification error:', error.message);
+    res.json({ isFooter: false, error: error.message });
+  }
+});
+
 // Google TTS endpoint for Spanish text
 app.post('/api/tts', async (req, res) => {
   try {
