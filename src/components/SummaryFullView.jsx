@@ -132,7 +132,7 @@ const SummaryFullView = ({ summaryText, pdfFileName, onMinimize, onCopy, onDownl
                 
                 if (!inline && language === 'mermaid') {
                   const codeContent = String(children).replace(/\n$/, '')
-                  return <MermaidDiagram key={codeContent} chart={codeContent} />
+                  return <MermaidDiagram key={codeContent} chart={codeContent} fontSize={16} />
                 }
                 
                 return (

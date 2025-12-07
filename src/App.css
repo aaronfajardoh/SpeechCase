@@ -1832,6 +1832,118 @@
   font-size: 0.875rem;
 }
 
+/* Base Mermaid container styles */
+.mermaid-container {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  background: #fff;
+  border-radius: 4px;
+  border: 1px solid #e0e0e0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+}
+
+.mermaid-diagram-content {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.mermaid-loading {
+  text-align: center;
+  color: #999;
+  font-size: 0.875rem;
+  padding: 1rem;
+}
+
+/* Mermaid diagrams in summary full view - optimized for 800px container */
+.summary-full-view-markdown .mermaid-container {
+  max-width: 100%;
+  width: 100%;
+  margin: 2rem 0;
+  padding: 1.5rem;
+  background: #ffffff;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  overflow-x: auto;
+  overflow-y: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  /* Container is ~800px max-width, with 1.5rem padding = ~740px available for diagram */
+}
+
+.summary-full-view-markdown .mermaid-container .mermaid-diagram-content {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 150px;
+}
+
+/* Make SVG fill the available width (740px) while maintaining aspect ratio */
+.summary-full-view-markdown .mermaid-container svg {
+  max-width: 100% !important;
+  width: 100% !important;
+  height: auto !important;
+  display: block;
+  /* Remove min-width constraint - let it scale naturally to container */
+}
+
+/* Optimize text sizes for 740px width - readable but not oversized */
+.summary-full-view-markdown .mermaid-container svg text,
+.summary-full-view-markdown .mermaid-container svg .nodeLabel,
+.summary-full-view-markdown .mermaid-container svg .edgeLabel,
+.summary-full-view-markdown .mermaid-container svg .label {
+  font-size: 16px !important;
+  font-weight: 500 !important;
+}
+
+.summary-full-view-markdown .mermaid-container svg tspan {
+  font-size: 16px !important;
+}
+
+/* Appropriate node styling for the container size */
+.summary-full-view-markdown .mermaid-container svg .node rect,
+.summary-full-view-markdown .mermaid-container svg .node circle,
+.summary-full-view-markdown .mermaid-container svg .node ellipse,
+.summary-full-view-markdown .mermaid-container svg .node polygon {
+  stroke-width: 2px !important;
+}
+
+/* Loading state for full view */
+.summary-full-view-markdown .mermaid-container .mermaid-loading {
+  text-align: center;
+  color: rgba(0, 0, 0, 0.5);
+  font-size: 1rem;
+  padding: 2rem;
+}
+
+/* Error state for full view */
+.summary-full-view-markdown .mermaid-container.mermaid-error {
+  background: rgba(255, 0, 0, 0.05);
+  border-color: rgba(255, 0, 0, 0.2);
+  padding: 1.5rem;
+}
+
+.summary-full-view-markdown .mermaid-container.mermaid-error p {
+  color: rgba(255, 0, 0, 0.8);
+  margin-bottom: 0.75rem;
+  font-size: 0.9375rem;
+}
+
+.summary-full-view-markdown .mermaid-container.mermaid-error pre {
+  background: rgba(0, 0, 0, 0.05);
+  padding: 1rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  overflow-x: auto;
+  margin: 0;
+}
+
 /* Highlights Full View */
 .highlights-full-view {
   flex: 1;
@@ -2006,7 +2118,6 @@
   .highlights-full-view-items {
     max-width: 100%;
   }
-}
 
   .proportional-timeline-container {
     padding: 2rem 0.25rem 2.75rem 0.25rem;

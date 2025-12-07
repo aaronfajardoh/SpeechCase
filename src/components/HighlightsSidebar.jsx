@@ -733,7 +733,7 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
                       const codeString = String(children).replace(/\n$/, '')
                       
                       if (!inline && language === 'mermaid') {
-                        return <MermaidDiagram chart={codeString} />
+                        return <MermaidDiagram chart={codeString} fontSize={12} />
                       }
                       
                       return (
