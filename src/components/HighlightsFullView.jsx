@@ -143,3 +143,4 @@ const HighlightsFullView = ({ highlightItems, pdfFileName, onMinimize, onCopy, o
 
 export default HighlightsFullView
 
+
