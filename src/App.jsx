@@ -6792,7 +6792,7 @@ function App() {
         renderHighlight(highlight, highlightLayer)
       }
     })
-  }, [highlights, pageData, renderedPages, pageScale, hoveredHighlightId, connectingFrom])
+  }, [highlights, pageData, renderedPages, pageScale, hoveredHighlightId, connectingFrom, interactionMode])
 
   // Re-render highlights immediately when viewport resizes (e.g., dev tools open/close)
   // This runs independently of renderPages() for instant updates
@@ -7588,58 +7588,62 @@ function App() {
       div.style.width = width + 'px'
       div.style.height = height + 'px'
       div.style.backgroundColor = highlightBgColor
-      div.style.pointerEvents = 'auto' // Enable pointer events for hover
+      // In read mode, allow clicks to pass through to text spans below
+      // In highlight mode, enable pointer events for hover interactions
+      div.style.pointerEvents = interactionMode === 'read' ? 'none' : 'auto'
       div.style.zIndex = '10' // Higher z-index to be above text spans
       div.style.cursor = 'default'
       div.style.transition = 'border-color 0.2s ease'
       
-      // Add hover effect
-      const handleMouseEnter = (e) => {
-        e.stopPropagation()
-        // Don't show hover if we just completed a connection (give it a moment to clear)
-        setHoveredHighlightId(highlight.id)
-        div.style.border = `2px solid ${borderColor}`
-        div.style.borderRadius = '2px'
-        // Also show dots immediately
-        const dots = highlightLayer.querySelectorAll(`[data-highlight-id="${highlight.id}"][data-dot]`)
-        dots.forEach(dot => {
-          dot.style.opacity = '1'
-        })
-        
-        // Show tooltip (only if not connecting)
-        if (!connectingFrom) {
-          const rect = div.getBoundingClientRect()
-          const canvas = canvasRefs.current[highlight.page]
-          if (canvas) {
-            const canvasRect = canvas.getBoundingClientRect()
-            const tooltipX = rect.left - canvasRect.left + rect.width / 2
-            const tooltipY = rect.top - canvasRect.top - 7.5 // Position above the highlight (25% closer)
-            setShowTooltipFor({ highlightId: highlight.id, x: tooltipX, y: tooltipY, page: highlight.page })
+      // Add hover effect (only in highlight mode)
+      if (interactionMode === 'highlight') {
+        const handleMouseEnter = (e) => {
+          e.stopPropagation()
+          // Don't show hover if we just completed a connection (give it a moment to clear)
+          setHoveredHighlightId(highlight.id)
+          div.style.border = `2px solid ${borderColor}`
+          div.style.borderRadius = '2px'
+          // Also show dots immediately
+          const dots = highlightLayer.querySelectorAll(`[data-highlight-id="${highlight.id}"][data-dot]`)
+          dots.forEach(dot => {
+            dot.style.opacity = '1'
+          })
+          
+          // Show tooltip (only if not connecting)
+          if (!connectingFrom) {
+            const rect = div.getBoundingClientRect()
+            const canvas = canvasRefs.current[highlight.page]
+            if (canvas) {
+              const canvasRect = canvas.getBoundingClientRect()
+              const tooltipX = rect.left - canvasRect.left + rect.width / 2
+              const tooltipY = rect.top - canvasRect.top - 7.5 // Position above the highlight (25% closer)
+              setShowTooltipFor({ highlightId: highlight.id, x: tooltipX, y: tooltipY, page: highlight.page })
+            }
           }
         }
+        
+        div.addEventListener('mouseenter', handleMouseEnter)
+        div.addEventListener('mouseover', handleMouseEnter) // Also listen to mouseover
+        
+        div.addEventListener('mouseleave', (e) => {
+          e.stopPropagation()
+          // Use setTimeout to allow dot hover and tooltip hover to work
+          setTimeout(() => {
+            if (hoveredHighlightIdRef.current === highlight.id && !isHoveringTooltipRef.current) {
+              setHoveredHighlightId(null)
+              setShowTooltipFor(null) // Hide tooltip
+              const dots = highlightLayer.querySelectorAll(`[data-highlight-id="${highlight.id}"][data-dot]`)
+              dots.forEach(dot => {
+                // Only hide if not hovering over the dot itself
+                if (!dot.matches(':hover')) {
+                  dot.style.opacity = '0'
+                }
+              })
+            }
+          }, 200)
+          div.style.border = 'none'
+        })
       }
-      
-      div.addEventListener('mouseenter', handleMouseEnter)
-      div.addEventListener('mouseover', handleMouseEnter) // Also listen to mouseover
-      
-      div.addEventListener('mouseleave', (e) => {
-        e.stopPropagation()
-        // Use setTimeout to allow dot hover and tooltip hover to work
-        setTimeout(() => {
-          if (hoveredHighlightIdRef.current === highlight.id && !isHoveringTooltipRef.current) {
-            setHoveredHighlightId(null)
-            setShowTooltipFor(null) // Hide tooltip
-            const dots = highlightLayer.querySelectorAll(`[data-highlight-id="${highlight.id}"][data-dot]`)
-            dots.forEach(dot => {
-              // Only hide if not hovering over the dot itself
-              if (!dot.matches(':hover')) {
-                dot.style.opacity = '0'
-              }
-            })
-          }
-        }, 200)
-        div.style.border = 'none'
-      })
       
       highlightLayer.appendChild(div)
     })
@@ -7671,7 +7675,9 @@ function App() {
       leftDot.style.cursor = 'pointer'
       leftDot.style.opacity = '0'
       leftDot.style.transition = 'opacity 0.2s ease, transform 0.2s ease'
-      leftDot.style.pointerEvents = 'auto'
+      // In read mode, allow clicks to pass through to text spans below
+      // In highlight mode, enable pointer events for connection interactions
+      leftDot.style.pointerEvents = interactionMode === 'read' ? 'none' : 'auto'
       leftDot.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.3)'
       leftDot.style.border = '2px solid white'
       
@@ -7691,7 +7697,9 @@ function App() {
       rightDot.style.cursor = 'pointer'
       rightDot.style.opacity = '0'
       rightDot.style.transition = 'opacity 0.2s ease, transform 0.2s ease'
-      rightDot.style.pointerEvents = 'auto'
+      // In read mode, allow clicks to pass through to text spans below
+      // In highlight mode, enable pointer events for connection interactions
+      rightDot.style.pointerEvents = interactionMode === 'read' ? 'none' : 'auto'
       rightDot.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.3)'
       rightDot.style.border = '2px solid white'
       
