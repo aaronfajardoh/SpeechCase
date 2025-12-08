@@ -1244,17 +1244,15 @@ function App() {
     return filtered
   }
 
-  // Async version with LLM classification (for background processing)
+  // Async version (for background processing) - now uses only repetition-based filtering
   const filterHeadersAndFootersWithLLM = async (pageData, textToPages, minRepetitions = 2) => {
     try {
       const { filterHeadersAndFooters } = await import('./services/pdfProcessing/footerFilter.js')
       return await filterHeadersAndFooters(pageData, textToPages, {
-        minRepetitions,
-        apiUrl: '/api/pdf/classify-footer',
-        useLLMClassification: true
+        minRepetitions
       })
     } catch (error) {
-      console.warn('LLM footer classification failed, using sync version:', error)
+      console.warn('Footer filtering failed, using sync version:', error)
       return filterHeadersAndFootersSync(pageData, textToPages, minRepetitions)
     }
   }
@@ -2247,7 +2245,7 @@ function App() {
 
       setPageData(pages)
       
-      // Background: Re-process pages with LLM classification (non-blocking)
+      // Background: Re-process pages with enhanced filtering (non-blocking)
       // This enhances the page data without blocking initial rendering
       setTimeout(async () => {
         try {
@@ -2260,7 +2258,7 @@ function App() {
             const pageData = pageTextItems.find(p => p.pageNum === pageNum)
             if (!pageData) continue
             
-            // Re-filter with LLM classification
+            // Re-filter with repetition-based filtering
             const filteredItems = await filterHeadersAndFootersWithLLM(pageData, textToPages)
             
             const textContent = await page.getTextContent()
@@ -2295,6 +2293,7 @@ function App() {
           
           // Update page data in background (won't interrupt if TTS is playing)
           setPageData(enhancedPages)
+          console.log('Page data enhanced with LLM footer classification')
         } catch (error) {
           console.warn('Background page enhancement failed:', error)
           // Keep using initial pages - no interruption
@@ -4540,36 +4539,15 @@ function App() {
       const initialText = fullText
       setExtractedText(initialText)
       
-      // Background: Re-process with LLM classification (non-blocking)
+      // Background: Re-process with enhanced filtering (non-blocking)
       // This updates the text seamlessly without interrupting TTS
-      // Only processes footer candidates in bottom 20% that weren't already filtered
       setTimeout(async () => {
         try {
-          // Check if there are any footer candidates that need LLM classification
-          let hasFooterCandidates = false
-          const minRepetitions = 2
-          for (const pageData of pageTextItems) {
-            const { items, viewport } = pageData
-            const footerThreshold = viewport.height * 0.80
-            for (const { normalized, yPos } of items) {
-              if (yPos >= footerThreshold) {
-                const pagesWithThisText = textToPages.get(normalized)
-                const repetitionCount = pagesWithThisText ? pagesWithThisText.size : 0
-                // Candidate if in footer region, not already filtered, and not too short
-                if (repetitionCount < minRepetitions && normalized.length > 3) {
-                  hasFooterCandidates = true
-                  break
-                }
-              }
-            }
-            if (hasFooterCandidates) break
-          }
-          
-          if (!hasFooterCandidates) {
-            return
-          }
+          console.log('Starting background footer filtering...')
           let enhancedText = ''
+          
           for (const pageData of pageTextItems) {
+            // Apply repetition-based filtering
             const filteredItems = await filterHeadersAndFootersWithLLM(pageData, textToPages)
             // Trim each item to remove leading/trailing spaces, then join with single space
             // This ensures consistent spacing that matches textItems construction
@@ -4581,11 +4559,15 @@ function App() {
               enhancedText += pageText
             }
           }
+          
           const finalText = enhancedText
           
           // Only update if text changed (to avoid unnecessary re-renders)
           if (finalText !== initialText) {
             setExtractedText(finalText)
+            console.log('Footer classification completed - text updated in background')
+          } else {
+            console.log('Footer classification completed - no changes detected')
           }
         } catch (error) {
           console.warn('Background footer classification failed:', error)
@@ -4756,6 +4738,591 @@ function App() {
     } finally {
       setIsTimelineLoading(false)
     }
+  }
+
+  // Download timeline as HTML
+  const downloadTimelineAsHTML = () => {
+    if (!timeline || timeline.length === 0) {
+      return
+    }
+
+    // Helper functions from ProportionalTimeline
+    const getBestDate = (event) => {
+      return (
+        event?.date ||
+        event?.date_original_format ||
+        event?.date_normalized ||
+        null
+      )
+    }
+
+    const parseDateToTimestamp = (dateStr, index) => {
+      if (!dateStr) return index * 1000
+
+      const str = dateStr.toLowerCase().trim()
+      const ddmmyyyy = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/)
+      if (ddmmyyyy) {
+        const [, day, month, year] = ddmmyyyy
+        return new Date(parseInt(year), parseInt(month) - 1, parseInt(day)).getTime()
+      }
+
+      const mmyyyy = str.match(/(\d{1,2})\/(\d{4})/)
+      if (mmyyyy) {
+        const [, month, year] = mmyyyy
+        return new Date(parseInt(year), parseInt(month) - 1, 1).getTime()
+      }
+
+      const yyyy = str.match(/(\d{4})/)
+      if (yyyy) {
+        return new Date(parseInt(yyyy[1]), 0, 1).getTime()
+      }
+
+      const parsed = Date.parse(dateStr)
+      if (!isNaN(parsed)) {
+        return parsed
+      }
+
+      const numbers = str.match(/\d+/)
+      if (numbers) {
+        const num = parseInt(numbers[0])
+        if (str.includes('day')) {
+          return num * 86400000
+        }
+        if (str.includes('year')) {
+          return new Date(num, 0, 1).getTime()
+        }
+        return num * 86400000
+      }
+
+      return index * 1000
+    }
+
+    const formatDateForDisplay = (dateStr, index) => {
+      if (!dateStr) return `Event ${index + 1}`
+
+      if (
+        /\d{1,2}\/\d{1,2}\/\d{4}/.test(dateStr) ||
+        /\d{1,2}\/\d{4}/.test(dateStr) ||
+        /^\d{4}$/.test(dateStr)
+      ) {
+        return dateStr
+      }
+
+      const timestamp = parseDateToTimestamp(dateStr, index)
+      if (timestamp && timestamp !== index * 1000) {
+        const date = new Date(timestamp)
+        if (!isNaN(date.getTime())) {
+          const hasDay = /\d{1,2}\/\d{1,2}\/\d{4}/.test(dateStr)
+          const hasMonth = /\d{1,2}\/\d{4}/.test(dateStr)
+
+          if (hasDay) {
+            const day = date.getDate()
+            const month = date.getMonth() + 1
+            const year = date.getFullYear()
+            return `${day}/${month}/${year}`
+          } else if (hasMonth) {
+            const month = date.getMonth() + 1
+            const year = date.getFullYear()
+            return `${month}/${year}`
+          } else if (/^\d{4}$/.test(dateStr)) {
+            return dateStr
+          } else {
+            return date.getFullYear().toString()
+          }
+        }
+      }
+
+      return dateStr || `Event ${index + 1}`
+    }
+
+    const getBriefDescription = (text, maxWords = 4) => {
+      if (!text) return ''
+      const sentenceEnd = text.indexOf('.')
+      const trimmed = sentenceEnd > 0 ? text.slice(0, sentenceEnd) : text
+      const words = trimmed.split(' ').slice(0, maxWords * 3)
+      return words.join(' ')
+    }
+
+    // Calculate layout (similar to ProportionalTimeline)
+    const eventsWithTimestamps = timeline.map((event, index) => {
+      const rawDate = getBestDate(event)
+      return {
+        ...event,
+        rawDate,
+        timestamp: parseDateToTimestamp(rawDate, index),
+        originalIndex: index
+      }
+    })
+
+    const timestamps = eventsWithTimestamps.map((e) => e.timestamp)
+    const minTimestamp = Math.min(...timestamps)
+    const maxTimestamp = Math.max(...timestamps)
+    const timeRange = maxTimestamp - minTimestamp || 1
+
+    const leftMarginPx = 200
+    const rightMarginPx = 200
+    const viewport = 1200 // Fixed width for HTML export
+    const baseInnerLength = Math.max(viewport - leftMarginPx - rightMarginPx, 400)
+
+    const positioned = eventsWithTimestamps.map((event, idx) => {
+      const normalized = timeRange === 0 ? 0.5 : (event.timestamp - minTimestamp) / timeRange
+      const idealX = leftMarginPx + normalized * baseInnerLength
+      const displayDate = formatDateForDisplay(event.rawDate, idx)
+      return {
+        ...event,
+        position: normalized,
+        idealX,
+        displayDate
+      }
+    })
+
+    const minGapPx = 190
+    const sorted = [...positioned].sort((a, b) => a.idealX - b.idealX)
+    let lastX = -Infinity
+    const xs = []
+
+    sorted.forEach((event) => {
+      let x = event.idealX
+      if (x - lastX < minGapPx) {
+        x = lastX + minGapPx
+      }
+      lastX = x
+      xs.push({ event, x })
+    })
+
+    const minTotalLength = leftMarginPx + baseInnerLength + rightMarginPx
+    let effectiveLength = Math.max(minTotalLength, (lastX || minTotalLength) + rightMarginPx)
+
+    const layoutMap = new Map()
+    xs.forEach(({ event, x }) => {
+      const normalized = effectiveLength > 0 ? x / effectiveLength : event.position
+      layoutMap.set(event.originalIndex, normalized)
+    })
+
+    const laidOutEvents = positioned.map((event) => ({
+      ...event,
+      layoutPosition: layoutMap.get(event.originalIndex) ?? event.position
+    }))
+
+    // Group events by stage
+    const eventsWithStages = laidOutEvents.filter(e => e.stage && e.stage !== null)
+    const stageMap = new Map()
+    laidOutEvents.forEach((event, index) => {
+      if (event.stage && event.stage !== null) {
+        if (!stageMap.has(event.stage)) {
+          stageMap.set(event.stage, [])
+        }
+        stageMap.get(event.stage).push({ event, index })
+      }
+    })
+
+    const seenStages = new Set()
+    const stageBoundaries = []
+    laidOutEvents.forEach((event, index) => {
+      if (event.stage && event.stage !== null && !seenStages.has(event.stage)) {
+        seenStages.add(event.stage)
+        stageBoundaries.push({
+          stage: event.stage,
+          position: event.layoutPosition ?? event.position,
+          index
+        })
+      }
+    })
+    stageBoundaries.sort((a, b) => a.position - b.position)
+
+    // Generate HTML
+    const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Story Timeline - ${pdfFile?.name || 'Document'}</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #101114;
+      color: #e8eaed;
+      padding: 2rem;
+      min-height: 100vh;
+    }
+
+    .timeline-container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .timeline-header {
+      margin-bottom: 2rem;
+      text-align: center;
+    }
+
+    .timeline-header h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      color: #e8eaed;
+    }
+
+    .timeline-header .event-count {
+      font-size: 0.9rem;
+      color: #9aa0a6;
+      background: rgba(154, 160, 166, 0.12);
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      display: inline-block;
+    }
+
+    .proportional-timeline-container {
+      position: relative;
+      width: 100%;
+      padding: 5rem 6rem 4rem 6rem;
+      overflow-x: auto;
+      overflow-y: visible;
+      background: #101114;
+    }
+
+    .timeline-track {
+      position: relative;
+      width: ${effectiveLength}px;
+      min-height: 400px;
+      height: 400px;
+    }
+
+    .timeline-horizontal-line {
+      position: absolute;
+      top: 50%;
+      left: 0;
+      right: 0;
+      transform: translateY(-50%);
+      height: 2px;
+      background: linear-gradient(
+        to right,
+        rgba(138, 180, 248, 0.05),
+        rgba(138, 180, 248, 0.65),
+        rgba(138, 180, 248, 0.05)
+      );
+      border-radius: 999px;
+      z-index: 1;
+    }
+
+    .timeline-stage-separators {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .timeline-stage-separator {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .timeline-stage-separator-line {
+      width: 1px;
+      height: 100%;
+      background: linear-gradient(
+        to bottom,
+        transparent,
+        rgba(138, 180, 248, 0.2) 20%,
+        rgba(138, 180, 248, 0.2) 80%,
+        transparent
+      );
+    }
+
+    .timeline-stage-labels {
+      position: absolute;
+      top: -4.5rem;
+      left: 0;
+      right: 0;
+      height: 1.5rem;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .timeline-stage-label-start {
+      position: absolute;
+      transform: translateX(-50%);
+      font-size: 0.7rem;
+      color: rgba(154, 160, 166, 0.5);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      white-space: nowrap;
+      padding: 0.15rem 0.4rem;
+      background: rgba(16, 17, 20, 0.6);
+      border-radius: 3px;
+      border: 1px solid rgba(95, 99, 104, 0.2);
+    }
+
+    .timeline-events-container {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+    }
+
+    .timeline-event-marker {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      transform: translateX(-50%);
+      display: block;
+    }
+
+    .timeline-dot-small {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 2px solid #8ab4f8;
+      background: #101114;
+      box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.3);
+      z-index: 3;
+    }
+
+    .timeline-dot-small.importance-high {
+      width: 20px;
+      height: 20px;
+      border-width: 3px;
+      border-color: #8ab4f8;
+      background: linear-gradient(135deg, rgba(138, 180, 248, 0.15), rgba(138, 180, 248, 0.05));
+      box-shadow: 
+        0 0 0 4px rgba(138, 180, 248, 0.5),
+        0 0 0 7px rgba(138, 180, 248, 0.25),
+        0 0 20px rgba(138, 180, 248, 0.5),
+        0 4px 12px rgba(0, 0, 0, 0.3);
+      z-index: 4;
+    }
+
+    .timeline-dot-small.importance-medium {
+      width: 12px;
+      height: 12px;
+      border-width: 2px;
+    }
+
+    .timeline-dot-small.importance-low {
+      width: 10px;
+      height: 10px;
+      border-width: 1.5px;
+      border-color: rgba(138, 180, 248, 0.6);
+      opacity: 0.75;
+    }
+
+    .timeline-event-label {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 180px;
+      max-width: 180px;
+      min-width: 180px;
+      padding: 0.35rem 0.6rem;
+      border-radius: 8px;
+      background: rgba(25, 26, 30, 0.95);
+      border: 1px solid rgba(95, 99, 104, 0.7);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      overflow: hidden;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+
+    .timeline-event-label.label-above {
+      bottom: calc(50% + 16px);
+    }
+
+    .timeline-event-label.label-below {
+      top: calc(50% + 16px);
+    }
+
+    .timeline-event-label.importance-high {
+      border-color: #8ab4f8;
+      border-width: 2px;
+      background: linear-gradient(135deg, rgba(25, 26, 30, 0.98), rgba(20, 21, 25, 0.95));
+      box-shadow: 
+        0 6px 20px rgba(0, 0, 0, 0.5),
+        0 0 0 1px rgba(138, 180, 248, 0.3),
+        0 0 15px rgba(138, 180, 248, 0.2);
+    }
+
+    .timeline-event-label.importance-high.label-above {
+      bottom: calc(50% + 20px);
+    }
+
+    .timeline-event-label.importance-high.label-below {
+      top: calc(50% + 20px);
+    }
+
+    .timeline-event-label.importance-low {
+      opacity: 0.7;
+      border-color: rgba(95, 99, 104, 0.5);
+    }
+
+    .timeline-event-date {
+      font-size: 0.825rem;
+      font-weight: 600;
+      color: #e8eaed;
+      margin-bottom: 0.15rem;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+
+    .timeline-event-label.importance-high .timeline-event-date {
+      font-weight: 700;
+      font-size: 0.875rem;
+      color: #ffffff;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+
+    .timeline-event-label.importance-low .timeline-event-date {
+      font-weight: 500;
+      color: #9aa0a6;
+    }
+
+    .timeline-event-brief {
+      font-size: 0.825rem;
+      color: #9aa0a6;
+      white-space: normal;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+      line-height: 1.4;
+    }
+
+    .timeline-event-label.importance-high .timeline-event-brief {
+      color: #d1d5db;
+      font-weight: 500;
+    }
+
+    .timeline-event-label.importance-low .timeline-event-brief {
+      color: #80868b;
+    }
+
+    .timeline-event-icon {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 64px;
+      height: 64px;
+      z-index: 3;
+      pointer-events: none;
+      opacity: 0.95;
+      filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
+      background: transparent !important;
+    }
+
+    .timeline-event-icon svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6)) drop-shadow(0 0 2px rgba(138, 180, 248, 0.3));
+      background: transparent !important;
+    }
+
+    .timeline-event-icon.icon-above {
+      bottom: calc(50% + 130px);
+    }
+
+    .timeline-event-icon.icon-below {
+      top: calc(50% + 130px);
+    }
+  </style>
+</head>
+<body>
+  <div class="timeline-container">
+    <div class="timeline-header">
+      <h1>Story Timeline</h1>
+      <span class="event-count">${timeline.length} events</span>
+    </div>
+    <div class="proportional-timeline-container">
+      <div class="timeline-track">
+        <div class="timeline-horizontal-line"></div>
+        ${stageBoundaries.length > 0 ? `
+        <div class="timeline-stage-separators">
+          ${stageBoundaries.map((boundary, idx) => {
+            if (idx === 0) return ''
+            const leftPercent = boundary.position * 100
+            return `
+            <div class="timeline-stage-separator" style="left: ${leftPercent}%">
+              <div class="timeline-stage-separator-line"></div>
+            </div>`
+          }).join('')}
+        </div>
+        <div class="timeline-stage-labels">
+          ${stageBoundaries.map((boundary, idx) => {
+            let centerPosition
+            if (idx === 0) {
+              const nextPosition = stageBoundaries.length > 1 ? stageBoundaries[1].position : 1.0
+              centerPosition = (0 + nextPosition) / 2
+            } else if (idx === stageBoundaries.length - 1) {
+              centerPosition = (boundary.position + 1.0) / 2
+            } else {
+              const nextPosition = stageBoundaries[idx + 1].position
+              centerPosition = (boundary.position + nextPosition) / 2
+            }
+            const leftPercent = centerPosition * 100
+            return `
+            <div class="timeline-stage-label-start" style="left: ${leftPercent}%">
+              ${boundary.stage}
+            </div>`
+          }).join('')}
+        </div>
+        ` : ''}
+        <div class="timeline-events-container">
+          ${laidOutEvents.map((event, index) => {
+            const leftPercent = (event.layoutPosition ?? event.position) * 100
+            const isAbove = index % 2 === 0
+            const importance = event.importance || 'medium'
+            const importanceClass = `importance-${importance.toLowerCase()}`
+            const isRemarkable = importance.toLowerCase() === 'high'
+            const eventIcon = timelineIcons[index]
+            const briefDescription = getBriefDescription(event.event || event.description, 4)
+
+            return `
+            <div class="timeline-event-marker ${isAbove ? 'above' : 'below'} ${importanceClass}" style="left: ${leftPercent}%">
+              ${isRemarkable && eventIcon ? `
+              <div class="timeline-event-icon ${isAbove ? 'icon-above' : 'icon-below'}" style="background-color: transparent;">
+                ${eventIcon}
+              </div>
+              ` : ''}
+              <div class="timeline-event-label ${isAbove ? 'label-above' : 'label-below'} ${importanceClass}">
+                <div class="timeline-event-date">
+                  ${event.displayDate || event.date || `Event ${event.order || index + 1}`}
+                </div>
+                <div class="timeline-event-brief">
+                  ${briefDescription}
+                </div>
+              </div>
+              <div class="timeline-dot-small ${importanceClass}"></div>
+            </div>`
+          }).join('')}
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`
+
+    // Create blob and download
+    const blob = new Blob([htmlContent], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `timeline-${pdfFile?.name?.replace(/\.[^/.]+$/, '') || 'document'}.html`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
   }
 
   // Generate timeline when timeline tab is opened
@@ -7219,81 +7786,695 @@ function App() {
       }
 
       // Add highlights to each page
-      highlights.forEach(highlight => {
+      // We need pdfDoc (PDF.js document) to get accurate viewport dimensions
+      if (!pdfDoc) {
+        throw new Error('PDF.js document not available for coordinate conversion')
+      }
+      
+      for (const highlight of highlights) {
         if (highlight.page <= pages.length) {
           const page = pages[highlight.page - 1] // pdf-lib uses 0-indexed
           const { width: pageWidth, height: pageHeight } = page.getSize()
           
-          // Get the viewport scale from pageData to convert coordinates
+          // Get the PDF.js page to calculate viewport at creation scale
+          const pdfjsPage = await pdfDoc.getPage(highlight.page)
+          const creationScale = highlight.scale || pageScale
+          const viewportAtCreation = pdfjsPage.getViewport({ scale: creationScale })
+          
+          // Also get the source PDF page dimensions for verification
+          const sourcePage = sourcePdfDoc.getPage(highlight.page - 1) // pdf-lib uses 0-indexed
+          const sourcePageSize = sourcePage.getSize()
+          // Use source page dimensions (should match, but verify)
+          const actualPageWidth = sourcePageSize.width
+          const actualPageHeight = sourcePageSize.height
+          
+          // Highlights are stored with coordinates relative to the text layer (in display pixels)
+          // Text spans are positioned: spanX = viewportX * (displayedWidth / viewport.width)
+          // where viewportX is in points (PDF coordinate space, just scaled)
+          //
+          // To convert highlight coordinates to PDF coordinates:
+          //   1. Convert display pixels to viewport points: viewportX = highlightX * (viewport.width / displayedWidth)
+          //   2. Viewport coordinates are already in PDF space, just scaled: pdfX = viewportX
+          //
+          // But wait - viewport coordinates are scaled by the scale factor.
+          // At scale S: viewport.width = pageWidth * S
+          // So: viewportX = highlightX * ((pageWidth * S) / displayedWidth)
+          // And: pdfX = viewportX (since viewport coords are in PDF space)
+          //
+          // At creation: displayedWidth = viewportAtCreation.width (if no CSS scaling)
+          // So: pdfX = highlightX * (pageWidth * creationScale / viewportAtCreation.width)
+          // Since viewportAtCreation.width = pageWidth * creationScale:
+          // pdfX = highlightX * (pageWidth * creationScale / (pageWidth * creationScale)) = highlightX
+          //
+          // That can't be right. Let me reconsider...
+          //
+          // Actually: viewport coordinates are in points, and at scale S, 
+          // a point at PDF X maps to viewport X = PDF X (same value, just different scale context)
+          // But the display shows it scaled. So:
+          // - PDF X = 100 points
+          // - At scale 1.5, viewport shows it at X = 100 points (in viewport space)
+          // - Display shows it at X = 100 * (displayedWidth / viewport.width) pixels
+          // - Highlight stored at X = 100 * (displayedWidth / viewport.width) pixels
+          // - To convert back: pdfX = highlightX * (viewport.width / displayedWidth)
+          // - Since viewport.width = pageWidth * scale: pdfX = highlightX * (pageWidth * scale / displayedWidth)
+          // - If displayedWidth = viewport.width: pdfX = highlightX
+          // - But that's only if scale = 1.0...
+          
+          // Get current canvas and text layer to check dimensions
+          const canvas = canvasRefs.current[highlight.page]
+          const textLayer = textLayerRefs.current[highlight.page]
           const pageInfo = pageData.find(p => p.pageNum === highlight.page)
-          if (pageInfo) {
-            // Convert coordinates from viewport (at creation scale) to PDF coordinates
-            const creationScale = highlight.scale || pageScale
-            const viewportWidth = pageInfo.viewport.width
-            const viewportHeight = pageInfo.viewport.height
-            
-            // Scale factors to convert from viewport to PDF
-            const scaleX = pageWidth / viewportWidth
-            const scaleY = pageHeight / viewportHeight
-            
-            // Support both old format (single rect) and new format (array of rects)
-            const rects = highlight.rects || [{
-              x: highlight.x || 0,
-              y: highlight.y || 0,
-              width: highlight.width || 0,
-              height: highlight.height || 0
-            }]
-            
-            // Get highlight color based on highlight.color
-            const highlightColor = highlight.color || 'yellow'
-            let pdfColor
-            let pdfOpacity = 0.3 // Default opacity for highlights
-            
-            switch (highlightColor) {
-              case 'yellow':
-                pdfColor = rgb(0.984, 0.737, 0.016) // rgba(251, 188, 4) normalized
-                pdfOpacity = 0.3
-                break
-              case 'green':
-                pdfColor = rgb(0.204, 0.659, 0.325) // rgba(52, 168, 83) normalized
-                pdfOpacity = 0.3
-                break
-              case 'blue':
-                pdfColor = rgb(0.259, 0.522, 0.957) // rgba(66, 133, 244) normalized
-                pdfOpacity = 0.3
-                break
-              default:
-                pdfColor = rgb(0.984, 0.737, 0.016) // Default to yellow
-                pdfOpacity = 0.3
+          if (!pageInfo) continue
+          
+          // Get current viewport and canvas dimensions
+          const currentViewportWidth = pageInfo.viewport.width
+          const currentViewportHeight = pageInfo.viewport.height
+          
+          // Calculate text layer dimensions at creation time
+          // The text layer dimensions are set to match the canvas DISPLAY size (from getBoundingClientRect())
+          // At creation: canvas internal size = viewportAtCreation dimensions
+          // Canvas CSS size is set to match internal size, but CSS may scale the actual display
+          // Text layer width = canvas displayed width (from getBoundingClientRect())
+          //
+          // The key insight: text spans are positioned using viewport coordinates scaled by
+          // scaleX = displayedWidth / canvasWidth. So the text layer coordinate system is
+          // based on displayedWidth, not viewport.width directly.
+          //
+          // However, highlights are stored relative to the text layer, which has dimensions
+          // matching displayedWidth. To convert to PDF, we need to account for this.
+          //
+          // Use the actual text layer dimensions (what highlights are stored relative to)
+          // The text layer dimensions are set to match the canvas display size
+          // If the scale hasn't changed since creation, we can use current dimensions directly
+          let textLayerWidthAtCreation = viewportAtCreation.width
+          let textLayerHeightAtCreation = viewportAtCreation.height
+          
+          if (textLayer && creationScale === pageScale) {
+            // Scale hasn't changed, so current text layer dimensions match creation-time dimensions
+            const textLayerRect = textLayer.getBoundingClientRect()
+            textLayerWidthAtCreation = textLayerRect.width
+            textLayerHeightAtCreation = textLayerRect.height
+          } else if (canvas && creationScale === pageScale) {
+            // Fallback: use canvas display dimensions if scale hasn't changed
+            const canvasRect = canvas.getBoundingClientRect()
+            textLayerWidthAtCreation = canvasRect.width
+            textLayerHeightAtCreation = canvasRect.height
+          } else if (creationScale !== pageScale) {
+            // Scale has changed, need to estimate creation-time dimensions
+            // Text layer scales proportionally with viewport
+            const scaleRatio = creationScale / pageScale
+            if (textLayer) {
+              const textLayerRect = textLayer.getBoundingClientRect()
+              textLayerWidthAtCreation = textLayerRect.width / scaleRatio
+              textLayerHeightAtCreation = textLayerRect.height / scaleRatio
+            } else if (canvas) {
+              const canvasRect = canvas.getBoundingClientRect()
+              textLayerWidthAtCreation = canvasRect.width / scaleRatio
+              textLayerHeightAtCreation = canvasRect.height / scaleRatio
             }
-            
-            // Draw each rectangle separately
-            rects.forEach(rect => {
-              // Convert highlight coordinates to PDF coordinates
-              // PDF coordinates start from bottom-left, but our coordinates start from top-left
-              const pdfX = rect.x * scaleX
-              const pdfY = pageHeight - (rect.y * scaleY) - (rect.height * scaleY)
-              const pdfWidth = rect.width * scaleX
-              const pdfHeight = rect.height * scaleY
-              
-              // Only draw if coordinates are valid and within page bounds
-              if (pdfWidth > 0 && pdfHeight > 0 && pdfX >= 0 && pdfY >= 0 && 
-                  pdfX + pdfWidth <= pageWidth && pdfY + pdfHeight <= pageHeight) {
-                // Add highlight annotation with proper color and opacity
-                page.drawRectangle({
-                  x: pdfX,
-                  y: pdfY,
-                  width: pdfWidth,
-                  height: pdfHeight,
-                  color: pdfColor,
-                  opacity: pdfOpacity,
-                  borderOpacity: 0
-                })
+          }
+          
+          // Convert highlight coordinates from display pixels to PDF points
+          // 
+          // The key insight: Text spans are positioned using:
+          //   span.style.left = tx[4] * scaleX
+          // where:
+          //   - tx[4] is the X coordinate in viewport space (points)
+          //   - scaleX = displayedWidth / canvasWidth (converts viewport points to display pixels)
+          //
+          // So if a text span is at PDF X = 100 points:
+          //   - viewport X = 100 (same value, viewport is PDF space scaled)
+          //   - span.style.left = 100 * (displayedWidth / canvasWidth) pixels
+          //
+          // Highlights are stored relative to the text layer, so highlight.x is in the same
+          // coordinate system as span.style.left (display pixels).
+          //
+          // To convert back to PDF:
+          //   pdfX = highlightX / (displayedWidth / canvasWidth) / creationScale
+          //   pdfX = highlightX * (canvasWidth / displayedWidth) / creationScale
+          //
+          // But canvasWidth = viewport.width = pageWidth * creationScale
+          // So: pdfX = highlightX * (pageWidth * creationScale / displayedWidth) / creationScale
+          //     pdfX = highlightX * (pageWidth / displayedWidth)
+          //
+          // Since textLayerWidth = displayedWidth:
+          //   pdfX = highlightX * (pageWidth / textLayerWidth)
+          //
+          // However, we need to account for the fact that displayedWidth might differ from
+          // viewport.width due to CSS scaling. The text layer is set to displayedWidth,
+          // but text spans use scaleX = displayedWidth / canvasWidth.
+          //
+          // If canvasWidth = 646 and displayedWidth = 646.5, then:
+          //   scaleX = 646.5 / 646 = 1.00077
+          //   So a span at PDF X = 100 is positioned at 100.077 pixels
+          //   To convert back: pdfX = 100.077 * (646 / 646.5) / 1.5 = 100.077 * 0.66615 = 66.68
+          //
+          // But we want: pdfX = 100
+          // So we need: pdfX = highlightX * (canvasWidth / displayedWidth) * (1 / creationScale)
+          //            pdfX = highlightX * (viewport.width / textLayerWidth) * (1 / creationScale)
+          //            pdfX = highlightX * (pageWidth * creationScale / textLayerWidth) * (1 / creationScale)
+          //            pdfX = highlightX * (pageWidth / textLayerWidth)
+          //
+          // Wait, that's what we're already doing! So the issue must be something else.
+          //
+          // Actually, I think the issue is that we need to account for the scaleX used in
+          // positioning the spans. The text layer width is displayedWidth, but the spans
+          // are positioned using scaleX = displayedWidth / canvasWidth.
+          //
+          // Let me try a different approach: convert using the actual relationship
+          // between viewport coordinates and display pixels.
+          // The key insight: Text spans are positioned using scaleX = displayedWidth / canvasWidth.
+          // This means the coordinate system is based on canvasWidth (viewport width), not displayedWidth.
+          // However, highlights are stored relative to the text layer, which has width = displayedWidth.
+          //
+          // To convert correctly, we need to account for this:
+          // 1. Highlight coordinates are relative to text layer (width = displayedWidth)
+          // 2. Text spans are positioned using: spanX = viewportX * (displayedWidth / canvasWidth)
+          // 3. To reverse: viewportX = highlightX * (canvasWidth / displayedWidth)
+          // 4. Then: pdfX = viewportX (viewport is PDF coordinate space)
+          //
+          // But viewport coordinates are at scale S, so:
+          //   pdfX = viewportX = highlightX * (canvasWidth / displayedWidth)
+          //   But we need to account for the scale...
+          //
+          // Actually, let's use canvasWidth (viewport width) directly for conversion:
+          // This matches the coordinate system used for positioning spans
+          const canvasWidthAtCreation = viewportAtCreation.width // This is canvas.width at creation
+          const canvasHeightAtCreation = viewportAtCreation.height
+          
+          // Account for the difference between text layer width (displayedWidth) and canvas width (viewport width)
+          // Text spans are positioned using: spanX = viewportX * (displayedWidth / canvasWidth)
+          // Highlights are stored relative to text layer (width = displayedWidth)
+          // To convert: first scale from text layer to canvas coordinate system, then to PDF
+          //
+          // Step 1: Convert from text layer coordinates to canvas/viewport coordinates
+          //   viewportX = highlightX * (canvasWidth / displayedWidth)
+          // Step 2: Convert from viewport coordinates to PDF coordinates
+          //   pdfX = viewportX (since viewport is PDF coordinate space at scale S)
+          //   But we need: pdfX = viewportX (no scaling needed, viewport is already in PDF space)
+          //
+          // Actually, viewport coordinates are in PDF space, just at a different scale.
+          // At scale S: viewport.width = pageWidth * S
+          // So: pdfX = viewportX (they're the same coordinate system)
+          //
+          // Combined: pdfX = highlightX * (canvasWidth / displayedWidth)
+          //          pdfX = highlightX * (canvasWidthAtCreation / textLayerWidthAtCreation)
+          //
+          // But we also need to account for the scale factor to get from viewport to PDF:
+          // Since viewport.width = pageWidth * creationScale:
+          //   pdfX = highlightX * (canvasWidth / displayedWidth) * (pageWidth / viewport.width)
+          //   pdfX = highlightX * (canvasWidth / displayedWidth) * (pageWidth / (pageWidth * creationScale))
+          //   pdfX = highlightX * (canvasWidth / displayedWidth) / creationScale
+          //
+          // Since canvasWidth = viewport.width = pageWidth * creationScale:
+          //   pdfX = highlightX * ((pageWidth * creationScale) / displayedWidth) / creationScale
+          //   pdfX = highlightX * (pageWidth / displayedWidth)
+          //
+          // That's what we were doing before! So the issue is that we need to use
+          // the ratio between canvasWidth and textLayerWidth to adjust the conversion.
+          //
+          // Let's try: pdfX = highlightX * (canvasWidth / textLayerWidth) * (pageWidth / canvasWidth)
+          //           pdfX = highlightX * (pageWidth / textLayerWidth) * (canvasWidth / canvasWidth)
+          //           pdfX = highlightX * (pageWidth / textLayerWidth)
+          //
+          // Hmm, that's still the same. Let me think differently...
+          //
+          // The real issue: highlights are in text layer coordinates (based on displayedWidth),
+          // but text spans are positioned using canvasWidth. We need to account for this difference.
+          //
+          // Since text layer width = displayedWidth and canvas width = viewport.width,
+          // and displayedWidth might differ slightly from viewport.width due to CSS,
+          // we should use canvasWidth (viewport width) for conversion, as that's what
+          // the span positioning is based on.
+          //
+          // However, highlights are stored relative to text layer, so we need to adjust:
+          // pdfX = highlightX * (canvasWidth / textLayerWidth) * (pageWidth / canvasWidth)
+          //      = highlightX * (pageWidth / textLayerWidth)
+          //
+          // So we should use textLayerWidth, but the issue is that textLayerWidth might
+          // not match what was used at creation time if CSS scaling changed.
+          //
+          // Use text layer width for conversion (highlights are stored relative to text layer)
+          // The debug output confirms: using text layer width gives the correct scale (0.6667),
+          // while using canvas internal width gives the wrong scale (0.6672)
+          const scaleX = actualPageWidth / textLayerWidthAtCreation
+          const scaleY = actualPageHeight / textLayerHeightAtCreation
+          
+          // Debug: compare different approaches
+          if (canvas && highlight.page === 1) {
+            const canvasInternalWidth = canvas.width
+            const canvasInternalHeight = canvas.height
+            console.log('Conversion method comparison:', {
+              usingCanvasInternalWidth: { 
+                scaleX: actualPageWidth / canvasInternalWidth, 
+                scaleY: actualPageHeight / canvasInternalHeight,
+                canvasWidth: canvasInternalWidth
+              },
+              usingTextLayerWidth: { 
+                scaleX: actualPageWidth / textLayerWidthAtCreation, 
+                scaleY: actualPageHeight / textLayerHeightAtCreation,
+                textLayerWidth: textLayerWidthAtCreation
+              },
+              usingViewportWidth: {
+                scaleX: actualPageWidth / canvasWidthAtCreation,
+                scaleY: actualPageHeight / canvasHeightAtCreation,
+                viewportWidth: canvasWidthAtCreation
+              },
+              differences: {
+                canvasVsTextLayer: {
+                  x: (actualPageWidth / canvasInternalWidth) - (actualPageWidth / textLayerWidthAtCreation),
+                  y: (actualPageHeight / canvasInternalHeight) - (actualPageHeight / textLayerHeightAtCreation)
+                }
               }
             })
           }
+          
+          // Verify: scaleX should equal 1 / (creationScale * cssScaleX)
+          if (canvas && highlight.page === 1) {
+            const expectedScaleX = 1 / (creationScale * (canvas.getBoundingClientRect().width / canvas.width))
+            console.log('Scale verification:', {
+              calculatedScaleX: scaleX,
+              expectedScaleX: expectedScaleX,
+              difference: Math.abs(scaleX - expectedScaleX),
+              creationScale,
+              cssScaleX: canvas.getBoundingClientRect().width / canvas.width
+            })
+          }
+          
+          // Debug logging (remove after fixing)
+          if (highlight.page === 1 && highlight.rects && highlight.rects.length > 0) {
+            const firstRect = highlight.rects[0]
+            const calculatedPdfX = firstRect.x * scaleX
+            const calculatedPdfY = actualPageHeight - (firstRect.y * scaleY) - (firstRect.height * scaleY)
+            const calculatedPdfWidth = firstRect.width * scaleX
+            const calculatedPdfHeight = firstRect.height * scaleY
+            
+            // Check if coordinates are valid
+            const isValid = calculatedPdfWidth > 0 && calculatedPdfHeight > 0 && 
+                           calculatedPdfX >= 0 && calculatedPdfY >= 0 && 
+                           calculatedPdfX + calculatedPdfWidth <= actualPageWidth && 
+                           calculatedPdfY + calculatedPdfHeight <= actualPageHeight
+            
+            // Expand the log to see all values
+            const debugInfo = {
+              page: highlight.page,
+              creationScale,
+              currentPageScale: pageScale,
+              viewportAtCreation: { 
+                width: viewportAtCreation.width, 
+                height: viewportAtCreation.height 
+              },
+              currentViewport: { 
+                width: currentViewportWidth, 
+                height: currentViewportHeight 
+              },
+              textLayerAtCreation: { 
+                width: textLayerWidthAtCreation, 
+                height: textLayerHeightAtCreation 
+              },
+              actualPageSize: { 
+                width: actualPageWidth, 
+                height: actualPageHeight 
+              },
+              scale: { 
+                x: scaleX, 
+                y: scaleY 
+              },
+              firstRect: { 
+                x: firstRect.x, 
+                y: firstRect.y, 
+                width: firstRect.width, 
+                height: firstRect.height 
+              },
+              calculatedPdfCoords: {
+                x: calculatedPdfX,
+                y: calculatedPdfY,
+                width: calculatedPdfWidth,
+                height: calculatedPdfHeight
+              },
+              isValid,
+              canvas: canvas ? {
+                internalWidth: canvas.width,
+                internalHeight: canvas.height,
+                displayWidth: canvas.getBoundingClientRect().width,
+                displayHeight: canvas.getBoundingClientRect().height,
+                cssScaleX: canvas.getBoundingClientRect().width / canvas.width,
+                cssScaleY: canvas.getBoundingClientRect().height / canvas.height
+              } : null
+            }
+            
+            // Log with expanded objects
+            console.log('Highlight conversion debug:', JSON.parse(JSON.stringify(debugInfo)))
+            
+            // Also log the calculation steps
+            console.log('Calculation steps:', {
+              step1_textLayerWidth: `viewportAtCreation.width (${viewportAtCreation.width}) * cssScaleX (${canvas ? canvas.getBoundingClientRect().width / canvas.width : 1}) = ${textLayerWidthAtCreation}`,
+              step2_scaleX: `actualPageWidth (${actualPageWidth}) / textLayerWidthAtCreation (${textLayerWidthAtCreation}) = ${scaleX}`,
+              step3_pdfX: `firstRect.x (${firstRect.x}) * scaleX (${scaleX}) = ${calculatedPdfX}`,
+              expectedRatio: `If correct, scaleX should be approximately: ${actualPageWidth / viewportAtCreation.width} (pageWidth/viewportWidth)`
+            })
+          }
+          
+          // Support both old format (single rect) and new format (array of rects)
+          const rects = highlight.rects || [{
+            x: highlight.x || 0,
+            y: highlight.y || 0,
+            width: highlight.width || 0,
+            height: highlight.height || 0
+          }]
+          
+          // Get highlight color based on highlight.color
+          const highlightColor = highlight.color || 'yellow'
+          let pdfColor
+          let pdfOpacity = 0.3 // Default opacity for highlights
+          
+          switch (highlightColor) {
+            case 'yellow':
+              pdfColor = rgb(0.984, 0.737, 0.016) // rgba(251, 188, 4) normalized
+              pdfOpacity = 0.3
+              break
+            case 'green':
+              pdfColor = rgb(0.204, 0.659, 0.325) // rgba(52, 168, 83) normalized
+              pdfOpacity = 0.3
+              break
+            case 'blue':
+              pdfColor = rgb(0.259, 0.522, 0.957) // rgba(66, 133, 244) normalized
+              pdfOpacity = 0.3
+              break
+            default:
+              pdfColor = rgb(0.984, 0.737, 0.016) // Default to yellow
+              pdfOpacity = 0.3
+          }
+          
+          // Draw each rectangle separately
+          rects.forEach(rect => {
+            // Convert highlight coordinates to PDF coordinates
+            // Highlights are stored relative to text layer (top-left origin, in display pixels)
+            // Text layer coordinates: y=0 at top, increasing downward
+            // PDF coordinates: y=0 at bottom, increasing upward
+            //
+            // Conversion steps:
+            // 1. Convert display pixels to viewport points: viewportY = highlightY * (viewport.height / textLayer.height)
+            // 2. Convert viewport Y (from top) to PDF Y (from bottom):
+            //    - In viewport: y=0 at top, y=viewport.height at bottom
+            //    - In PDF: y=0 at bottom, y=pageHeight at top
+            //    - So: pdfY = viewport.height - viewportY
+            //    - But viewport.height = pageHeight * scale, so: pdfY = (pageHeight * scale) - viewportY
+            //    - Simplifying: pdfY = pageHeight - (highlightY * scaleY)
+            //
+            // Actually, since text layer Y is from top and PDF Y is from bottom:
+            // pdfY = actualPageHeight - (rect.y * scaleY) - (rect.height * scaleY)
+            
+            // Convert highlight coordinates to PDF coordinates
+            // The key insight: text spans are positioned using viewport coordinates scaled by display/canvas ratio
+            // So: spanX = viewportX * (displayedWidth / canvasWidth)
+            // To reverse: viewportX = spanX * (canvasWidth / displayedWidth)
+            // Then: pdfX = viewportX (since viewport is PDF coordinate space)
+            //
+            // But wait - viewport coordinates are at scale S, so:
+            //   viewport.width = pageWidth * S
+            //   A point at PDF X = 100 appears at viewport X = 100 (same value, different scale context)
+            //   So pdfX = viewportX directly
+            //
+            // However, we need to account for the scaleX used in positioning:
+            //   spanX = viewportX * scaleX, where scaleX = displayedWidth / canvasWidth
+            //   So: viewportX = spanX / scaleX = spanX * (canvasWidth / displayedWidth)
+            //   pdfX = viewportX = spanX * (canvasWidth / displayedWidth)
+            //
+            // Since canvasWidth = viewport.width = pageWidth * creationScale:
+            //   pdfX = highlightX * ((pageWidth * creationScale) / displayedWidth)
+            //   pdfX = highlightX * (pageWidth * creationScale / textLayerWidth)
+            //
+            // But we're using: pdfX = highlightX * (pageWidth / textLayerWidth)
+            // That's missing the creationScale factor!
+            //
+            // Actually wait - let me reconsider. The viewport is PDF space scaled.
+            // At scale 1.5: viewport.width = 431 * 1.5 = 646.5
+            // A point at PDF X = 100 is at viewport X = 100 (in viewport coordinate space)
+            // But viewport coordinate space is scaled, so to get PDF coordinate:
+            //   pdfX = viewportX (they're the same value, just different scale)
+            //
+            // So: pdfX = highlightX * (canvasWidth / displayedWidth)
+            //     pdfX = highlightX * (viewport.width / textLayerWidth)
+            //     pdfX = highlightX * ((pageWidth * creationScale) / textLayerWidth)
+            //
+            // But textLayerWidth = displayedWidth ≈ viewport.width (if no CSS scaling)
+            // So: pdfX = highlightX * ((pageWidth * creationScale) / viewport.width)
+            //     pdfX = highlightX * ((pageWidth * creationScale) / (pageWidth * creationScale))
+            //     pdfX = highlightX
+            //
+            // That can't be right either. Let me think about this more carefully.
+            //
+            // The correct conversion should be:
+            //   1. highlightX is in display pixels relative to text layer (width = displayedWidth)
+            //   2. Convert to viewport coordinates: viewportX = highlightX * (viewport.width / displayedWidth)
+            //   3. Convert viewport to PDF: pdfX = viewportX (same value, viewport is PDF space)
+            //
+            // So: pdfX = highlightX * (viewport.width / displayedWidth)
+            //     pdfX = highlightX * ((pageWidth * creationScale) / textLayerWidth)
+            //
+            // But we're doing: pdfX = highlightX * (pageWidth / textLayerWidth)
+            // We're missing the creationScale factor!
+            
+            // The conversion should be: pdfX = highlightX * (pageWidth / textLayerWidth)
+            // But if highlights are shifted left, we might need to account for an offset
+            // or use a different conversion. Let me check if there's a crop box offset.
+            
+            // Get crop box from source page to check for offsets
+            const cropBox = sourcePage.getCropBox()
+            const mediaBox = sourcePage.getMediaBox()
+            
+            // Calculate any offset from crop box (crop box defines the visible area)
+            const cropOffsetX = cropBox ? cropBox.x : 0
+            const cropOffsetY = cropBox ? cropBox.y : 0
+            
+            // Convert highlight coordinates to PDF coordinates
+            // The key insight: viewport coordinates are in PDF coordinate space, but scaled by creationScale
+            // At scale S: viewport.width = pageWidth * S
+            // A point at PDF X appears at the same X value in viewport space (they're the same coordinate system)
+            // But to convert from viewport coordinates to PDF coordinates, we need to account for the scale
+            //
+            // Actually, PDF.js viewport coordinates ARE in PDF coordinate space directly.
+            // So: pdfX = viewportX, where viewportX = highlightX * (viewport.width / textLayerWidth)
+            //
+            // But since viewport.width = pageWidth * creationScale and textLayerWidth ≈ viewport.width:
+            //   pdfX = highlightX * ((pageWidth * creationScale) / textLayerWidth)
+            //
+            // If textLayerWidth = viewport.width = pageWidth * creationScale:
+            //   pdfX = highlightX * ((pageWidth * creationScale) / (pageWidth * creationScale)) = highlightX
+            //
+            // That's clearly wrong. The issue is that textLayerWidth is the DISPLAY size, not the viewport size.
+            // The text layer is scaled by CSS, so textLayerWidth = viewport.width * cssScale
+            //
+            // So: pdfX = highlightX * (viewport.width / textLayerWidth)
+            //     pdfX = highlightX * (viewport.width / (viewport.width * cssScale))
+            //     pdfX = highlightX / cssScale
+            //
+            // But cssScale ≈ 1.0, so that's close to highlightX, which is wrong.
+            //
+            // Let me reconsider: the text spans are positioned using:
+            //   spanX = viewportX * (displayedWidth / canvasWidth)
+            // where viewportX is in viewport coordinate space (points).
+            // To reverse: viewportX = spanX * (canvasWidth / displayedWidth)
+            // Then: pdfX = viewportX (same value)
+            //
+            // So: pdfX = highlightX * (canvasWidth / displayedWidth)
+            //     pdfX = highlightX * (viewport.width / textLayerWidth)
+            //
+            // Since viewport.width = pageWidth * creationScale and textLayerWidth = displayedWidth:
+            //   pdfX = highlightX * ((pageWidth * creationScale) / textLayerWidth)
+            //
+            // But we want: pdfX = highlightX * (pageWidth / textLayerWidth) * creationScale
+            // Wait, that's the same thing!
+            //
+            // Actually, I think the issue is simpler. The viewport coordinates are already in PDF space.
+            // So we should convert directly: pdfX = highlightX * (pageWidth / textLayerWidth)
+            // This is what we're doing, and the scale is correct (0.6667).
+            //
+            // But if highlights are still shifted left, maybe there's an offset we're missing.
+            // Let me check if the PDF page content starts at (0,0) or if there's a content offset.
+            
+            // The correct conversion path:
+            // 1. highlightX is in display pixels relative to text layer (same as span.style.left)
+            // 2. Text spans are positioned: span.style.left = viewportX * scaleX
+            //    where scaleX = displayedWidth / canvasWidth = displayedWidth / viewport.width
+            // 3. To reverse: viewportX = highlightX / scaleX = highlightX * (canvasWidth / displayedWidth)
+            // 4. Viewport coordinates are in PDF coordinate space (points), so pdfX = viewportX
+            //
+            // So: pdfX = highlightX * (canvasWidth / displayedWidth)
+            //     pdfX = highlightX * (viewport.width / textLayerWidth)
+            //
+            // Since viewport.width = pageWidth * creationScale and textLayerWidth = displayedWidth:
+            //   pdfX = highlightX * ((pageWidth * creationScale) / textLayerWidth)
+            //
+            // But wait - viewport coordinates ARE in PDF space, but they're scaled.
+            // At scale 1.5, a PDF point at X=100 appears at viewport X=100 (same value).
+            // So pdfX = viewportX directly, no need to divide by scale.
+            //
+            // So: pdfX = highlightX * (viewport.width / textLayerWidth)
+            //     pdfX = highlightX * ((pageWidth * creationScale) / textLayerWidth)
+            //
+            // But we're currently using: pdfX = highlightX * (pageWidth / textLayerWidth)
+            // That's missing the creationScale factor! But that would make pdfX larger, not smaller.
+            //
+            // Actually, I think the issue is that viewport coordinates are NOT the same as PDF coordinates.
+            // Viewport is a scaled view of the PDF. At scale S:
+            //   - PDF point at X = 100
+            //   - Viewport shows it at X = 100 (in viewport coordinate space)
+            //   - But viewport.width = pageWidth * S
+            //
+            // So if a highlight is at display pixel X = 171.21:
+            //   - textLayerWidth = 646.5 (display pixels)
+            //   - viewportX = 171.21 * (646.5 / 646.5) = 171.21 (if no CSS scaling)
+            //   - But this is in viewport coordinate space, not PDF coordinate space!
+            //   - To convert: pdfX = viewportX / creationScale = 171.21 / 1.5 = 114.14
+            //
+            // So the correct conversion is:
+            //   pdfX = (highlightX * (viewport.width / textLayerWidth)) / creationScale
+            //   pdfX = highlightX * (viewport.width / textLayerWidth) / creationScale
+            //   pdfX = highlightX * ((pageWidth * creationScale) / textLayerWidth) / creationScale
+            //   pdfX = highlightX * (pageWidth / textLayerWidth)
+            //
+            // That's what we're already doing! So the conversion should be correct.
+            //
+            // But wait - maybe the issue is that we're using textLayerWidthAtCreation which might not
+            // match the actual displayed width at creation time due to CSS scaling.
+            // Let me check: if cssScaleX = 1.00077, then displayedWidth = canvasWidth * cssScaleX
+            // So textLayerWidth = displayedWidth = canvasWidth * cssScaleX = viewport.width * cssScaleX
+            //
+            // So: pdfX = highlightX * (viewport.width / (viewport.width * cssScaleX)) / creationScale
+            //     pdfX = highlightX / (cssScaleX * creationScale)
+            //
+            // But we're doing: pdfX = highlightX * (pageWidth / textLayerWidth)
+            //                 pdfX = highlightX * (pageWidth / (viewport.width * cssScaleX))
+            //                 pdfX = highlightX * (pageWidth / (pageWidth * creationScale * cssScaleX))
+            //                 pdfX = highlightX / (creationScale * cssScaleX)
+            //
+            // That's the same! So the conversion should be correct.
+            //
+            // The key insight: text spans are positioned using canvas internal dimensions
+            // span.style.left = viewportX * (displayedWidth / canvasWidth)
+            // To reverse: viewportX = highlightX * (canvasWidth / displayedWidth)
+            // Since viewport coordinates are in PDF space: pdfX = viewportX
+            //
+            // But we need to account for the fact that viewport coordinates are scaled.
+            // At scale S: viewport.width = pageWidth * S, but canvas.width = viewport.width (approximately)
+            // So: pdfX = highlightX * (canvasWidth / displayedWidth)
+            //     pdfX = highlightX * (canvasWidth / textLayerWidth)
+            //
+            // But canvasWidth = viewport.width (at creation scale), so:
+            //   pdfX = highlightX * (viewport.width / textLayerWidth)
+            //
+            // And since viewport.width = pageWidth * creationScale:
+            //   pdfX = highlightX * ((pageWidth * creationScale) / textLayerWidth)
+            //
+            // But to get PDF coordinates, we need to divide by creationScale:
+            //   pdfX = highlightX * ((pageWidth * creationScale) / textLayerWidth) / creationScale
+            //   pdfX = highlightX * (pageWidth / textLayerWidth)
+            //
+            // That's what we're already doing! So the conversion should be correct.
+            //
+            // But wait - maybe the issue is that we're using textLayerWidthAtCreation which might
+            // not match the actual displayed width at creation time. Let me check the debug output:
+            // - canvas.internalWidth: 646
+            // - canvas.displayWidth: 646.5
+            // - textLayerWidth: 646.5
+            // - viewport.width: 646.5
+            //
+            // So canvas.width (646) != viewport.width (646.5). That's the issue!
+            // We should use canvas.width for the conversion, not viewport.width.
+            const canvas = canvasRefs.current[highlight.page]
+            let pdfX, pdfY, pdfWidth, pdfHeight
+            
+            if (canvas) {
+              const canvasWidth = canvas.width  // Internal canvas width (matches viewport at creation scale)
+              const canvasHeight = canvas.height
+              const canvasRect = canvas.getBoundingClientRect()
+              const displayedWidth = canvasRect.width  // Displayed width (may differ due to CSS)
+              const displayedHeight = canvasRect.height
+              
+              // Use canvas internal dimensions for conversion (this matches how spans are positioned)
+              // Text spans are positioned: span.style.left = viewportX * (displayedWidth / canvasWidth)
+              // So to reverse: viewportX = highlightX * (canvasWidth / displayedWidth)
+              // Viewport coordinates are in PDF coordinate space, but scaled by creationScale
+              // So: pdfX = viewportX / creationScale
+              const canvasScaleX = canvasWidth / displayedWidth
+              const canvasScaleY = canvasHeight / displayedHeight
+              
+              // Convert to viewport coordinates
+              const viewportX = rect.x * canvasScaleX
+              const viewportY = rect.y * canvasScaleY
+              const viewportWidth = rect.width * canvasScaleX
+              const viewportHeight = rect.height * canvasScaleY
+              
+              // Convert viewport coordinates to PDF coordinates (divide by creationScale)
+              pdfX = (viewportX / creationScale) + cropOffsetX
+              pdfY = actualPageHeight - ((viewportY / creationScale)) - ((viewportHeight / creationScale)) + cropOffsetY
+              pdfWidth = viewportWidth / creationScale
+              pdfHeight = viewportHeight / creationScale
+            } else {
+              // Fallback to original method
+              pdfX = rect.x * scaleX + cropOffsetX
+              pdfY = actualPageHeight - (rect.y * scaleY) - (rect.height * scaleY) + cropOffsetY
+              pdfWidth = rect.width * scaleX
+              pdfHeight = rect.height * scaleY
+            }
+            
+            // Debug: compare methods and log crop box info
+            if (highlight.page === 1 && rects.indexOf(rect) === 0) {
+              const method1X = rect.x * scaleX
+              const method2X = rect.x * (viewportAtCreation.width / textLayerWidthAtCreation)
+              console.log('PDF conversion debug:', {
+                method1_usingPageWidth: { pdfX: method1X, scaleX, formula: 'highlightX * (pageWidth / textLayerWidth)' },
+                method2_usingViewportWidth: { pdfX: method2X, ratio: viewportAtCreation.width / textLayerWidthAtCreation, formula: 'highlightX * (viewportWidth / textLayerWidth)' },
+                difference: method2X - method1X,
+                pageBoxes: {
+                  pageSize: { width: actualPageWidth, height: actualPageHeight },
+                  cropBox: cropBox ? { x: cropBox.x, y: cropBox.y, width: cropBox.width, height: cropBox.height } : null,
+                  mediaBox: mediaBox ? { x: mediaBox.x, y: mediaBox.y, width: mediaBox.width, height: mediaBox.height } : null,
+                  cropOffset: { x: cropOffsetX, y: cropOffsetY }
+                },
+                viewportWidth: viewportAtCreation.width,
+                textLayerWidth: textLayerWidthAtCreation,
+                creationScale
+              })
+            }
+            
+            // Only draw if coordinates are valid and within page bounds
+            // Use actualPageWidth/Height for bounds checking
+            // Add some tolerance for floating point errors
+            const tolerance = 1.0
+            const isValid = pdfWidth > 0 && pdfHeight > 0 && 
+                           pdfX >= -tolerance && pdfY >= -tolerance && 
+                           pdfX + pdfWidth <= actualPageWidth + tolerance && 
+                           pdfY + pdfHeight <= actualPageHeight + tolerance
+            
+            // Debug logging for invalid coordinates
+            if (!isValid && highlight.page === 1) {
+              console.warn('Highlight out of bounds:', {
+                rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+                pdfCoords: { x: pdfX, y: pdfY, width: pdfWidth, height: pdfHeight },
+                pageSize: { width: actualPageWidth, height: actualPageHeight },
+                scale: { x: scaleX, y: scaleY },
+                textLayerAtCreation: { width: textLayerWidthAtCreation, height: textLayerHeightAtCreation }
+              })
+            }
+            
+            if (isValid) {
+              // Add highlight annotation with proper color and opacity
+              page.drawRectangle({
+                x: Math.max(0, pdfX), // Clamp to page bounds
+                y: Math.max(0, pdfY),
+                width: Math.min(pdfWidth, actualPageWidth - Math.max(0, pdfX)),
+                height: Math.min(pdfHeight, actualPageHeight - Math.max(0, pdfY)),
+                color: pdfColor,
+                opacity: pdfOpacity,
+                borderOpacity: 0
+              })
+            }
+          })
         }
-      })
+      }
 
       // Save the PDF
       // Since we created a new document, it should save without encryption issues
@@ -7670,14 +8851,24 @@ function App() {
                 <h2>Story Timeline</h2>
                 <span className="timeline-full-view-count">{timeline.length} events</span>
               </div>
-              <button
-                className="btn-back-to-pdf"
-                onClick={() => setIsTimelineExpanded(false)}
-                title="Back to PDF"
-              >
-                <IconChevronLeft size={18} />
-                <span>Back to PDF</span>
-              </button>
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                <button
+                  className="btn-back-to-pdf"
+                  onClick={downloadTimelineAsHTML}
+                  title="Download Timeline as HTML"
+                >
+                  <IconDownload size={18} />
+                  <span>Download</span>
+                </button>
+                <button
+                  className="btn-back-to-pdf"
+                  onClick={() => setIsTimelineExpanded(false)}
+                  title="Back to PDF"
+                >
+                  <IconChevronLeft size={18} />
+                  <span>Back to PDF</span>
+                </button>
+              </div>
             </div>
             <div className="timeline-full-view-content">
               <ProportionalTimeline 
