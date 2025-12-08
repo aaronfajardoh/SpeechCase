@@ -1115,11 +1115,11 @@ function App() {
       }
     }
 
-    // Debounce resize events
+    // Debounce resize events (reduced delay for faster response)
     let resizeTimeout
     const debouncedResize = () => {
       clearTimeout(resizeTimeout)
-      resizeTimeout = setTimeout(handleResize, 150)
+      resizeTimeout = setTimeout(handleResize, 100) // Reduced from 150ms to 100ms
     }
 
     window.addEventListener('resize', debouncedResize)
@@ -6554,9 +6554,15 @@ function App() {
       const rectangles = calculatePreciseRectangles(selectionRange, textLayerDiv)
       
       if (rectangles && rectangles.length > 0) {
-        // Get page info to store scale
+        // Get page info to store scale and text layer dimensions
         const pageInfo = pageData.find(p => p.pageNum === pageNum)
         const scale = pageInfo ? pageScale : 1.5
+        
+        // Get text layer dimensions at creation time for proper scaling when viewport changes
+        const textLayer = textLayerRefs.current[pageNum]
+        const textLayerRect = textLayer ? textLayer.getBoundingClientRect() : null
+        const textLayerWidthAtCreation = textLayerRect ? textLayerRect.width : null
+        const textLayerHeightAtCreation = textLayerRect ? textLayerRect.height : null
         
         // Create highlight with array of rectangles
         const highlight = {
@@ -6565,7 +6571,9 @@ function App() {
           rects: rectangles,
           text: selectedText,
           color: highlightColor,
-          scale
+          scale,
+          textLayerWidth: textLayerWidthAtCreation,
+          textLayerHeight: textLayerHeightAtCreation
         }
         
         // Add to history for undo/redo
@@ -6618,12 +6626,18 @@ function App() {
 
   // Render highlights on pages
   useEffect(() => {
-    // Clear all highlight layers first
-    Object.values(highlightLayerRefs.current).forEach(layer => {
-      if (layer) {
-        layer.innerHTML = ''
-      }
-    })
+    // Don't clear highlights if they're already rendered correctly
+    // Only clear if highlights array changed or pageScale changed
+    const shouldClear = true // Always clear to ensure fresh render
+    
+    if (shouldClear) {
+      // Clear all highlight layers first
+      Object.values(highlightLayerRefs.current).forEach(layer => {
+        if (layer) {
+          layer.innerHTML = ''
+        }
+      })
+    }
 
     // Re-render all highlights
     highlights.forEach(highlight => {
@@ -6633,6 +6647,72 @@ function App() {
       }
     })
   }, [highlights, pageData, renderedPages, pageScale, hoveredHighlightId, connectingFrom])
+
+  // Re-render highlights immediately when viewport resizes (e.g., dev tools open/close)
+  // This runs independently of renderPages() for instant updates
+  useEffect(() => {
+    if (highlights.length === 0) return
+
+    let rafId = null
+    let isResizing = false
+
+    const handleResize = () => {
+      // Cancel any pending animation frame
+      if (rafId) {
+        cancelAnimationFrame(rafId)
+      }
+      
+      isResizing = true
+      
+      // Re-render highlights immediately - don't wait for anything
+      // Canvas dimensions update instantly on resize (CSS scaling), so we can use them right away
+      highlights.forEach(highlight => {
+        const highlightLayer = highlightLayerRefs.current[highlight.page]
+        const canvas = canvasRefs.current[highlight.page]
+        // Only re-render if layers exist
+        if (highlightLayer && canvas) {
+          renderHighlight(highlight, highlightLayer)
+        }
+      })
+      
+      // Also schedule a re-render on next frame in case layout hasn't fully updated yet
+      rafId = requestAnimationFrame(() => {
+        highlights.forEach(highlight => {
+          const highlightLayer = highlightLayerRefs.current[highlight.page]
+          const canvas = canvasRefs.current[highlight.page]
+          if (highlightLayer && canvas) {
+            renderHighlight(highlight, highlightLayer)
+          }
+        })
+        isResizing = false
+        rafId = null
+      })
+    }
+
+    // Throttle to once per frame, but trigger immediately
+    let lastResizeTime = 0
+    const throttledResize = () => {
+      const now = Date.now()
+      if (now - lastResizeTime >= 16) { // ~60fps
+        lastResizeTime = now
+        handleResize()
+      } else {
+        // Schedule for next frame
+        if (!rafId) {
+          rafId = requestAnimationFrame(handleResize)
+        }
+      }
+    }
+
+    window.addEventListener('resize', throttledResize)
+
+    return () => {
+      window.removeEventListener('resize', throttledResize)
+      if (rafId) {
+        cancelAnimationFrame(rafId)
+      }
+    }
+  }, [highlights])
 
   // Update ref when hover state changes
   useEffect(() => {
@@ -7301,24 +7381,37 @@ function App() {
     const pageInfo = pageData.find(p => p.pageNum === highlight.page)
     if (!pageInfo) return
 
-    // Get canvas to calculate display scaling
+    // Get canvas and text layer to calculate scaling
     const canvas = canvasRefs.current[highlight.page]
     if (!canvas) return
 
-    const canvasRect = canvas.getBoundingClientRect()
-    const canvasWidth = canvas.width
-    const canvasHeight = canvas.height
-    const displayedWidth = canvasRect.width
-    const displayedHeight = canvasRect.height
-    
-    // Calculate scale factors for canvas display
-    const displayScaleX = displayedWidth / canvasWidth
-    const displayScaleY = displayedHeight / canvasHeight
+    const textLayer = textLayerRefs.current[highlight.page]
+    if (!textLayer) return
 
-    // Adjust coordinates if scale has changed since highlight was created
-    // Also account for canvas display scaling
-    const scaleRatio = (pageScale / (highlight.scale || pageScale)) * displayScaleX
-    const scaleRatioY = (pageScale / (highlight.scale || pageScale)) * displayScaleY
+    // Get canvas displayed dimensions (text layer matches canvas displayed size)
+    // Use canvas directly for faster updates - canvas dimensions update immediately on resize
+    const canvasRect = canvas.getBoundingClientRect()
+    const currentCanvasDisplayedWidth = canvasRect.width
+    const currentCanvasDisplayedHeight = canvasRect.height
+
+    // Get text layer dimensions at creation time (stored with highlight)
+    // If not stored (old highlights), estimate from current dimensions
+    let creationTextLayerWidth = highlight.textLayerWidth
+    let creationTextLayerHeight = highlight.textLayerHeight
+
+    if (!creationTextLayerWidth || !creationTextLayerHeight) {
+      // Fallback for old highlights: use current canvas displayed dimensions
+      // This works if the scale hasn't changed and viewport hasn't changed
+      creationTextLayerWidth = currentCanvasDisplayedWidth
+      creationTextLayerHeight = currentCanvasDisplayedHeight
+    }
+
+    // Scale highlights based on canvas displayed size ratio
+    // Highlights are stored relative to text layer at creation time
+    // Text layer matches canvas displayed size, so we can use canvas dimensions directly
+    // When viewport changes, canvas displayed size changes immediately, so highlights scale proportionally
+    const scaleRatio = currentCanvasDisplayedWidth / creationTextLayerWidth
+    const scaleRatioY = currentCanvasDisplayedHeight / creationTextLayerHeight
     
     // Support both old format (single rect) and new format (array of rects)
     const rects = highlight.rects || [{
@@ -7798,7 +7891,7 @@ function App() {
           
           // Get the PDF.js page to calculate viewport at creation scale
           const pdfjsPage = await pdfDoc.getPage(highlight.page)
-          const creationScale = highlight.scale || pageScale
+            const creationScale = highlight.scale || pageScale
           const viewportAtCreation = pdfjsPage.getViewport({ scale: creationScale })
           
           // Also get the source PDF page dimensions for verification
@@ -8134,41 +8227,41 @@ function App() {
               expectedRatio: `If correct, scaleX should be approximately: ${actualPageWidth / viewportAtCreation.width} (pageWidth/viewportWidth)`
             })
           }
-          
-          // Support both old format (single rect) and new format (array of rects)
-          const rects = highlight.rects || [{
-            x: highlight.x || 0,
-            y: highlight.y || 0,
-            width: highlight.width || 0,
-            height: highlight.height || 0
-          }]
-          
-          // Get highlight color based on highlight.color
-          const highlightColor = highlight.color || 'yellow'
-          let pdfColor
-          let pdfOpacity = 0.3 // Default opacity for highlights
-          
-          switch (highlightColor) {
-            case 'yellow':
-              pdfColor = rgb(0.984, 0.737, 0.016) // rgba(251, 188, 4) normalized
-              pdfOpacity = 0.3
-              break
-            case 'green':
-              pdfColor = rgb(0.204, 0.659, 0.325) // rgba(52, 168, 83) normalized
-              pdfOpacity = 0.3
-              break
-            case 'blue':
-              pdfColor = rgb(0.259, 0.522, 0.957) // rgba(66, 133, 244) normalized
-              pdfOpacity = 0.3
-              break
-            default:
-              pdfColor = rgb(0.984, 0.737, 0.016) // Default to yellow
-              pdfOpacity = 0.3
-          }
-          
-          // Draw each rectangle separately
-          rects.forEach(rect => {
-            // Convert highlight coordinates to PDF coordinates
+            
+            // Support both old format (single rect) and new format (array of rects)
+            const rects = highlight.rects || [{
+              x: highlight.x || 0,
+              y: highlight.y || 0,
+              width: highlight.width || 0,
+              height: highlight.height || 0
+            }]
+            
+            // Get highlight color based on highlight.color
+            const highlightColor = highlight.color || 'yellow'
+            let pdfColor
+            let pdfOpacity = 0.3 // Default opacity for highlights
+            
+            switch (highlightColor) {
+              case 'yellow':
+                pdfColor = rgb(0.984, 0.737, 0.016) // rgba(251, 188, 4) normalized
+                pdfOpacity = 0.3
+                break
+              case 'green':
+                pdfColor = rgb(0.204, 0.659, 0.325) // rgba(52, 168, 83) normalized
+                pdfOpacity = 0.3
+                break
+              case 'blue':
+                pdfColor = rgb(0.259, 0.522, 0.957) // rgba(66, 133, 244) normalized
+                pdfOpacity = 0.3
+                break
+              default:
+                pdfColor = rgb(0.984, 0.737, 0.016) // Default to yellow
+                pdfOpacity = 0.3
+            }
+            
+            // Draw each rectangle separately
+            rects.forEach(rect => {
+              // Convert highlight coordinates to PDF coordinates
             // Highlights are stored relative to text layer (top-left origin, in display pixels)
             // Text layer coordinates: y=0 at top, increasing downward
             // PDF coordinates: y=0 at bottom, increasing upward
@@ -8439,8 +8532,8 @@ function App() {
                 creationScale
               })
             }
-            
-            // Only draw if coordinates are valid and within page bounds
+              
+              // Only draw if coordinates are valid and within page bounds
             // Use actualPageWidth/Height for bounds checking
             // Add some tolerance for floating point errors
             const tolerance = 1.0
@@ -8461,20 +8554,20 @@ function App() {
             }
             
             if (isValid) {
-              // Add highlight annotation with proper color and opacity
-              page.drawRectangle({
+                // Add highlight annotation with proper color and opacity
+                page.drawRectangle({
                 x: Math.max(0, pdfX), // Clamp to page bounds
                 y: Math.max(0, pdfY),
                 width: Math.min(pdfWidth, actualPageWidth - Math.max(0, pdfX)),
                 height: Math.min(pdfHeight, actualPageHeight - Math.max(0, pdfY)),
-                color: pdfColor,
-                opacity: pdfOpacity,
-                borderOpacity: 0
-              })
-            }
-          })
+                  color: pdfColor,
+                  opacity: pdfOpacity,
+                  borderOpacity: 0
+                })
+              }
+            })
+          }
         }
-      }
 
       // Save the PDF
       // Since we created a new document, it should save without encryption issues
