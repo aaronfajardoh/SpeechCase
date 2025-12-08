@@ -1191,17 +1191,17 @@
   gap: 0.3rem;
   padding: 0.45rem 0.9rem;
   border-radius: 999px;
-  border: 1px solid #5f6368;
-  background: transparent;
-  color: #e8eaed;
+  border: 1px solid #000;
+  background: #000;
+  color: #fff;
   font-size: 0.8rem;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .btn-back-to-pdf:hover {
-  background: #1f1f23;
-  border-color: #9aa0a6;
+  background: #1a1a1a;
+  border-color: #000;
 }
 
 .timeline-full-view-content {

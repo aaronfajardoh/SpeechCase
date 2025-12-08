@@ -1024,6 +1024,19 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTimelineExpanded])
 
+  // Re-render PDF pages when returning from expanded summary view
+  // Canvas content is lost when hidden, so we need to re-render when visible again
+  useEffect(() => {
+    if (!isSummaryExpanded && pdfDoc && totalPages > 0 && pageData.length > 0) {
+      // Wait for DOM to be ready and PDF viewer to be visible
+      const timeoutId = setTimeout(() => {
+        renderPages()
+      }, 200)
+      return () => clearTimeout(timeoutId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSummaryExpanded])
+
   // Auto-scroll sidebar to keep current page visible
   useEffect(() => {
     if (currentPage > 0 && !isMobile) {
@@ -7835,12 +7848,14 @@ function App() {
         for (let i = 0; i < numPages; i++) {
           // Render page to canvas using PDF.js (which we already have loaded in state)
           const pdfjsPage = await pdfDoc.getPage(i + 1) // pdfDoc state is PDF.js document, 1-indexed
-          const viewport = pdfjsPage.getViewport({ scale: 2.0 }) // Higher scale for better quality
           
-          // Get page dimensions from PDF.js viewport (convert from points to PDF units)
-          // PDF.js viewport dimensions are in points (1/72 inch), which is the same as PDF units
-          const width = viewport.width
-          const height = viewport.height
+          // Get page dimensions at scale 1.0 (actual PDF page size)
+          const viewportAtScale1 = pdfjsPage.getViewport({ scale: 1.0 })
+          const width = viewportAtScale1.width
+          const height = viewportAtScale1.height
+          
+          // Use higher scale for rendering quality
+          const viewport = pdfjsPage.getViewport({ scale: 2.0 })
           
           const canvas = document.createElement('canvas')
           canvas.width = viewport.width
@@ -7861,6 +7876,7 @@ function App() {
           
           const image = await newPdfDoc.embedPng(imageBytes)
           const page = newPdfDoc.addPage([width, height])
+          // Draw image at page size (scale 1.0 dimensions), even though it was rendered at scale 2.0
           page.drawImage(image, {
             x: 0,
             y: 0,
@@ -7894,12 +7910,21 @@ function App() {
             const creationScale = highlight.scale || pageScale
           const viewportAtCreation = pdfjsPage.getViewport({ scale: creationScale })
           
-          // Also get the source PDF page dimensions for verification
-          const sourcePage = sourcePdfDoc.getPage(highlight.page - 1) // pdf-lib uses 0-indexed
-          const sourcePageSize = sourcePage.getSize()
-          // Use source page dimensions (should match, but verify)
-          const actualPageWidth = sourcePageSize.width
-          const actualPageHeight = sourcePageSize.height
+          // Get the page dimensions from the new PDF document (what we're drawing on)
+          // For encrypted PDFs, we created pages from images, so use PDF.js viewport dimensions
+          // For non-encrypted PDFs, we copied pages, so dimensions should match
+          let actualPageWidth, actualPageHeight
+          if (isEncrypted) {
+            // For encrypted PDFs, use the viewport at scale 1.0 to get actual PDF dimensions
+            const viewportAtScale1 = pdfjsPage.getViewport({ scale: 1.0 })
+            actualPageWidth = viewportAtScale1.width
+            actualPageHeight = viewportAtScale1.height
+          } else {
+            // For non-encrypted PDFs, use the new PDF page dimensions (should match source)
+            // Use pageWidth and pageHeight from the new PDF document
+            actualPageWidth = pageWidth
+            actualPageHeight = pageHeight
+          }
           
           // Highlights are stored with coordinates relative to the text layer (in display pixels)
           // Text spans are positioned: spanX = viewportX * (displayedWidth / viewport.width)
@@ -7956,34 +7981,38 @@ function App() {
           // However, highlights are stored relative to the text layer, which has dimensions
           // matching displayedWidth. To convert to PDF, we need to account for this.
           //
-          // Use the actual text layer dimensions (what highlights are stored relative to)
-          // The text layer dimensions are set to match the canvas display size
-          // If the scale hasn't changed since creation, we can use current dimensions directly
-          let textLayerWidthAtCreation = viewportAtCreation.width
-          let textLayerHeightAtCreation = viewportAtCreation.height
+          // Use the stored text layer dimensions from when the highlight was created
+          // These are stored in the highlight object to ensure accurate conversion
+          let textLayerWidthAtCreation = highlight.textLayerWidth
+          let textLayerHeightAtCreation = highlight.textLayerHeight
           
-          if (textLayer && creationScale === pageScale) {
-            // Scale hasn't changed, so current text layer dimensions match creation-time dimensions
-            const textLayerRect = textLayer.getBoundingClientRect()
-            textLayerWidthAtCreation = textLayerRect.width
-            textLayerHeightAtCreation = textLayerRect.height
-          } else if (canvas && creationScale === pageScale) {
-            // Fallback: use canvas display dimensions if scale hasn't changed
-            const canvasRect = canvas.getBoundingClientRect()
-            textLayerWidthAtCreation = canvasRect.width
-            textLayerHeightAtCreation = canvasRect.height
-          } else if (creationScale !== pageScale) {
-            // Scale has changed, need to estimate creation-time dimensions
-            // Text layer scales proportionally with viewport
-            const scaleRatio = creationScale / pageScale
-            if (textLayer) {
+          // Fallback: if stored values are not available (for old highlights), try to recalculate
+          if (!textLayerWidthAtCreation || !textLayerHeightAtCreation) {
+            // Fallback to viewport dimensions as default
+            textLayerWidthAtCreation = viewportAtCreation.width
+            textLayerHeightAtCreation = viewportAtCreation.height
+            
+            // Try to get from current DOM if scale hasn't changed
+            if (textLayer && creationScale === pageScale) {
               const textLayerRect = textLayer.getBoundingClientRect()
-              textLayerWidthAtCreation = textLayerRect.width / scaleRatio
-              textLayerHeightAtCreation = textLayerRect.height / scaleRatio
-            } else if (canvas) {
+              textLayerWidthAtCreation = textLayerRect.width
+              textLayerHeightAtCreation = textLayerRect.height
+            } else if (canvas && creationScale === pageScale) {
               const canvasRect = canvas.getBoundingClientRect()
-              textLayerWidthAtCreation = canvasRect.width / scaleRatio
-              textLayerHeightAtCreation = canvasRect.height / scaleRatio
+              textLayerWidthAtCreation = canvasRect.width
+              textLayerHeightAtCreation = canvasRect.height
+            } else if (creationScale !== pageScale) {
+              // Scale has changed, estimate creation-time dimensions
+              const scaleRatio = creationScale / pageScale
+              if (textLayer) {
+                const textLayerRect = textLayer.getBoundingClientRect()
+                textLayerWidthAtCreation = textLayerRect.width / scaleRatio
+                textLayerHeightAtCreation = textLayerRect.height / scaleRatio
+              } else if (canvas) {
+                const canvasRect = canvas.getBoundingClientRect()
+                textLayerWidthAtCreation = canvasRect.width / scaleRatio
+                textLayerHeightAtCreation = canvasRect.height / scaleRatio
+              }
             }
           }
           
@@ -8107,9 +8136,20 @@ function App() {
           // So we should use textLayerWidth, but the issue is that textLayerWidth might
           // not match what was used at creation time if CSS scaling changed.
           //
-          // Use text layer width for conversion (highlights are stored relative to text layer)
-          // The debug output confirms: using text layer width gives the correct scale (0.6667),
-          // while using canvas internal width gives the wrong scale (0.6672)
+          // Convert highlight coordinates to PDF coordinates
+          // The key insight: spans are positioned using viewport coordinates (which are in PDF space)
+          // span.style.left = tx[4] * (textLayerWidth / viewportWidth)
+          // where tx[4] is in PDF points
+          //
+          // At creation, if textLayerWidth = viewportWidth (both 918), then:
+          //   span.style.left = tx[4] (same numeric value, but different units)
+          //
+          // To convert highlight coordinates back to PDF:
+          // Since highlights are stored in the same coordinate system as span.style.left,
+          // and viewport coordinates are in PDF space, we need to account for the scale.
+          //
+          // The conversion should be: pdfX = highlightX * (actualPageWidth / textLayerWidthAtCreation)
+          // This converts from text layer pixels to PDF points
           const scaleX = actualPageWidth / textLayerWidthAtCreation
           const scaleY = actualPageHeight / textLayerHeightAtCreation
           
@@ -8334,12 +8374,23 @@ function App() {
             // or use a different conversion. Let me check if there's a crop box offset.
             
             // Get crop box from source page to check for offsets
-            const cropBox = sourcePage.getCropBox()
-            const mediaBox = sourcePage.getMediaBox()
+            // For encrypted PDFs, sourcePage is not available, so default to 0
+            let cropBox = null
+            let mediaBox = null
+            let cropOffsetX = 0
+            let cropOffsetY = 0
             
-            // Calculate any offset from crop box (crop box defines the visible area)
-            const cropOffsetX = cropBox ? cropBox.x : 0
-            const cropOffsetY = cropBox ? cropBox.y : 0
+            if (!isEncrypted) {
+              // For non-encrypted PDFs, get crop box from source page
+              const sourcePage = sourcePdfDoc.getPage(highlight.page - 1) // pdf-lib uses 0-indexed
+              cropBox = sourcePage.getCropBox()
+              mediaBox = sourcePage.getMediaBox()
+              
+              // Calculate any offset from crop box (crop box defines the visible area)
+              cropOffsetX = cropBox ? cropBox.x : 0
+              cropOffsetY = cropBox ? cropBox.y : 0
+            }
+            // For encrypted PDFs, cropOffsetX and cropOffsetY remain 0 (default)
             
             // Convert highlight coordinates to PDF coordinates
             // The key insight: viewport coordinates are in PDF coordinate space, but scaled by creationScale
@@ -8474,62 +8525,98 @@ function App() {
             // - textLayerWidth: 646.5
             // - viewport.width: 646.5
             //
-            // So canvas.width (646) != viewport.width (646.5). That's the issue!
-            // We should use canvas.width for the conversion, not viewport.width.
-            const canvas = canvasRefs.current[highlight.page]
-            let pdfX, pdfY, pdfWidth, pdfHeight
+            // Convert highlight coordinates to PDF coordinates
+            // Highlights are stored relative to text layer at creation time
+            // Text spans are positioned: span.style.left = viewportX * (displayedWidth / canvasWidth)
+            // To reverse: viewportX = highlightX * (canvasWidth / displayedWidth) = highlightX * (viewportAtCreation.width / textLayerWidthAtCreation)
+            // Viewport coordinates are in PDF coordinate space, so pdfX = viewportX
+            // Convert coordinates using the relationship: span.style.left = tx[4] * scaleX
+            // where tx[4] is in PDF points and scaleX = textLayerWidth / viewportWidth
+            // At creation: textLayerWidth = viewportWidth, so scaleX = 1
+            // Therefore: span.style.left = tx[4] (same value, but in different units)
+            //
+            // But wait, the units are different: span.style.left is in CSS pixels, tx[4] is in PDF points
+            // At 1:1 scale, 1 CSS pixel = 1 PDF point, but we're at creationScale = 1.5
+            //
+            // Actually, let me reconsider: viewport coordinates ARE in PDF space (points)
+            // But the viewport dimensions are scaled: viewport.width = pageWidth * scale
+            // The coordinate VALUES are still in PDF points though
+            //
+            // So: span.style.left = tx[4] * (textLayerWidth / viewportWidth)
+            //     = tx[4] * (918 / 918) = tx[4] (same numeric value)
+            //
+            // To reverse: pdfX = highlightX (if textLayerWidth = viewportWidth)
+            // But we need to account for units: highlightX is in pixels, pdfX is in points
+            // At creationScale = 1.5, viewport.width = 918 points, textLayer.width = 918 pixels
+            // So 1 pixel = 1 point at this scale? No, that doesn't make sense.
+            //
+            // Let me use the direct conversion: pdfX = highlightX * (actualPageWidth / textLayerWidthAtCreation)
+            const pdfX = rect.x * scaleX + cropOffsetX
             
-            if (canvas) {
-              const canvasWidth = canvas.width  // Internal canvas width (matches viewport at creation scale)
-              const canvasHeight = canvas.height
-              const canvasRect = canvas.getBoundingClientRect()
-              const displayedWidth = canvasRect.width  // Displayed width (may differ due to CSS)
-              const displayedHeight = canvasRect.height
-              
-              // Use canvas internal dimensions for conversion (this matches how spans are positioned)
-              // Text spans are positioned: span.style.left = viewportX * (displayedWidth / canvasWidth)
-              // So to reverse: viewportX = highlightX * (canvasWidth / displayedWidth)
-              // Viewport coordinates are in PDF coordinate space, but scaled by creationScale
-              // So: pdfX = viewportX / creationScale
-              const canvasScaleX = canvasWidth / displayedWidth
-              const canvasScaleY = canvasHeight / displayedHeight
-              
-              // Convert to viewport coordinates
-              const viewportX = rect.x * canvasScaleX
-              const viewportY = rect.y * canvasScaleY
-              const viewportWidth = rect.width * canvasScaleX
-              const viewportHeight = rect.height * canvasScaleY
-              
-              // Convert viewport coordinates to PDF coordinates (divide by creationScale)
-              pdfX = (viewportX / creationScale) + cropOffsetX
-              pdfY = actualPageHeight - ((viewportY / creationScale)) - ((viewportHeight / creationScale)) + cropOffsetY
-              pdfWidth = viewportWidth / creationScale
-              pdfHeight = viewportHeight / creationScale
-            } else {
-              // Fallback to original method
-              pdfX = rect.x * scaleX + cropOffsetX
-              pdfY = actualPageHeight - (rect.y * scaleY) - (rect.height * scaleY) + cropOffsetY
-              pdfWidth = rect.width * scaleX
-              pdfHeight = rect.height * scaleY
-            }
+            // For Y: span.style.top = (tx[5] - fontHeight) * scaleY
+            // where tx[5] is PDF baseline Y (from bottom, in PDF points)
+            // rect.y is top edge in text layer (matches span.style.top)
+            //
+            // The bottom edge of highlight in text layer: rect.y + rect.height
+            // Distance from bottom of text layer: textLayerHeightAtCreation - (rect.y + rect.height)
+            // Convert to PDF: multiply by (actualPageHeight / textLayerHeightAtCreation)
+            const distanceFromBottomInTextLayer = textLayerHeightAtCreation - (rect.y + rect.height)
+            const pdfY = distanceFromBottomInTextLayer * scaleY + cropOffsetY
             
-            // Debug: compare methods and log crop box info
+            // Convert width and height (both in same units, just scale)
+            const pdfWidth = rect.width * scaleX
+            const pdfHeight = rect.height * scaleY
+            
+            // Debug: detailed conversion info
             if (highlight.page === 1 && rects.indexOf(rect) === 0) {
               const method1X = rect.x * scaleX
               const method2X = rect.x * (viewportAtCreation.width / textLayerWidthAtCreation)
+              const method3X = rect.x * (viewportAtCreation.width / textLayerWidthAtCreation) / creationScale
+              
+              // Y coordinate conversion debugging
+              const distanceFromTop = rect.y
+              const distanceFromBottom = textLayerHeightAtCreation - (rect.y + rect.height)
+              const calculatedPdfY = distanceFromBottom * scaleY
+              
               console.log('PDF conversion debug:', {
-                method1_usingPageWidth: { pdfX: method1X, scaleX, formula: 'highlightX * (pageWidth / textLayerWidth)' },
-                method2_usingViewportWidth: { pdfX: method2X, ratio: viewportAtCreation.width / textLayerWidthAtCreation, formula: 'highlightX * (viewportWidth / textLayerWidth)' },
-                difference: method2X - method1X,
+                highlightRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+                calculatedPdfCoords: { x: pdfX, y: pdfY, width: pdfWidth, height: pdfHeight },
+                yConversion: {
+                  distanceFromTop,
+                  distanceFromBottom,
+                  textLayerHeightAtCreation,
+                  scaleY,
+                  calculatedPdfY,
+                  actualPageHeight
+                },
+                method1_usingPageWidth: { 
+                  pdfX: method1X, 
+                  scaleX, 
+                  formula: 'highlightX * (actualPageWidth / textLayerWidth)' 
+                },
+                method2_usingViewportWidth: { 
+                  pdfX: method2X, 
+                  ratio: viewportAtCreation.width / textLayerWidthAtCreation, 
+                  formula: 'highlightX * (viewportWidth / textLayerWidth)' 
+                },
+                method3_usingViewportWidthDividedByScale: {
+                  pdfX: method3X,
+                  formula: 'highlightX * (viewportWidth / textLayerWidth) / creationScale'
+                },
+                dimensions: {
+                  actualPageWidth,
+                  actualPageHeight,
+                  viewportAtCreation: { width: viewportAtCreation.width, height: viewportAtCreation.height },
+                  textLayerAtCreation: { width: textLayerWidthAtCreation, height: textLayerHeightAtCreation },
+                  creationScale,
+                  storedTextLayerWidth: highlight.textLayerWidth,
+                  storedTextLayerHeight: highlight.textLayerHeight
+                },
                 pageBoxes: {
-                  pageSize: { width: actualPageWidth, height: actualPageHeight },
                   cropBox: cropBox ? { x: cropBox.x, y: cropBox.y, width: cropBox.width, height: cropBox.height } : null,
                   mediaBox: mediaBox ? { x: mediaBox.x, y: mediaBox.y, width: mediaBox.width, height: mediaBox.height } : null,
                   cropOffset: { x: cropOffsetX, y: cropOffsetY }
-                },
-                viewportWidth: viewportAtCreation.width,
-                textLayerWidth: textLayerWidthAtCreation,
-                creationScale
+                }
               })
             }
               
@@ -8763,7 +8850,7 @@ function App() {
       </div>
 
       {/* Highlight Control Panel */}
-      {interactionMode === 'highlight' && pdfDoc && !isMobile && (
+      {interactionMode === 'highlight' && pdfDoc && !isMobile && !isSummaryExpanded && (
         <div className="highlight-control-panel">
           <div className="highlight-color-option">
             <button
