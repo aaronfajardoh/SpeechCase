@@ -6418,6 +6418,125 @@ function App() {
       })
     }
 
+    // Helper function to extract text from a range, preserving spaces between spans
+    // Uses the same logic as calculatePreciseRectangles to find selected spans,
+    // then extracts from extractedText using charIndex values
+    const extractTextFromRange = (range) => {
+      if (!range || range.collapsed || !extractedText) {
+        return range ? range.toString() : ''
+      }
+      
+      // Find the text layer
+      const commonAncestor = range.commonAncestorContainer
+      const textLayer = commonAncestor.closest('.text-layer')
+      if (!textLayer) {
+        return range.toString()
+      }
+      
+      // Clone the range to avoid modifying the original
+      const clonedRange = range.cloneRange()
+      
+      // Get all spans in the text layer
+      const allSpans = Array.from(textLayer.querySelectorAll('span[data-char-index]'))
+      
+      // Collect all selected spans with their selection info (same logic as calculatePreciseRectangles)
+      const selectedSpans = []
+      
+      allSpans.forEach(span => {
+        const textNode = span.firstChild
+        if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return
+        
+        // Create a range for this span
+        const spanRange = document.createRange()
+        spanRange.selectNodeContents(span)
+        
+        // Check if selection intersects with this span (same logic as calculatePreciseRectangles)
+        const startToEnd = clonedRange.compareBoundaryPoints(Range.START_TO_END, spanRange)
+        const endToStart = clonedRange.compareBoundaryPoints(Range.END_TO_START, spanRange)
+        
+        if (startToEnd < 0 || endToStart > 0) {
+          // No intersection
+          return
+        }
+        
+        // Determine the selected portion of this span
+        let startOffset = 0
+        let endOffset = textNode.textContent.length
+        
+        // Check if selection starts in this span's text node
+        if (clonedRange.startContainer === textNode) {
+          startOffset = clonedRange.startOffset
+        } else if (span.contains(clonedRange.startContainer)) {
+          // Selection starts within this span
+          if (clonedRange.startContainer.nodeType === Node.TEXT_NODE) {
+            startOffset = clonedRange.startOffset
+          } else {
+            const startToStart = clonedRange.compareBoundaryPoints(Range.START_TO_START, spanRange)
+            if (startToStart <= 0) {
+              startOffset = 0
+            }
+          }
+        } else {
+          const startToStart = clonedRange.compareBoundaryPoints(Range.START_TO_START, spanRange)
+          if (startToStart < 0) {
+            startOffset = 0
+          }
+        }
+        
+        // Check if selection ends in this span's text node
+        if (clonedRange.endContainer === textNode) {
+          endOffset = clonedRange.endOffset
+        } else if (span.contains(clonedRange.endContainer)) {
+          if (clonedRange.endContainer.nodeType === Node.TEXT_NODE) {
+            endOffset = clonedRange.endOffset
+          } else {
+            const endToEnd = clonedRange.compareBoundaryPoints(Range.END_TO_END, spanRange)
+            if (endToEnd >= 0) {
+              endOffset = textNode.textContent.length
+            }
+          }
+        } else {
+          const endToEnd = clonedRange.compareBoundaryPoints(Range.END_TO_END, spanRange)
+          if (endToEnd > 0) {
+            endOffset = textNode.textContent.length
+          }
+        }
+        
+        // Only add if there's actually a selected portion
+        if (startOffset < endOffset && startOffset >= 0 && endOffset <= textNode.textContent.length) {
+          const spanCharIndex = parseInt(span.dataset.charIndex) || 0
+          selectedSpans.push({
+            span,
+            charIndex: spanCharIndex,
+            startOffset,
+            endOffset
+          })
+        }
+      })
+      
+      if (selectedSpans.length === 0) {
+        return range.toString()
+      }
+      
+      // Sort by charIndex to ensure correct order
+      selectedSpans.sort((a, b) => a.charIndex - b.charIndex)
+      
+      // Calculate start and end charIndex in extractedText
+      const firstSpan = selectedSpans[0]
+      const lastSpan = selectedSpans[selectedSpans.length - 1]
+      
+      const startCharIndex = firstSpan.charIndex + firstSpan.startOffset
+      const endCharIndex = lastSpan.charIndex + lastSpan.endOffset
+      
+      // Extract text directly from extractedText
+      if (startCharIndex >= 0 && endCharIndex <= extractedText.length && startCharIndex < endCharIndex) {
+        return extractedText.substring(startCharIndex, endCharIndex)
+      }
+      
+      // Fallback to standard toString
+      return range.toString()
+    }
+
     const getRangeFromPoint = (x, y) => {
       if (document.caretRangeFromPoint) {
         return document.caretRangeFromPoint(x, y)
@@ -6559,7 +6678,8 @@ function App() {
       const selectionRange = selectionStartRangeRef.current.cloneRange()
       selectionRange.setEnd(range.endContainer, range.endOffset)
 
-      const selectedText = selectionRange.toString().trim()
+      // Use custom extraction to preserve spaces between spans
+      const selectedText = extractTextFromRange(selectionRange).trim()
       
       if (selectedText.length === 0) {
         // Clear selection overlay
