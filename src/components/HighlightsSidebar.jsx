@@ -725,8 +725,13 @@ ${htmlContent}
                       <div className="drop-indicator drop-indicator-newline" />
                     )}
                     
-                    {/* Line break after each item by default (unless inline) */}
-                    {!item.inline && <br />}
+                    {/* Empty line after each item by default (unless inline) */}
+                    {!item.inline && (
+                      <>
+                        <br />
+                        <br />
+                      </>
+                    )}
                   </React.Fragment>
                 )
               })}
