@@ -1037,6 +1037,19 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSummaryExpanded])
 
+  // Re-render PDF pages when returning from expanded highlights view
+  // Canvas content is lost when hidden, so we need to re-render when visible again
+  useEffect(() => {
+    if (!isHighlightsExpanded && pdfDoc && totalPages > 0 && pageData.length > 0) {
+      // Wait for DOM to be ready and PDF viewer to be visible
+      const timeoutId = setTimeout(() => {
+        renderPages()
+      }, 200)
+      return () => clearTimeout(timeoutId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHighlightsExpanded])
+
   // Auto-scroll sidebar to keep current page visible
   useEffect(() => {
     if (currentPage > 0 && !isMobile) {
@@ -8850,7 +8863,7 @@ function App() {
       </div>
 
       {/* Highlight Control Panel */}
-      {interactionMode === 'highlight' && pdfDoc && !isMobile && !isSummaryExpanded && (
+      {interactionMode === 'highlight' && pdfDoc && !isMobile && !isSummaryExpanded && !isHighlightsExpanded && (
         <div className="highlight-control-panel">
           <div className="highlight-color-option">
             <button
