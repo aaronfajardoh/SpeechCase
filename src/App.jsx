@@ -1612,8 +1612,20 @@ function App() {
 
           // Track position with improved accuracy - use direct position calculation
           let lastHighlightedPosition = null
+          let hasStartedHighlighting = false // Prevent highlighting ahead before audio actually starts
           const updatePosition = () => {
             if (audio.currentTime && audio.duration && !isCancelledRef.current) {
+              // CRITICAL: Don't highlight if audio hasn't actually started (currentTime too small)
+              // This prevents highlighting from getting ahead when clicking to start
+              if (audio.currentTime < 0.1) {
+                // Audio just started - wait a bit before highlighting to ensure TTS is actually speaking
+                if (!hasStartedHighlighting) {
+                  return
+                }
+              } else {
+                hasStartedHighlighting = true
+              }
+              
               const progress = Math.min(1, Math.max(0, audio.currentTime / audio.duration))
               const textLength = text.length
               
@@ -1626,6 +1638,45 @@ function App() {
               
               // Clamp to valid range
               let clampedPosition = Math.max(0, Math.min(estimatedPosition, extractedText.length - 1))
+              
+              // CRITICAL: Add page-based validation to prevent cross-page jumps
+              const currentPage = currentReadingPageRef.current
+              if (currentPage !== null && lastValidHighlightPositionRef.current !== null) {
+                // Get the page of the new position
+                const currentTextItems = textItemsRef.current
+                if (currentTextItems && currentTextItems.length > 0) {
+                  const potentialItems = currentTextItems.filter(item => {
+                    if (!item.element || !item.str || !item.element.isConnected) return false
+                    return item.charIndex <= clampedPosition && item.charIndex + item.str.length >= clampedPosition
+                  })
+                  if (potentialItems.length > 0) {
+                    const newPage = getElementPageNumber(potentialItems[0].element)
+                    // Reject if jumping to a different page unless we're at a boundary
+                    if (newPage !== null && newPage !== currentPage) {
+                      // Check if we're at a page boundary
+                      const lastPageItems = currentTextItems.filter(item => {
+                        const page = getElementPageNumber(item.element)
+                        return page === currentPage
+                      })
+                      if (lastPageItems.length > 0) {
+                        const maxCharIndexOnLastPage = Math.max(...lastPageItems.map(i => i.charIndex + (i.str?.length || 0)))
+                        const isAtBoundary = clampedPosition >= maxCharIndexOnLastPage - 50
+                        if (!isAtBoundary || newPage !== currentPage + 1) {
+                          // Not at boundary or jumping to non-adjacent page - reject
+                          console.warn('[Google TTS] Rejected cross-page jump', {
+                            currentPage,
+                            newPage,
+                            clampedPosition,
+                            lastValidPosition: lastValidHighlightPositionRef.current,
+                            isAtBoundary
+                          })
+                          return
+                        }
+                      }
+                    }
+                  }
+                }
+              }
               
               // Validate position change is reasonable (prevent huge jumps)
               if (lastValidHighlightPositionRef.current !== null) {
@@ -1685,8 +1736,12 @@ function App() {
           // Reset page tracking when starting new playback
           currentReadingPageRef.current = null
           lastValidHighlightPositionRef.current = null
+          lastHighlightedCharIndexRef.current = null
+          lastHighlightedElementRef.current = null
           
-          highlightCurrentReading(startPosition)
+          // CRITICAL: Don't highlight immediately - wait for timeupdate to ensure audio is actually playing
+          // This prevents highlighting from getting ahead when clicking to start
+          // The timeupdate handler will highlight once audio.currentTime >= 0.1
 
           if ('mediaSession' in navigator) {
             navigator.mediaSession.playbackState = 'playing'
@@ -1917,8 +1972,20 @@ function App() {
 
           // Track position with improved accuracy for chunks - use direct position calculation
           let lastHighlightedPosition = null
+          let hasStartedHighlighting = false // Prevent highlighting ahead before audio actually starts
           const updatePosition = () => {
             if (audio.currentTime && audio.duration && !isCancelledRef.current) {
+              // CRITICAL: Don't highlight if audio hasn't actually started (currentTime too small)
+              // This prevents highlighting from getting ahead when clicking to start
+              if (audio.currentTime < 0.1) {
+                // Audio just started - wait a bit before highlighting to ensure TTS is actually speaking
+                if (!hasStartedHighlighting) {
+                  return
+                }
+              } else {
+                hasStartedHighlighting = true
+              }
+              
               const progress = Math.min(1, Math.max(0, audio.currentTime / audio.duration))
               const chunkEndPosition = chunkIndex < allChunks.length - 1
                 ? chunkStartPosition + chunkTextLength
@@ -1934,6 +2001,45 @@ function App() {
               
               // Clamp to valid range in extracted text
               let clampedPosition = Math.max(0, Math.min(estimatedPosition, extractedText.length - 1))
+              
+              // CRITICAL: Add page-based validation to prevent cross-page jumps
+              const currentPage = currentReadingPageRef.current
+              if (currentPage !== null && lastValidHighlightPositionRef.current !== null) {
+                // Get the page of the new position
+                const currentTextItems = textItemsRef.current
+                if (currentTextItems && currentTextItems.length > 0) {
+                  const potentialItems = currentTextItems.filter(item => {
+                    if (!item.element || !item.str || !item.element.isConnected) return false
+                    return item.charIndex <= clampedPosition && item.charIndex + item.str.length >= clampedPosition
+                  })
+                  if (potentialItems.length > 0) {
+                    const newPage = getElementPageNumber(potentialItems[0].element)
+                    // Reject if jumping to a different page unless we're at a boundary
+                    if (newPage !== null && newPage !== currentPage) {
+                      // Check if we're at a page boundary
+                      const lastPageItems = currentTextItems.filter(item => {
+                        const page = getElementPageNumber(item.element)
+                        return page === currentPage
+                      })
+                      if (lastPageItems.length > 0) {
+                        const maxCharIndexOnLastPage = Math.max(...lastPageItems.map(i => i.charIndex + (i.str?.length || 0)))
+                        const isAtBoundary = clampedPosition >= maxCharIndexOnLastPage - 50
+                        if (!isAtBoundary || newPage !== currentPage + 1) {
+                          // Not at boundary or jumping to non-adjacent page - reject
+                          console.warn('[Google TTS Chunk] Rejected cross-page jump', {
+                            currentPage,
+                            newPage,
+                            clampedPosition,
+                            lastValidPosition: lastValidHighlightPositionRef.current,
+                            isAtBoundary
+                          })
+                          return
+                        }
+                      }
+                    }
+                  }
+                }
+              }
               
               // Validate position change is reasonable (prevent huge jumps)
               if (lastValidHighlightPositionRef.current !== null) {
@@ -1980,8 +2086,12 @@ function App() {
               // Reset page tracking when starting new playback
               currentReadingPageRef.current = null
               lastValidHighlightPositionRef.current = null
+              lastHighlightedCharIndexRef.current = null
+              lastHighlightedElementRef.current = null
               
-              highlightCurrentReading(startPosition)
+              // CRITICAL: Don't highlight immediately - wait for timeupdate to ensure audio is actually playing
+              // This prevents highlighting from getting ahead when clicking to start
+              // The timeupdate handler will highlight once audio.currentTime >= 0.1
 
               if ('mediaSession' in navigator) {
                 navigator.mediaSession.playbackState = 'playing'
@@ -5543,29 +5653,104 @@ function App() {
             }
             
             // Get the starting point: last highlighted charIndex, or start of textToRead
+            // CRITICAL: Use the actual start position, not position + segmentStartInText
+            // segmentStartInText might be 0 or incorrect, causing wrong initial search
             const startCharIndex = lastHighlightedCharIndexRef.current !== null 
               ? lastHighlightedCharIndexRef.current 
-              : position + segmentStartInText
+              : position
+          
+          // CRITICAL: Get current page to prevent cross-page jumps
+          const currentPage = currentReadingPageRef.current !== null 
+            ? currentReadingPageRef.current 
+            : (lastHighlightedElementRef.current ? getElementPageNumber(lastHighlightedElementRef.current) : null)
+          
+          // Check if we're at a page boundary (within last 50 chars of current page)
+          let isAtPageBoundary = false
+          let maxCharIndexOnCurrentPage = null
+          if (currentPage !== null) {
+            const currentPageItems = textItems.filter(item => {
+              if (!item.element || !item.element.isConnected) return false
+              const itemPage = getElementPageNumber(item.element)
+              return itemPage === currentPage
+            })
+            if (currentPageItems.length > 0) {
+              maxCharIndexOnCurrentPage = Math.max(...currentPageItems.map(i => i.charIndex + (i.str?.length || 0)))
+              // Consider at boundary if within 50 chars of page end
+              isAtPageBoundary = startCharIndex >= maxCharIndexOnCurrentPage - 50
+            }
+          }
           
           // ZERO LAG SOLUTION: Highlight the word that TTS is speaking RIGHT NOW
           // TTS boundary events fire when STARTING to speak a word, so we should highlight that word
           
           // Find all forward WORD items (ignore spaces/punctuation)
+          // CRITICAL: Filter by page to prevent cross-page jumps
+          // CRITICAL: When lastHighlightedCharIndexRef is null (first boundary), allow words AT startCharIndex
+          const isFirstBoundary = lastHighlightedCharIndexRef.current === null
           const allForwardWordItems = textItems
             .filter(item => {
               if (!item.element || !item.element.isConnected || !item.str) return false
-              if (item.charIndex <= startCharIndex) return false
+              
+              // For first boundary, allow words at or after startCharIndex
+              // For subsequent boundaries, only allow words after startCharIndex
+              if (isFirstBoundary) {
+                // First boundary: allow words that contain startCharIndex or start after it
+                if (item.charIndex + item.str.length <= startCharIndex) return false
+              } else {
+                // Subsequent boundaries: only allow words after startCharIndex
+                if (item.charIndex <= startCharIndex) return false
+              }
+              
               // Only consider word items (not spaces/punctuation)
-              return /\S/.test(item.str) && normalizeWord(item.str).length > 0
+              if (!/\S/.test(item.str) || normalizeWord(item.str).length === 0) return false
+              
+              // CRITICAL: Page filtering - only allow items on current page unless at boundary
+              if (currentPage !== null) {
+                const itemPage = getElementPageNumber(item.element)
+                if (isAtPageBoundary) {
+                  // At boundary - allow current page and next page only
+                  if (itemPage !== currentPage && itemPage !== currentPage + 1) {
+                    return false
+                  }
+                } else {
+                  // Not at boundary - only allow current page
+                  if (itemPage !== currentPage) {
+                    return false
+                  }
+                }
+              } else if (isFirstBoundary) {
+                // First boundary and no current page - initialize page from the word at position
+                // This ensures we start on the correct page
+                const itemPage = getElementPageNumber(item.element)
+                // Only allow items on the same page as the word at startCharIndex
+                const itemsAtStart = textItems.filter(i => 
+                  i.charIndex <= startCharIndex && i.charIndex + (i.str?.length || 0) > startCharIndex
+                )
+                if (itemsAtStart.length > 0) {
+                  const startPage = getElementPageNumber(itemsAtStart[0].element)
+                  if (startPage !== null && itemPage !== startPage) {
+                    return false
+                  }
+                }
+              }
+              
+              return true
             })
             .sort((a, b) => a.charIndex - b.charIndex)
           
           if (allForwardWordItems.length === 0) {
-            return // No forward word items (end of text)
+            // Log for debugging
+            console.log('[TTS Boundary] No forward word items found', {
+              startCharIndex,
+              currentPage,
+              isAtPageBoundary,
+              lastHighlightedCharIndex: lastHighlightedCharIndexRef.current
+            })
+            return // No forward word items (end of text or end of page)
           }
           
           // Find the word that TTS is speaking RIGHT NOW
-          // Strategy: Search for the spoken word within a reasonable window (5 words)
+          // Strategy: Search for the spoken word within a reasonable window (8 words)
           // This handles out-of-order TTS events while preventing large jumps
           let targetItem = null
           
@@ -5615,29 +5800,65 @@ function App() {
             targetItem = immediateNextWordItem
           }
           
-          // ELEGANT SOLUTION: The TTS handler has already found the correct word item
-          // (including items on the next page). Instead of re-validating through
-          // highlightCurrentReading, directly highlight the element that TTS identified.
-          // This trusts the word-matching logic and avoids all the validation layers
-          // that were blocking legitimate page transitions.
-          
-          const reliablePosition = targetItem.charIndex
-          const elementPage = getElementPageNumber(targetItem.element)
-          const isPageTransition = currentReadingPageRef.current !== null && 
-                                  elementPage !== null && 
-                                  elementPage !== currentReadingPageRef.current
-          
-          // Update tracking refs
-          currentPlaybackPositionRef.current = reliablePosition
-          lastBoundaryPositionRef.current = reliablePosition
-          previousBoundaryPositionRef.current = reliablePosition
-          currentReadingPageRef.current = elementPage || targetItem.page
-          lastValidHighlightPositionRef.current = reliablePosition
-          lastHighlightedCharIndexRef.current = reliablePosition
-          lastHighlightedElementRef.current = targetItem.element
-          
-          // Directly highlight the element that TTS identified
-          applyReadingHighlight(targetItem.element, isPageTransition)
+          // CRITICAL: Validate targetItem is on correct page before highlighting
+          if (targetItem) {
+            const elementPage = getElementPageNumber(targetItem.element)
+            
+            // Additional validation: reject if jumping to wrong page
+            if (currentPage !== null && elementPage !== null) {
+              if (!isAtPageBoundary && elementPage !== currentPage) {
+                // Log the rejection for debugging
+                console.warn('[TTS Boundary] Rejected cross-page jump', {
+                  spokenWord: spokenWordNormalized,
+                  currentPage,
+                  targetPage: elementPage,
+                  isAtPageBoundary,
+                  startCharIndex,
+                  targetCharIndex: targetItem.charIndex,
+                  maxCharIndexOnCurrentPage
+                })
+                // Reject - don't jump to wrong page
+                return
+              }
+              
+              // If at boundary, only allow transition to immediate next page
+              if (isAtPageBoundary && elementPage !== currentPage && elementPage !== currentPage + 1) {
+                console.warn('[TTS Boundary] Rejected jump to non-adjacent page', {
+                  spokenWord: spokenWordNormalized,
+                  currentPage,
+                  targetPage: elementPage
+                })
+                return
+              }
+            }
+            
+            const reliablePosition = targetItem.charIndex
+            const isPageTransition = currentPage !== null && 
+                                    elementPage !== null && 
+                                    elementPage !== currentPage
+            
+            // Log page transitions for debugging
+            if (isPageTransition) {
+              console.log('[TTS Boundary] Page transition', {
+                fromPage: currentPage,
+                toPage: elementPage,
+                spokenWord: spokenWordNormalized,
+                charIndex: reliablePosition
+              })
+            }
+            
+            // Update tracking refs
+            currentPlaybackPositionRef.current = reliablePosition
+            lastBoundaryPositionRef.current = reliablePosition
+            previousBoundaryPositionRef.current = reliablePosition
+            currentReadingPageRef.current = elementPage || targetItem.page
+            lastValidHighlightPositionRef.current = reliablePosition
+            lastHighlightedCharIndexRef.current = reliablePosition
+            lastHighlightedElementRef.current = targetItem.element
+            
+            // Directly highlight the element that TTS identified
+            applyReadingHighlight(targetItem.element, isPageTransition)
+          }
         }
       }
 
@@ -5663,8 +5884,9 @@ function App() {
             lastHighlightedCharIndexRef.current = null
             lastHighlightedElementRef.current = null
             
-            // Highlight the starting position
-            highlightCurrentReading(position)
+            // CRITICAL: Don't highlight immediately on onstart - wait for first boundary event
+            // This prevents highlighting from getting ahead when clicking to start TTS
+            // The boundary handler will highlight the first word when TTS actually starts speaking
             
             // Update Media Session metadata for macOS media key support
             if ('mediaSession' in navigator) {
@@ -6964,6 +7186,44 @@ function App() {
       }
     }
   }, [highlights])
+
+  // Re-render highlights when sidebar is collapsed/expanded or width changes
+  // This fixes the issue where highlights get displaced when sidebar is minimized
+  useEffect(() => {
+    if (highlights.length === 0) return
+
+    let rafId = null
+    let timeoutId = null
+
+    const reRenderHighlights = () => {
+      // Re-render all highlights to account for new canvas dimensions
+      highlights.forEach(highlight => {
+        const highlightLayer = highlightLayerRefs.current[highlight.page]
+        const canvas = canvasRefs.current[highlight.page]
+        if (highlightLayer && canvas) {
+          renderHighlight(highlight, highlightLayer)
+        }
+      })
+    }
+
+    // Use both timeout and requestAnimationFrame to ensure layout has fully updated
+    // Timeout allows CSS transitions to complete, RAF ensures DOM has updated
+    timeoutId = setTimeout(() => {
+      // Re-render immediately
+      reRenderHighlights()
+      
+      // Also schedule a re-render on next frame in case layout hasn't fully updated yet
+      rafId = requestAnimationFrame(() => {
+        reRenderHighlights()
+        rafId = null
+      })
+    }, 150) // Delay to allow CSS transitions to complete
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId)
+      if (rafId) cancelAnimationFrame(rafId)
+    }
+  }, [isSidebarCollapsed, sidebarWidth, highlights])
 
   // Update ref when hover state changes
   useEffect(() => {
