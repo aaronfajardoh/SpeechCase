@@ -2935,10 +2935,14 @@ function App() {
         // For same-page scrolling, scroll if element is not fully visible (any part out of view)
         // This ensures immediate scrolling as soon as highlight goes out of sight
         // getBoundingClientRect() returns coordinates relative to viewport, so we check against window dimensions
+        // Also trigger when element is within 50px of bottom/top edges to prevent cutoff
+        const SCROLL_MARGIN = 50
         const isNotFullyVisible = rect.bottom < 0 || 
                                  rect.top > viewportHeight || 
                                  rect.right < 0 || 
-                                 rect.left > viewportWidth
+                                 rect.left > viewportWidth ||
+                                 rect.bottom > viewportHeight - SCROLL_MARGIN ||
+                                 rect.top < SCROLL_MARGIN
         
         if (isPageTransition || isNotFullyVisible) {
           // Final check before scrolling
@@ -6418,6 +6422,7 @@ function App() {
       })
     }
 
+
     // Helper function to extract text from a range, preserving spaces between spans
     // Uses the same logic as calculatePreciseRectangles to find selected spans,
     // then extracts from extractedText using charIndex values
@@ -6525,8 +6530,68 @@ function App() {
       const firstSpan = selectedSpans[0]
       const lastSpan = selectedSpans[selectedSpans.length - 1]
       
-      const startCharIndex = firstSpan.charIndex + firstSpan.startOffset
-      const endCharIndex = lastSpan.charIndex + lastSpan.endOffset
+      // Account for coordinate misalignment: be more aggressive about including full spans
+      // When selection is near span boundaries, always include the full span to prevent missing characters
+      const firstSpanText = firstSpan.span.firstChild?.textContent || ''
+      const firstSpanFullLength = firstSpanText.length
+      const lastSpanText = lastSpan.span.firstChild?.textContent || ''
+      const lastSpanFullLength = lastSpanText.length
+      
+      // More aggressive expansion: if selection doesn't start at the very beginning of first span,
+      // include the full span to avoid missing characters due to misalignment
+      let startCharIndex = firstSpan.charIndex + firstSpan.startOffset
+      // Expand to full span if selection starts anywhere except at the very start
+      // This is more aggressive but prevents missing characters
+      if (firstSpan.startOffset > 0) {
+        // Check if selection is in the first 50% of the span - if so, include full span
+        const startRatio = firstSpan.startOffset / firstSpanFullLength
+        if (startRatio < 0.5) {
+          // Selection starts in first half of span - include full span to prevent missing start
+          startCharIndex = firstSpan.charIndex
+        }
+      }
+      
+      // More aggressive expansion: if selection doesn't end at the very end of last span,
+      // include the full span to avoid missing characters due to misalignment
+      let endCharIndex = lastSpan.charIndex + lastSpan.endOffset
+      const charsFromEnd = lastSpanFullLength - lastSpan.endOffset
+      if (charsFromEnd > 0) {
+        // Check if selection ends in the last 50% of the span - if so, include full span
+        const endRatio = charsFromEnd / lastSpanFullLength
+        if (endRatio < 0.5) {
+          // Selection ends in last half of span - include full span to prevent missing end
+          endCharIndex = lastSpan.charIndex + lastSpanFullLength
+        }
+      }
+      
+      // Additionally, try to include adjacent spans if they're very close
+      // This handles cases where misalignment causes selection to miss adjacent words entirely
+      const allSpansArray = Array.from(allSpans)
+      if (allSpansArray.length > 0) {
+        // Check for span immediately before firstSpan
+        const prevSpanIndex = allSpansArray.findIndex(s => s === firstSpan.span)
+        if (prevSpanIndex > 0) {
+          const prevSpan = allSpansArray[prevSpanIndex - 1]
+          const prevCharIndex = parseInt(prevSpan.dataset.charIndex) || 0
+          // If first span selection starts very close to its beginning, include previous span
+          if (firstSpan.startOffset <= Math.max(1, Math.floor(firstSpanFullLength * 0.3))) {
+            const prevSpanText = prevSpan.firstChild?.textContent || ''
+            startCharIndex = Math.min(startCharIndex, prevCharIndex)
+          }
+        }
+        
+        // Check for span immediately after lastSpan
+        const nextSpanIndex = allSpansArray.findIndex(s => s === lastSpan.span)
+        if (nextSpanIndex >= 0 && nextSpanIndex < allSpansArray.length - 1) {
+          const nextSpan = allSpansArray[nextSpanIndex + 1]
+          const nextCharIndex = parseInt(nextSpan.dataset.charIndex) || 0
+          const nextSpanText = nextSpan.firstChild?.textContent || ''
+          // If last span selection ends very close to its end, include next span
+          if (charsFromEnd <= Math.max(1, Math.floor(lastSpanFullLength * 0.3))) {
+            endCharIndex = Math.max(endCharIndex, nextCharIndex + nextSpanText.length)
+          }
+        }
+      }
       
       // Extract text directly from extractedText
       if (startCharIndex >= 0 && endCharIndex <= extractedText.length && startCharIndex < endCharIndex) {
@@ -6597,8 +6662,8 @@ function App() {
 
       if (!pageNum) return
 
-      // Prevent default selection
-      e.preventDefault()
+      // Don't prevent default - allow native selection to work so we can capture what user sees
+      // We'll still use custom overlay for visual feedback
       
       // Get the text node and offset at click position
       const range = getRangeFromPoint(e.clientX, e.clientY)
@@ -6607,9 +6672,9 @@ function App() {
       // Store start of selection
       selectionStartRangeRef.current = range.cloneRange()
       isDraggingSelectionRef.current = true
-
-      // Clear any existing selection
-      window.getSelection().removeAllRanges()
+      
+      // Don't set native selection here - wait until mouseup
+      // Setting it here can interfere with dragging
     }
 
     const handleMouseMove = (e) => {
@@ -6677,9 +6742,45 @@ function App() {
       // Create final selection range
       const selectionRange = selectionStartRangeRef.current.cloneRange()
       selectionRange.setEnd(range.endContainer, range.endOffset)
+      
+      // Check if selection is collapsed (no actual selection)
+      if (selectionRange.collapsed) {
+        // Clear selection overlay
+        Object.values(selectionLayerRefs.current).forEach(layer => {
+          if (layer) layer.innerHTML = ''
+        })
+        isDraggingSelectionRef.current = false
+        selectionStartRangeRef.current = null
+        return
+      }
+      
+      // Update native selection to match our range so we can capture the text
+      const nativeSelection = window.getSelection()
+      nativeSelection.removeAllRanges()
+      try {
+        nativeSelection.addRange(selectionRange.cloneRange())
+      } catch (e) {
+        // Range might be invalid, continue with fallback methods
+        console.warn('Failed to add range to selection:', e)
+      }
 
-      // Use custom extraction to preserve spaces between spans
-      const selectedText = extractTextFromRange(selectionRange).trim()
+      // Primary: Use native browser selection text (what user actually sees)
+      // This directly captures the text content from the selected DOM nodes
+      let selectedText = nativeSelection.toString().trim()
+      
+      // Fallback: If native selection is empty, use range text directly
+      if (!selectedText || selectedText.length === 0) {
+        selectedText = selectionRange.toString().trim()
+      }
+      
+      // Final fallback: Use custom extraction only if both above fail
+      // This should rarely be needed
+      if (!selectedText || selectedText.length === 0) {
+        selectedText = extractTextFromRange(selectionRange).trim()
+      }
+      
+      // Clear native selection after capturing (we use custom overlay for display)
+      nativeSelection.removeAllRanges()
       
       if (selectedText.length === 0) {
         // Clear selection overlay
@@ -6687,6 +6788,7 @@ function App() {
           if (layer) layer.innerHTML = ''
         })
         isDraggingSelectionRef.current = false
+        selectionStartRangeRef.current = null
         return
       }
 
@@ -6747,9 +6849,12 @@ function App() {
           }
           return [...prev, newItem]
         })
+      } else {
+        // No rectangles calculated - selection might be invalid
+        console.warn('No rectangles calculated for selection')
       }
 
-      // Clear selection overlay
+      // Clear selection overlay and reset state
       Object.values(selectionLayerRefs.current).forEach(layer => {
         if (layer) layer.innerHTML = ''
       })
