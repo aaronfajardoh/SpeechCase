@@ -1613,12 +1613,14 @@ function App() {
           // Track position with improved accuracy - use direct position calculation
           let lastHighlightedPosition = null
           let hasStartedHighlighting = false // Prevent highlighting ahead before audio actually starts
+          let lastUpdateTime = 0 // Track when we last updated to limit advancement rate
           const updatePosition = () => {
             if (audio.currentTime && audio.duration && !isCancelledRef.current) {
               // CRITICAL: Don't highlight if audio hasn't actually started (currentTime too small)
               // This prevents highlighting from getting ahead when clicking to start
-              if (audio.currentTime < 0.1) {
-                // Audio just started - wait a bit before highlighting to ensure TTS is actually speaking
+              // Increased threshold to 0.3 seconds to ensure TTS is actually speaking
+              if (audio.currentTime < 0.3) {
+                // Audio just started - wait longer before highlighting to ensure TTS is actually speaking
                 if (!hasStartedHighlighting) {
                   return
                 }
@@ -1631,13 +1633,51 @@ function App() {
               
               // Use direct position calculation based on audio progress
               // No offset - we want to track exactly where the audio is
-              const estimatedPosition = Math.min(
+              let estimatedPosition = Math.min(
                 startPosition + (progress * textLength),
                 startPosition + textLength - 1
               )
               
+              // CRITICAL: Be more conservative at the start - don't advance too quickly
+              // Linear progress can be inaccurate, especially early in playback
+              if (audio.currentTime < 1.0) {
+                // In first second, be very conservative - reduce progress by 30% to prevent getting ahead
+                const conservativeProgress = progress * 0.7
+                estimatedPosition = Math.min(
+                  startPosition + (conservativeProgress * textLength),
+                  startPosition + textLength - 1
+                )
+              }
+              
               // Clamp to valid range
               let clampedPosition = Math.max(0, Math.min(estimatedPosition, extractedText.length - 1))
+              
+              // CRITICAL: Limit maximum advancement per update cycle to prevent getting ahead
+              // This prevents the highlight from jumping forward too quickly
+              if (lastValidHighlightPositionRef.current !== null) {
+                const timeSinceLastUpdate = audio.currentTime - lastUpdateTime
+                lastUpdateTime = audio.currentTime
+                
+                // Calculate maximum allowed advancement based on time elapsed
+                // Assume average reading speed of ~150 words/min = ~750 chars/min = ~12.5 chars/sec
+                // But be more conservative - limit to 8 chars per 100ms update (80 chars/sec max)
+                const maxAdvancementPerUpdate = Math.max(5, Math.min(50, timeSinceLastUpdate * 80))
+                const positionDiff = clampedPosition - lastValidHighlightPositionRef.current
+                
+                if (positionDiff > maxAdvancementPerUpdate) {
+                  // Position advanced too quickly - cap it to prevent getting ahead
+                  clampedPosition = lastValidHighlightPositionRef.current + maxAdvancementPerUpdate
+                  console.log('[Google TTS] Capped position advancement', {
+                    estimated: estimatedPosition,
+                    capped: clampedPosition,
+                    lastValid: lastValidHighlightPositionRef.current,
+                    timeSinceLastUpdate,
+                    maxAdvancement: maxAdvancementPerUpdate
+                  })
+                }
+              } else {
+                lastUpdateTime = audio.currentTime
+              }
               
               // CRITICAL: Add page-based validation to prevent cross-page jumps
               const currentPage = currentReadingPageRef.current
@@ -1735,13 +1775,15 @@ function App() {
           
           // Reset page tracking when starting new playback
           currentReadingPageRef.current = null
-          lastValidHighlightPositionRef.current = null
+          // CRITICAL: Initialize lastValidHighlightPositionRef to startPosition to prevent initial jump
+          // This ensures the first update doesn't jump ahead
+          lastValidHighlightPositionRef.current = startPosition
           lastHighlightedCharIndexRef.current = null
           lastHighlightedElementRef.current = null
           
           // CRITICAL: Don't highlight immediately - wait for timeupdate to ensure audio is actually playing
           // This prevents highlighting from getting ahead when clicking to start
-          // The timeupdate handler will highlight once audio.currentTime >= 0.1
+          // The timeupdate handler will highlight once audio.currentTime >= 0.3
 
           if ('mediaSession' in navigator) {
             navigator.mediaSession.playbackState = 'playing'
@@ -1973,12 +2015,14 @@ function App() {
           // Track position with improved accuracy for chunks - use direct position calculation
           let lastHighlightedPosition = null
           let hasStartedHighlighting = false // Prevent highlighting ahead before audio actually starts
+          let lastUpdateTime = 0 // Track when we last updated to limit advancement rate
           const updatePosition = () => {
             if (audio.currentTime && audio.duration && !isCancelledRef.current) {
               // CRITICAL: Don't highlight if audio hasn't actually started (currentTime too small)
               // This prevents highlighting from getting ahead when clicking to start
-              if (audio.currentTime < 0.1) {
-                // Audio just started - wait a bit before highlighting to ensure TTS is actually speaking
+              // Increased threshold to 0.3 seconds to ensure TTS is actually speaking
+              if (audio.currentTime < 0.3) {
+                // Audio just started - wait longer before highlighting to ensure TTS is actually speaking
                 if (!hasStartedHighlighting) {
                   return
                 }
@@ -1993,7 +2037,16 @@ function App() {
               
               // Use direct position calculation based on audio progress
               // No offset - we want to track exactly where the audio is
-              const positionInChunk = progress * chunkTextLength
+              let positionInChunk = progress * chunkTextLength
+              
+              // CRITICAL: Be more conservative at the start - don't advance too quickly
+              // Linear progress can be inaccurate, especially early in playback
+              if (audio.currentTime < 1.0) {
+                // In first second, be very conservative - reduce progress by 30% to prevent getting ahead
+                const conservativeProgress = progress * 0.7
+                positionInChunk = conservativeProgress * chunkTextLength
+              }
+              
               let estimatedPosition = Math.min(
                 chunkStartPosition + positionInChunk,
                 chunkEndPosition - 1
@@ -2001,6 +2054,33 @@ function App() {
               
               // Clamp to valid range in extracted text
               let clampedPosition = Math.max(0, Math.min(estimatedPosition, extractedText.length - 1))
+              
+              // CRITICAL: Limit maximum advancement per update cycle to prevent getting ahead
+              // This prevents the highlight from jumping forward too quickly
+              if (lastValidHighlightPositionRef.current !== null) {
+                const timeSinceLastUpdate = audio.currentTime - lastUpdateTime
+                lastUpdateTime = audio.currentTime
+                
+                // Calculate maximum allowed advancement based on time elapsed
+                // Assume average reading speed of ~150 words/min = ~750 chars/min = ~12.5 chars/sec
+                // But be more conservative - limit to 8 chars per 100ms update (80 chars/sec max)
+                const maxAdvancementPerUpdate = Math.max(5, Math.min(50, timeSinceLastUpdate * 80))
+                const positionDiff = clampedPosition - lastValidHighlightPositionRef.current
+                
+                if (positionDiff > maxAdvancementPerUpdate) {
+                  // Position advanced too quickly - cap it to prevent getting ahead
+                  clampedPosition = lastValidHighlightPositionRef.current + maxAdvancementPerUpdate
+                  console.log('[Google TTS Chunk] Capped position advancement', {
+                    estimated: estimatedPosition,
+                    capped: clampedPosition,
+                    lastValid: lastValidHighlightPositionRef.current,
+                    timeSinceLastUpdate,
+                    maxAdvancement: maxAdvancementPerUpdate
+                  })
+                }
+              } else {
+                lastUpdateTime = audio.currentTime
+              }
               
               // CRITICAL: Add page-based validation to prevent cross-page jumps
               const currentPage = currentReadingPageRef.current
@@ -2085,13 +2165,15 @@ function App() {
               
               // Reset page tracking when starting new playback
               currentReadingPageRef.current = null
-              lastValidHighlightPositionRef.current = null
+              // CRITICAL: Initialize lastValidHighlightPositionRef to startPosition to prevent initial jump
+              // This ensures the first update doesn't jump ahead
+              lastValidHighlightPositionRef.current = startPosition
               lastHighlightedCharIndexRef.current = null
               lastHighlightedElementRef.current = null
               
               // CRITICAL: Don't highlight immediately - wait for timeupdate to ensure audio is actually playing
               // This prevents highlighting from getting ahead when clicking to start
-              // The timeupdate handler will highlight once audio.currentTime >= 0.1
+              // The timeupdate handler will highlight once audio.currentTime >= 0.3
 
               if ('mediaSession' in navigator) {
                 navigator.mediaSession.playbackState = 'playing'
@@ -7224,6 +7306,88 @@ function App() {
       if (rafId) cancelAnimationFrame(rafId)
     }
   }, [isSidebarCollapsed, sidebarWidth, highlights])
+
+  // Re-render TTS reading highlights (blue/green) when viewport, zoom, or layout changes
+  // This ensures reading highlights maintain their position on text during all viewport changes
+  useEffect(() => {
+    // Only re-render if there's an active reading highlight
+    if (!currentReadingElementRef.current || !hasCurrentReadingPosition) return
+
+    let rafId = null
+    let timeoutId = null
+    let resizeObserver = null
+
+    const reRenderReadingHighlight = () => {
+      const element = currentReadingElementRef.current
+      // Double-check element is still valid and connected
+      if (!element || !element.isConnected || !hasCurrentReadingPosition) return
+
+      // Re-apply the reading highlight to update overlay position
+      // This will recalculate bounding boxes and reposition the haze overlay
+      applyReadingHighlight(element, false)
+    }
+
+    const handleLayoutChange = () => {
+      // Only proceed if we still have an active reading highlight
+      if (!currentReadingElementRef.current || !hasCurrentReadingPosition) return
+
+      // Cancel any pending updates
+      if (timeoutId) clearTimeout(timeoutId)
+      if (rafId) cancelAnimationFrame(rafId)
+
+      // Use both timeout and requestAnimationFrame for reliable updates
+      timeoutId = setTimeout(() => {
+        reRenderReadingHighlight()
+        
+        // Also schedule on next frame for extra reliability
+        rafId = requestAnimationFrame(() => {
+          reRenderReadingHighlight()
+          rafId = null
+        })
+      }, 50) // Shorter delay for reading highlights (they need to be more responsive)
+    }
+
+    // Handle window resize
+    window.addEventListener('resize', handleLayoutChange)
+
+    // Handle zoom changes using Visual Viewport API (more accurate than resize for zoom)
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleLayoutChange)
+      window.visualViewport.addEventListener('scroll', handleLayoutChange)
+    }
+
+    // Use ResizeObserver to detect any layout changes in the PDF container
+    // This catches sidebar changes, zoom, and any other layout shifts
+    resizeObserver = new ResizeObserver(() => {
+      handleLayoutChange()
+    })
+
+    // Observe the PDF container
+    const pdfContainer = document.querySelector('.pdf-viewer-container') || 
+                         document.querySelector('.pdf-pages-container')
+    if (pdfContainer) {
+      resizeObserver.observe(pdfContainer)
+    }
+
+    // Also observe all text layer containers for changes
+    const textLayers = document.querySelectorAll('.text-layer')
+    textLayers.forEach(layer => {
+      resizeObserver.observe(layer)
+    })
+
+    return () => {
+      window.removeEventListener('resize', handleLayoutChange)
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', handleLayoutChange)
+        window.visualViewport.removeEventListener('scroll', handleLayoutChange)
+      }
+      if (resizeObserver) {
+        resizeObserver.disconnect()
+      }
+      if (timeoutId) clearTimeout(timeoutId)
+      if (rafId) cancelAnimationFrame(rafId)
+    }
+  }, [isSidebarCollapsed, sidebarWidth, hasCurrentReadingPosition, pageScale])
 
   // Update ref when hover state changes
   useEffect(() => {
