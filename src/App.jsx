@@ -5458,6 +5458,99 @@ function App() {
     .timeline-event-icon.icon-below {
       top: calc(50% + 130px);
     }
+
+    .timeline-event-label {
+      cursor: pointer;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .timeline-event-label:hover {
+      transform: translateX(-50%) translateY(-1px);
+      border-color: #8ab4f8;
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.45);
+    }
+
+    .timeline-dot-small {
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .timeline-dot-small:hover {
+      transform: translate(-50%, -50%) scale(1.2);
+    }
+
+    .timeline-event-details-tooltip {
+      position: absolute;
+      min-width: 260px;
+      max-width: 360px;
+      background: #202124;
+      border-radius: 12px;
+      border: 1px solid #5f6368;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+      padding: 0.75rem 0.9rem 0.9rem 0.9rem;
+      z-index: 40;
+      color: #e8eaed;
+      display: none;
+    }
+
+    .timeline-event-details-tooltip.visible {
+      display: block;
+    }
+
+    .tooltip-close {
+      position: absolute;
+      top: 0.4rem;
+      right: 0.4rem;
+      background: transparent;
+      border: none;
+      color: #9aa0a6;
+      cursor: pointer;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      line-height: 1;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    .tooltip-close:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: #e8eaed;
+    }
+
+    .tooltip-close::before {
+      content: '×';
+    }
+
+    .tooltip-header {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      margin-bottom: 0.45rem;
+      padding-right: 1.3rem;
+    }
+
+    .tooltip-date {
+      font-size: 0.825rem;
+      color: #9aa0a6;
+    }
+
+    .tooltip-title {
+      font-size: 0.99rem;
+      font-weight: 600;
+      color: #e8eaed;
+    }
+
+    .tooltip-description {
+      font-size: 0.88rem;
+      color: #e8eaed;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
   </style>
 </head>
 <body>
@@ -5467,7 +5560,7 @@ function App() {
       <span class="event-count">${timeline.length} events</span>
     </div>
     <div class="proportional-timeline-container">
-      <div class="timeline-track">
+      <div class="timeline-track" id="timeline-track">
         <div class="timeline-horizontal-line"></div>
         ${stageBoundaries.length > 0 ? `
         <div class="timeline-stage-separators">
@@ -5511,13 +5604,13 @@ function App() {
             const briefDescription = getBriefDescription(event.event || event.description, 4)
 
             return `
-            <div class="timeline-event-marker ${isAbove ? 'above' : 'below'} ${importanceClass}" style="left: ${leftPercent}%">
+            <div class="timeline-event-marker ${isAbove ? 'above' : 'below'} ${importanceClass}" style="left: ${leftPercent}%" data-event-index="${index}">
               ${isRemarkable && eventIcon ? `
               <div class="timeline-event-icon ${isAbove ? 'icon-above' : 'icon-below'}" style="background-color: transparent;">
                 ${eventIcon}
               </div>
               ` : ''}
-              <div class="timeline-event-label ${isAbove ? 'label-above' : 'label-below'} ${importanceClass}">
+              <div class="timeline-event-label ${isAbove ? 'label-above' : 'label-below'} ${importanceClass}" data-event-index="${index}">
                 <div class="timeline-event-date">
                   ${event.displayDate || event.date || `Event ${event.order || index + 1}`}
                 </div>
@@ -5525,13 +5618,110 @@ function App() {
                   ${briefDescription}
                 </div>
               </div>
-              <div class="timeline-dot-small ${importanceClass}"></div>
+              <div class="timeline-dot-small ${importanceClass}" data-event-index="${index}"></div>
             </div>`
           }).join('')}
+        </div>
+        <!-- Tooltip container -->
+        <div class="timeline-event-details-tooltip" id="event-tooltip">
+          <button class="tooltip-close" id="tooltip-close"></button>
+          <div class="tooltip-header">
+            <div class="tooltip-date" id="tooltip-date"></div>
+            <div class="tooltip-title" id="tooltip-title"></div>
+          </div>
+          <div class="tooltip-description" id="tooltip-description"></div>
         </div>
       </div>
     </div>
   </div>
+  <script>
+    (function() {
+      const track = document.getElementById('timeline-track');
+      const tooltip = document.getElementById('event-tooltip');
+      const tooltipDate = document.getElementById('tooltip-date');
+      const tooltipTitle = document.getElementById('tooltip-title');
+      const tooltipDescription = document.getElementById('tooltip-description');
+      const tooltipClose = document.getElementById('tooltip-close');
+      let selectedEventIndex = null;
+
+      // Event data stored in data attributes
+      const eventData = ${JSON.stringify(laidOutEvents.map((event, index) => ({
+        index,
+        displayDate: event.displayDate || event.date || '',
+        title: event.event || `Event ${event.order || index + 1}`,
+        description: event.description || event.event || 'No description available.'
+      })))};
+
+      function showTooltip(eventIndex, element) {
+        const event = eventData[eventIndex];
+        if (!event) return;
+
+        // Update tooltip content
+        tooltipDate.textContent = event.displayDate || '';
+        tooltipTitle.textContent = event.title;
+        tooltipDescription.textContent = event.description;
+
+        // Position tooltip
+        const rect = element.getBoundingClientRect();
+        const containerRect = track.getBoundingClientRect();
+        
+        const spaceAbove = rect.top - containerRect.top;
+        const spaceBelow = containerRect.bottom - rect.bottom;
+        const isAbove = spaceAbove > spaceBelow;
+
+        tooltip.style.top = isAbove
+          ? (rect.top - containerRect.top - 10) + 'px'
+          : (rect.bottom - containerRect.top + 10) + 'px';
+        tooltip.style.left = (rect.left + rect.width / 2 - containerRect.left) + 'px';
+        tooltip.style.transform = 'translateX(-50%)';
+        tooltip.classList.add('visible');
+        selectedEventIndex = eventIndex;
+      }
+
+      function hideTooltip() {
+        tooltip.classList.remove('visible');
+        selectedEventIndex = null;
+      }
+
+      // Handle clicks on event labels and dots
+      function handleEventClick(e) {
+        const eventIndex = parseInt(e.target.getAttribute('data-event-index'));
+        if (isNaN(eventIndex)) return;
+
+        // Find the event marker element
+        const eventMarker = e.target.closest('.timeline-event-marker');
+        if (!eventMarker) return;
+
+        // Find the dot element for positioning
+        const dot = eventMarker.querySelector('.timeline-dot-small');
+        if (!dot) return;
+
+        if (selectedEventIndex === eventIndex) {
+          hideTooltip();
+        } else {
+          showTooltip(eventIndex, dot);
+        }
+      }
+
+      // Attach click handlers
+      document.querySelectorAll('.timeline-event-label, .timeline-dot-small').forEach(el => {
+        el.addEventListener('click', handleEventClick);
+      });
+
+      // Close tooltip button
+      tooltipClose.addEventListener('click', function(e) {
+        e.stopPropagation();
+        hideTooltip();
+      });
+
+      // Close tooltip when clicking outside
+      document.addEventListener('click', function(e) {
+        if (!tooltip.contains(e.target) && !e.target.closest('.timeline-event-marker')) {
+          hideTooltip();
+        }
+      });
+    })();
+  </script>
 </body>
 </html>`
 
