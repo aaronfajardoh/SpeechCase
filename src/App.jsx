@@ -2710,7 +2710,7 @@ function App() {
     let charIndex = 0
     let isFirstItem = true
 
-    textContent.items.forEach((item) => {
+    textContent.items.forEach((item, itemIndex) => {
       // Trim item to match extractedText construction (avoids double spaces)
       const trimmedStr = item.str.trim()
       // Skip empty items (they're filtered out in extractedText)
@@ -2724,7 +2724,12 @@ function App() {
       const fontSize = (fontHeight * scaleY)
       const fontFamily = item.fontName
       const baseX = tx[4] * scaleX
-      const baseY = (tx[5] - fontHeight) * scaleY
+      // FIXED Y-axis: tx[5] is the baseline Y coordinate in viewport space
+      // To position the top of text correctly, we need to account for the font's ascent
+      // Most fonts have an ascent of approximately 80% of font height
+      // So we position at: baseline - (ascent ratio * fontHeight)
+      const ascentRatio = 0.8 // Approximate ratio of ascent to font height
+      const baseY = (tx[5] - fontHeight * ascentRatio) * scaleY
       
       // Account for space between items (extractedText joins trimmed items with ' ')
       // The first item doesn't have a preceding space, but subsequent items do
@@ -2733,7 +2738,7 @@ function App() {
       }
       isFirstItem = false
       
-      // Split the trimmed text item into words and spaces
+      // Split the trimmed text item into words and spaces for highlighting
       // Group consecutive word characters together as words
       // Keep spaces and punctuation as separate segments for seamless highlighting
       const words = []
@@ -2759,30 +2764,57 @@ function App() {
         words.push(currentWord)
       }
       
-      let currentX = baseX
       let itemCharIndex = pageCharOffset + charIndex
       let textBeforeCurrentWord = ''
+      
+      // FIXED X-axis justification: Calculate actual item width from next item's position
+      // This accounts for justified text spacing where spaces are stretched
+      let actualItemWidth = null
+      if (itemIndex < textContent.items.length - 1) {
+        const nextItem = textContent.items[itemIndex + 1]
+        if (nextItem && nextItem.str && nextItem.str.trim().length > 0) {
+          const nextTx = pdfjsLib.Util.transform(viewport.transform, nextItem.transform)
+          const nextBaseX = nextTx[4] * scaleX
+          // Check if next item is on the same line (similar Y coordinate)
+          const nextBaseY = nextTx[5] * scaleY
+          const yDiff = Math.abs(nextBaseY - (tx[5] * scaleY))
+          // If Y difference is small (same line), use next item's X to calculate actual width
+          if (yDiff < fontSize * 0.5) {
+            actualItemWidth = nextBaseX - baseX
+          }
+        }
+      }
+      
+      // Calculate character spacing factor if we detected actual width
+      let charSpacingFactor = 1.0
+      if (actualItemWidth !== null) {
+        const measuredWidth = measureTextWidth(trimmedStr, fontFamily, fontSize)
+        if (measuredWidth > 0) {
+          charSpacingFactor = actualItemWidth / measuredWidth
+        }
+      }
       
       words.forEach((word) => {
         const span = document.createElement('span')
         span.textContent = word
         span.style.position = 'absolute'
         // Calculate x position by measuring text width before this word
-        const wordX = baseX + measureTextWidth(textBeforeCurrentWord, fontFamily, fontSize)
+        // Apply spacing factor to account for justified text
+        const textBeforeWidth = measureTextWidth(textBeforeCurrentWord, fontFamily, fontSize)
+        const wordX = baseX + (textBeforeWidth * charSpacingFactor)
         
         span.style.left = wordX + 'px'
         span.style.top = baseY + 'px'
         span.style.fontSize = fontSize + 'px'
         span.style.fontFamily = fontFamily
         span.style.transform = `rotate(${angle}rad)`
-        span.style.color = 'transparent'
+        // TEMPORARILY VISIBLE: Changed from 'transparent' to make TextLayer visible for debugging
+        span.style.color = 'rgba(255, 0, 0, 0.5)' // Semi-transparent red to distinguish from PDF text
+        span.style.backgroundColor = 'rgba(255, 255, 0, 0.2)' // Light yellow background for visibility
         span.style.cursor = interactionMode === 'highlight' ? 'text' : 'pointer'
         span.style.userSelect = interactionMode === 'highlight' ? 'text' : 'none'
         span.style.whiteSpace = 'pre'
-        // Ensure the span displays as inline-block so background covers full width
         span.style.display = 'inline-block'
-        // Allow pointer events to pass through to highlights when not actively selecting
-        // The highlight rectangles will capture hover events
         span.style.pointerEvents = interactionMode === 'highlight' ? 'auto' : 'auto'
         span.dataset.page = pageNum
         span.dataset.charIndex = itemCharIndex
@@ -2824,7 +2856,6 @@ function App() {
         // Update position for next word
         textBeforeCurrentWord += word
         itemCharIndex += word.length
-        currentX = wordX + measureTextWidth(word, fontFamily, fontSize)
       })
       
       // Use trimmed length to match extractedText construction
