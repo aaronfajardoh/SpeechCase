@@ -2710,156 +2710,368 @@ function App() {
     let charIndex = 0
     let isFirstItem = true
 
+    // Pre-process items to group by line and calculate line-level justification factors
+    // This handles cases where justification spans multiple items on the same line
+    // First, collect all items with their positions
+    const allItems = []
     textContent.items.forEach((item, itemIndex) => {
-      // Trim item to match extractedText construction (avoids double spaces)
-      const trimmedStr = item.str.trim()
-      // Skip empty items (they're filtered out in extractedText)
-      if (trimmedStr.length === 0) {
+      // Only process items that will actually be rendered (non-empty after trimming)
+      const trimmedStr = item.str ? item.str.trim() : ''
+      if (trimmedStr.length === 0) return
+      
+      const tx = pdfjsLib.Util.transform(viewport.transform, item.transform)
+      const fontHeight = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3])
+      const fontSize = fontHeight * scaleY
+      const itemWidth = measureTextWidth(trimmedStr, item.fontName, fontSize)
+      const baseY = tx[5] * scaleY
+      
+      allItems.push({ 
+        item, 
+        itemIndex, 
+        tx, 
+        baseX: tx[4] * scaleX,
+        baseY,
+        trimmedStr,
+        fontName: item.fontName,
+        fontSize,
+        itemWidth
+      })
+    })
+    
+    // Cluster items by Y coordinate using a tolerance-based approach
+    // Items within a small tolerance of each other are considered on the same line
+    const itemsByLine = new Map()
+    // Use a tolerance based on typical line spacing - about 5px should catch items on same line
+    const lineTolerance = 5 * scaleY // Scale tolerance with display scale
+    
+    allItems.forEach(itemData => {
+      // Find existing line group within tolerance, or create new one
+      let assignedLineY = null
+      for (const [lineY, lineItems] of itemsByLine.entries()) {
+        // Check if any item on this line is within tolerance
+        const isOnSameLine = lineItems.some(existingItem => 
+          Math.abs(existingItem.baseY - itemData.baseY) < lineTolerance
+        )
+        if (isOnSameLine) {
+          assignedLineY = lineY
+          break
+        }
+      }
+      
+      // Use the average Y of the line, or create new line with this item's Y
+      if (assignedLineY === null) {
+        assignedLineY = itemData.baseY
+        itemsByLine.set(assignedLineY, [])
+      }
+      itemsByLine.get(assignedLineY).push(itemData)
+    })
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:2767',message:'Line grouping complete',data:{totalItems:allItems.length,totalLines:itemsByLine.size,lineCounts:Array.from(itemsByLine.values()).map(items=>items.length),lineTolerance},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
+    
+    // Calculate spacing factors for each line
+    const lineSpacingFactors = new Map()
+    itemsByLine.forEach((lineItems, lineY) => {
+      // Sort items by X position to ensure correct order
+      lineItems.sort((a, b) => a.baseX - b.baseX)
+      
+      if (lineItems.length < 2) {
+        // Single item on line - still need to store line end in case item needs to stretch
+        const singleItem = lineItems[0]
+        const singleItemLineEnd = singleItem.baseX + singleItem.itemWidth
+        lineItems.forEach(({ itemIndex, itemWidth }) => {
+          lineSpacingFactors.set(itemIndex, 1.0)
+          lineSpacingFactors.set(`width_${itemIndex}`, itemWidth)
+          // Store line end for single-item lines too (in case item needs to stretch)
+          lineSpacingFactors.set(`end_${itemIndex}`, singleItemLineEnd)
+        })
         return
       }
       
-      const tx = pdfjsLib.Util.transform(viewport.transform, item.transform)
-      const angle = Math.atan2(tx[1], tx[0])
-      const fontHeight = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3])
-      const fontSize = (fontHeight * scaleY)
-      const fontFamily = item.fontName
-      const baseX = tx[4] * scaleX
-      // FIXED Y-axis: tx[5] is the baseline Y coordinate in viewport space
-      // To position the top of text correctly, we need to account for the font's ascent
-      // Most fonts have an ascent of approximately 80% of font height
-      // So we position at: baseline - (ascent ratio * fontHeight)
-      const ascentRatio = 0.8 // Approximate ratio of ascent to font height
-      const baseY = (tx[5] - fontHeight * ascentRatio) * scaleY
+      // Calculate total actual width (from leftmost item start to rightmost item end)
+      const leftmostItem = lineItems[0]
+      const rightmostItem = lineItems[lineItems.length - 1]
+      // Actual line width = rightmost item end - leftmost item start
+      const actualLineWidth = (rightmostItem.baseX + rightmostItem.itemWidth) - leftmostItem.baseX
       
-      // Account for space between items (extractedText joins trimmed items with ' ')
-      // The first item doesn't have a preceding space, but subsequent items do
-      if (!isFirstItem) {
-        charIndex += 1 // Add space between items
+      // Calculate total measured width of all items on the line
+      let totalMeasuredWidth = 0
+      lineItems.forEach(({ itemWidth }) => {
+        totalMeasuredWidth += itemWidth
+      })
+      
+      // Calculate gaps between items (Hypothesis A, E)
+      let totalGaps = 0
+      for (let i = 0; i < lineItems.length - 1; i++) {
+        const currentItem = lineItems[i]
+        const nextItem = lineItems[i + 1]
+        const gap = nextItem.baseX - (currentItem.baseX + currentItem.itemWidth)
+        totalGaps += gap
       }
-      isFirstItem = false
       
-      // Split the trimmed text item into words and spaces for highlighting
-      // Group consecutive word characters together as words
-      // Keep spaces and punctuation as separate segments for seamless highlighting
-      const words = []
-      let currentWord = ''
-      for (let i = 0; i < trimmedStr.length; i++) {
-        const char = trimmedStr[i]
-        if (/\w/.test(char)) {
-          // Word character - add to current word
-          currentWord += char
-        } else {
-          // Non-word character (space, punctuation, etc.)
-          // First, save any accumulated word
-          if (currentWord.length > 0) {
-            words.push(currentWord)
-            currentWord = ''
+      // Calculate spacing factor for this line
+      // This factor will stretch all characters/spaces proportionally to match PDF justification
+      const spacingFactor = totalMeasuredWidth > 0 ? actualLineWidth / totalMeasuredWidth : 1.0
+      const lineRightmostEnd = rightmostItem.baseX + rightmostItem.itemWidth
+      
+      // #region agent log
+      // Log line end calculation details to verify correctness
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:2814',message:'Line end calculation detail',data:{lineY,itemCount:lineItems.length,rightmostItemIndex:rightmostItem.itemIndex,rightmostBaseX:rightmostItem.baseX,rightmostItemWidth:rightmostItem.itemWidth,lineRightmostEnd,leftmostBaseX:leftmostItem.baseX,actualLineWidth,totalMeasuredWidth,spacingFactor,itemIndices:lineItems.map(i=>i.itemIndex)},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:2797',message:'Line justification calculation',data:{lineY,itemCount:lineItems.length,leftmostX:leftmostItem.baseX,rightmostX:rightmostItem.baseX,rightmostEnd:lineRightmostEnd,actualLineWidth,totalMeasuredWidth,totalGaps,spacingFactor,itemIndices:lineItems.map(i=>i.itemIndex)},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A,E'})}).catch(()=>{});
+      // #endregion
+      
+      // Store both spacing factor and line end position for each item
+      // Also store the item's natural width (from line grouping calculation) for accurate spacing
+      // Store which line each item belongs to, and the next item on the same line
+      lineItems.forEach(({ itemIndex, itemWidth }, idx) => {
+        lineSpacingFactors.set(itemIndex, spacingFactor)
+        // Store item's natural width (calculated during line grouping) for accurate spacing calculation
+        lineSpacingFactors.set(`width_${itemIndex}`, itemWidth)
+        // Store line end position for the rightmost item (last on line)
+        if (idx === lineItems.length - 1) {
+          lineSpacingFactors.set(`end_${itemIndex}`, lineRightmostEnd)
+        }
+        // Store the next item on the same line (for accurate item end positioning)
+        if (idx < lineItems.length - 1) {
+          const nextItemOnLine = lineItems[idx + 1]
+          lineSpacingFactors.set(`next_${itemIndex}`, nextItemOnLine.itemIndex)
+        }
+      })
+    })
+
+    // Create canvas context for measuring text
+    const tempCanvas = document.createElement('canvas')
+    const tempContext = tempCanvas.getContext('2d')
+
+    // NEW APPROACH: Line-based rendering with justified spacing
+    // For each line, measure its width in the PDF and render all words with spacing to match
+    const sortedLines = Array.from(itemsByLine.entries()).sort((a, b) => a[0] - b[0]) // Sort by Y position
+    
+    sortedLines.forEach(([lineY, lineItems], lineIndex) => {
+      // Sort items by X position to ensure correct order
+      lineItems.sort((a, b) => a.baseX - b.baseX)
+      
+      if (lineItems.length === 0) return
+      
+      // Calculate line width from PDF positions
+      const leftmostItem = lineItems[0]
+      const rightmostItem = lineItems[lineItems.length - 1]
+      const lineStartX = leftmostItem.baseX
+      
+      // Find the actual line end position
+      // For justified text, the PDF applies spacing, so measured width might not match actual end
+      // We need to find where the rightmost item actually ends in the PDF
+      let lineEndX = rightmostItem.baseX + rightmostItem.itemWidth // Fallback to measured width
+      
+      // For justified text, we can infer the right margin from the next line's start position
+      // if the next line starts at the same X as the current line (same left margin)
+      // The right margin would be where the next line would end if it were justified
+      // But actually, we can look at the gap between the rightmost item and where the next line starts
+      if (lineIndex < sortedLines.length - 1) {
+        const nextLineItems = sortedLines[lineIndex + 1][1]
+        if (nextLineItems && nextLineItems.length > 0) {
+          nextLineItems.sort((a, b) => a.baseX - b.baseX)
+          const nextLineFirstItem = nextLineItems[0]
+          const nextLineStartX = nextLineFirstItem.baseX
+          
+          // If next line starts at roughly the same X as current line (same left margin),
+          // then for justified text, the current line should end at the right margin
+          // The right margin can be inferred from the pattern: if lines are justified,
+          // they should all have the same width
+          // So we can use: rightMargin = leftMargin + (average line width from other lines)
+          // OR: we can look at the rightmost item's actual end by checking if there's
+          // a gap before the next line starts
+          
+          // Actually, a simpler approach: for justified text, find the maximum X position
+          // where any line's rightmost item ends, and use that as the right margin
+          // But for now, let's try using the next line's start as a hint
+          // If the next line starts at the same X, the current line should end at the right margin
+          // We can estimate the right margin by looking at the pattern of line widths
+          
+          // For now, let's try a different approach: measure the actual end of the rightmost item
+          // by looking at where the next item would be if it were on the same line
+          // But since it's the rightmost, we need to find the right margin
+          
+          // Actually, the simplest fix: for justified text, the line should extend to where
+          // the text would naturally end if it were stretched. We can calculate this by
+          // finding the maximum X position of all items on the line, then adding the
+          // measured width of the rightmost item, but accounting for justification spacing
+          
+          // Check if next line starts at same left margin (justified paragraph)
+          const xDiff = Math.abs(nextLineStartX - lineStartX)
+          if (xDiff < 10) {
+            // Next line starts at same left margin - this is justified text
+            // For justified text, all lines should have the same width
+            // Find the maximum line width by looking at nearby lines
+            let maxLineEndX = rightmostItem.baseX + rightmostItem.itemWidth
+            
+            // Look at a few lines ahead to find the maximum rightmost position
+            for (let i = lineIndex; i < Math.min(lineIndex + 10, sortedLines.length); i++) {
+              const [checkLineY, checkLineItems] = sortedLines[i]
+              if (checkLineItems && checkLineItems.length > 0) {
+                checkLineItems.sort((a, b) => a.baseX - b.baseX)
+                const checkLeftmost = checkLineItems[0]
+                const checkRightmost = checkLineItems[checkLineItems.length - 1]
+                
+                // Only consider lines that start at roughly the same X (same left margin)
+                if (Math.abs(checkLeftmost.baseX - lineStartX) < 10) {
+                  const checkLineEndX = checkRightmost.baseX + checkRightmost.itemWidth
+                  maxLineEndX = Math.max(maxLineEndX, checkLineEndX)
+                }
+              }
+            }
+            
+            // Use the maximum line end position as the right margin
+            lineEndX = maxLineEndX
           }
-          // Add the non-word character as its own segment
-          words.push(char)
         }
       }
-      // Don't forget the last word if there's no trailing punctuation
-      if (currentWord.length > 0) {
-        words.push(currentWord)
+      
+      const lineWidth = lineEndX - lineStartX
+      
+      // #region agent log
+      // Log line width calculation for debugging
+      if (lineIndex < 5) { // Log first 5 lines
+        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:2875',message:'Line width calculation',data:{lineIndex,lineStartX,lineEndX,lineWidth,rightmostItemBaseX:rightmostItem.baseX,rightmostItemWidth:rightmostItem.itemWidth,rightmostItemMeasuredEnd:rightmostItem.baseX + rightmostItem.itemWidth,hasNextLine:lineIndex < sortedLines.length - 1},timestamp:Date.now(),sessionId:'debug-session',runId:'line-width-fix',hypothesisId:'T'})}).catch(()=>{});
       }
+      // #endregion
       
-      let itemCharIndex = pageCharOffset + charIndex
-      let textBeforeCurrentWord = ''
+      // Get line Y position and font properties (use first item as reference)
+      const firstItemData = lineItems[0]
+      const firstTx = firstItemData.tx
+      const angle = Math.atan2(firstTx[1], firstTx[0])
+      const fontHeight = Math.sqrt(firstTx[2] * firstTx[2] + firstTx[3] * firstTx[3])
+      const fontSize = fontHeight * scaleY
+      const fontFamily = firstItemData.fontName
+      const ascentRatio = 0.8
+      const baseY = (firstTx[5] - fontHeight * ascentRatio) * scaleY
       
-      // FIXED X-axis justification: Calculate actual item width from next item's position
-      // This accounts for justified text spacing where spaces are stretched
-      let actualItemWidth = null
-      if (itemIndex < textContent.items.length - 1) {
-        const nextItem = textContent.items[itemIndex + 1]
-        if (nextItem && nextItem.str && nextItem.str.trim().length > 0) {
-          const nextTx = pdfjsLib.Util.transform(viewport.transform, nextItem.transform)
-          const nextBaseX = nextTx[4] * scaleX
-          // Check if next item is on the same line (similar Y coordinate)
-          const nextBaseY = nextTx[5] * scaleY
-          const yDiff = Math.abs(nextBaseY - (tx[5] * scaleY))
-          // If Y difference is small (same line), use next item's X to calculate actual width
-          if (yDiff < fontSize * 0.5) {
-            actualItemWidth = nextBaseX - baseX
+      // Collect all words from all items on this line
+      const lineWords = []
+      let lineCharIndex = pageCharOffset + charIndex
+      
+      lineItems.forEach((itemData, itemIdx) => {
+        const trimmedStr = itemData.trimmedStr
+        
+        // Account for space between items (extractedText joins trimmed items with ' ')
+        if (itemIdx > 0) {
+          charIndex += 1 // Add space between items
+          lineCharIndex = pageCharOffset + charIndex
+        }
+        
+        // Split item text into words and spaces
+        const words = []
+        let currentWord = ''
+        for (let i = 0; i < trimmedStr.length; i++) {
+          const char = trimmedStr[i]
+          if (/\w/.test(char)) {
+            currentWord += char
+          } else {
+            if (currentWord.length > 0) {
+              words.push(currentWord)
+              currentWord = ''
+            }
+            words.push(char)
           }
         }
-      }
-      
-      // Calculate character spacing factor if we detected actual width
-      let charSpacingFactor = 1.0
-      if (actualItemWidth !== null) {
-        const measuredWidth = measureTextWidth(trimmedStr, fontFamily, fontSize)
-        if (measuredWidth > 0) {
-          charSpacingFactor = actualItemWidth / measuredWidth
+        if (currentWord.length > 0) {
+          words.push(currentWord)
         }
-      }
+        
+        // Add words to line words array with their char indices
+        words.forEach(word => {
+          lineWords.push({
+            word,
+            charIndex: lineCharIndex,
+            itemIndex: itemData.itemIndex
+          })
+          lineCharIndex += word.length
+        })
+        
+        charIndex += trimmedStr.length
+      })
       
-      words.forEach((word) => {
+      // Calculate natural width of all words (without spacing)
+      tempContext.font = `${fontSize}px ${fontFamily}`
+      let naturalWidth = 0
+      lineWords.forEach(({ word }) => {
+        naturalWidth += tempContext.measureText(word).width
+      })
+      
+      // Calculate spacing to match line width exactly
+      // For justified text, distribute extra space between words
+      const wordTokens = lineWords.filter(w => /\w/.test(w.word))
+      const wordCount = wordTokens.length
+      const spaceCount = wordCount > 1 ? wordCount - 1 : 0
+      const extraWidth = lineWidth - naturalWidth
+      const spacingPerGap = spaceCount > 0 ? extraWidth / spaceCount : 0
+      
+      // Create container for the entire line
+      const lineContainer = document.createElement('span')
+      lineContainer.style.position = 'absolute'
+      lineContainer.style.left = lineStartX + 'px'
+      lineContainer.style.top = baseY + 'px'
+      lineContainer.style.fontSize = fontSize + 'px'
+      lineContainer.style.fontFamily = fontFamily
+      lineContainer.style.transform = `rotate(${angle}rad)`
+      lineContainer.style.whiteSpace = 'pre'
+      lineContainer.style.display = 'inline-block'
+      lineContainer.style.overflow = 'visible'
+      
+      // Render all words in the line container with spacing
+      let wordTokenIndex = 0
+      lineWords.forEach(({ word, charIndex: wordCharIndex, itemIndex }, wordIdx) => {
         const span = document.createElement('span')
         span.textContent = word
-        span.style.position = 'absolute'
-        // Calculate x position by measuring text width before this word
-        // Apply spacing factor to account for justified text
-        const textBeforeWidth = measureTextWidth(textBeforeCurrentWord, fontFamily, fontSize)
-        const wordX = baseX + (textBeforeWidth * charSpacingFactor)
-        
-        span.style.left = wordX + 'px'
-        span.style.top = baseY + 'px'
-        span.style.fontSize = fontSize + 'px'
-        span.style.fontFamily = fontFamily
-        span.style.transform = `rotate(${angle}rad)`
-        // TEMPORARILY VISIBLE: Changed from 'transparent' to make TextLayer visible for debugging
-        span.style.color = 'rgba(255, 0, 0, 0.5)' // Semi-transparent red to distinguish from PDF text
-        span.style.backgroundColor = 'rgba(255, 255, 0, 0.2)' // Light yellow background for visibility
+        span.style.position = 'relative'
+        span.style.display = 'inline'
+        span.style.color = 'rgba(255, 0, 0, 0.5)'
+        span.style.backgroundColor = 'rgba(255, 255, 0, 0.2)'
         span.style.cursor = interactionMode === 'highlight' ? 'text' : 'pointer'
         span.style.userSelect = interactionMode === 'highlight' ? 'text' : 'none'
-        span.style.whiteSpace = 'pre'
-        span.style.display = 'inline-block'
         span.style.pointerEvents = interactionMode === 'highlight' ? 'auto' : 'auto'
         span.dataset.page = pageNum
-        span.dataset.charIndex = itemCharIndex
+        span.dataset.charIndex = wordCharIndex
         
-        // Mark space-only spans to prevent double highlighting
         if (!/\S/.test(word)) {
           span.classList.add('text-space')
         }
         
-        // Store text item with position info
+        // Add spacing after word tokens (not after punctuation or spaces)
+        // This distributes the extra width between words for justification
+        if (/\w/.test(word) && wordTokenIndex < wordCount - 1 && spacingPerGap > 0) {
+          span.style.marginRight = spacingPerGap + 'px'
+          wordTokenIndex++
+        }
+        
         const textItem = {
           str: word,
           page: pageNum,
-          charIndex: itemCharIndex,
+          charIndex: wordCharIndex,
           element: span
         }
         pageTextItems.push(textItem)
         
-        // Add click handler - behavior depends on mode
         span.addEventListener('click', (e) => {
           if (interactionMode === 'read') {
             e.preventDefault()
-            // For word-level spans, pass both the charIndex and the element
-            // so we can mark it directly without searching
             if (/\S/.test(word)) {
-              // It's a word - use its start position and element directly
               handleWordClick(textItem.charIndex, word, textItem.element)
             } else {
-              // It's whitespace/punctuation - find the next word
               const nextWordStart = findWordStart(extractedText, textItem.charIndex + word.length)
               handleWordClick(nextWordStart, word)
             }
           }
-          // In highlight mode, let default text selection work
         })
-
-        textLayerDiv.appendChild(span)
         
-        // Update position for next word
-        textBeforeCurrentWord += word
-        itemCharIndex += word.length
+        lineContainer.appendChild(span)
       })
       
-      // Use trimmed length to match extractedText construction
-      charIndex += trimmedStr.length
+      textLayerDiv.appendChild(lineContainer)
     })
 
     // Update text items for this page
