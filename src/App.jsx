@@ -2927,20 +2927,63 @@ function App() {
               }
             }
             
-            // Determine if this line is actually justified
-            // If the current line's width is close to the maximum (within 5% or 20px),
-            // it's likely justified. Otherwise, it's left-aligned.
+            // Determine if this line is justified by checking:
+            // 1. Is the current line itself close to max width?
+            // 2. Is it part of a justified paragraph pattern?
+            // We prioritize individual line check to avoid stretching left-aligned lines
             const widthDiff = maxLineWidth - currentLineMeasuredWidth
             const widthRatio = maxLineWidth > 0 ? currentLineMeasuredWidth / maxLineWidth : 1.0
             
-            // Line is justified if it's within 5% of max width or within 20px
-            const isJustified = widthRatio >= 0.95 || widthDiff < 20
+            // Primary check: Is the current line itself close to max width?
+            // Use stricter threshold: line must be within 92% of max OR within 15px
+            const isCurrentLineJustified = widthRatio >= 0.92 || widthDiff < 15
             
-            if (isJustified) {
-              // This line is justified - use the maximum line end position
+            // Secondary check: Is this part of a justified paragraph?
+            // Only use this if the current line is already close to max (to maintain consistency)
+            let isJustifiedParagraph = false
+            if (isCurrentLineJustified) {
+              // Only check paragraph pattern if current line is already close to max
+              // This prevents stretching isolated short lines
+              let justifiedLineCount = 0
+              let totalLineCount = 0
+              const justifiedThreshold = 0.92 // 92% of max width indicates justification
+              
+              // Analyze nearby lines to determine if this is a justified paragraph
+              for (let i = lineIndex; i < Math.min(lineIndex + 10, sortedLines.length); i++) {
+                const [checkLineY, checkLineItems] = sortedLines[i]
+                if (checkLineItems && checkLineItems.length > 0) {
+                  checkLineItems.sort((a, b) => a.baseX - b.baseX)
+                  const checkLeftmost = checkLineItems[0]
+                  const checkRightmost = checkLineItems[checkLineItems.length - 1]
+                  
+                  // Only consider lines that start at roughly the same X (same left margin)
+                  if (Math.abs(checkLeftmost.baseX - lineStartX) < 10) {
+                    totalLineCount++
+                    const checkLineWidth = (checkRightmost.baseX + checkRightmost.itemWidth) - checkLeftmost.baseX
+                    const checkWidthRatio = maxLineWidth > 0 ? checkLineWidth / maxLineWidth : 1.0
+                    
+                    // If this line is close to max width, it's likely justified
+                    if (checkWidthRatio >= justifiedThreshold) {
+                      justifiedLineCount++
+                    }
+                  }
+                }
+              }
+              
+              // If most lines (>=60%) are close to max width, the paragraph is justified
+              // Use higher threshold (60% instead of 50%) to be more conservative
+              isJustifiedParagraph = totalLineCount > 0 && (justifiedLineCount / totalLineCount) >= 0.6
+            }
+            
+            if (isCurrentLineJustified && isJustifiedParagraph) {
+              // This line is close to max AND part of a justified paragraph - use maximum line end position
+              lineEndX = lineStartX + maxLineWidth
+            } else if (isCurrentLineJustified && widthRatio >= 0.95) {
+              // This line is very close to max (>=95%) even if not in a justified paragraph pattern
+              // Use max width to maintain consistency
               lineEndX = lineStartX + maxLineWidth
             } else {
-              // This line is left-aligned (e.g., header, last line of paragraph)
+              // This line is significantly shorter (e.g., header, last line of paragraph)
               // Use the actual measured end position
               lineEndX = rightmostItem.baseX + rightmostItem.itemWidth
             }
