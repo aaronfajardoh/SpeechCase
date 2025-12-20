@@ -2738,32 +2738,62 @@ function App() {
       })
     })
     
-    // Cluster items by Y coordinate using a tolerance-based approach
-    // Items within a small tolerance of each other are considered on the same line
-    const itemsByLine = new Map()
-    // Use a tolerance based on typical line spacing - about 5px should catch items on same line
+    // First, cluster items by Y coordinate only
+    // Then split by columns (X position gaps) within each Y group
+    const itemsByY = new Map()
     const lineTolerance = 5 * scaleY // Scale tolerance with display scale
+    const columnGapThreshold = (viewport.width * scaleX) * 0.03 // 12% of page width indicates a column gap
     
+    // Step 1: Group by Y coordinate
     allItems.forEach(itemData => {
-      // Find existing line group within tolerance, or create new one
-      let assignedLineY = null
-      for (const [lineY, lineItems] of itemsByLine.entries()) {
-        // Check if any item on this line is within tolerance
-        const isOnSameLine = lineItems.some(existingItem => 
-          Math.abs(existingItem.baseY - itemData.baseY) < lineTolerance
-        )
-        if (isOnSameLine) {
-          assignedLineY = lineY
+      let assignedY = null
+      for (const [y, items] of itemsByY.entries()) {
+        if (Math.abs(y - itemData.baseY) < lineTolerance) {
+          assignedY = y
           break
         }
       }
       
-      // Use the average Y of the line, or create new line with this item's Y
-      if (assignedLineY === null) {
-        assignedLineY = itemData.baseY
-        itemsByLine.set(assignedLineY, [])
+      if (assignedY === null) {
+        assignedY = itemData.baseY
+        itemsByY.set(assignedY, [])
       }
-      itemsByLine.get(assignedLineY).push(itemData)
+      itemsByY.get(assignedY).push(itemData)
+    })
+    
+    // Step 2: Split each Y group by columns (X position gaps)
+    const itemsByLine = new Map()
+    itemsByY.forEach((yItems, y) => {
+      // Sort items by X position
+      yItems.sort((a, b) => a.baseX - b.baseX)
+      
+      // Detect columns by finding large X gaps
+      const columns = []
+      let currentColumn = [yItems[0]]
+      
+      for (let i = 1; i < yItems.length; i++) {
+        const prevItem = yItems[i - 1]
+        const currentItem = yItems[i]
+        const prevItemEndX = prevItem.baseX + prevItem.itemWidth
+        const gap = currentItem.baseX - prevItemEndX
+        
+        if (gap > columnGapThreshold) {
+          // Large gap detected - start a new column
+          columns.push(currentColumn)
+          currentColumn = [currentItem]
+        } else {
+          // Small gap - same column
+          currentColumn.push(currentItem)
+        }
+      }
+      columns.push(currentColumn) // Don't forget the last column
+      
+      // Create separate line entries for each column
+      columns.forEach((columnItems, columnIndex) => {
+        // Use composite key: Y_columnIndex to uniquely identify each line+column
+        const lineKey = `${y}_${columnIndex}`
+        itemsByLine.set(lineKey, columnItems)
+      })
     })
     
     // #region agent log
@@ -2849,7 +2879,13 @@ function App() {
 
     // NEW APPROACH: Line-based rendering with justified spacing
     // For each line, measure its width in the PDF and render all words with spacing to match
-    const sortedLines = Array.from(itemsByLine.entries()).sort((a, b) => a[0] - b[0]) // Sort by Y position
+    // Sort by Y position (first part of composite key), then by column index (second part)
+    const sortedLines = Array.from(itemsByLine.entries()).sort((a, b) => {
+      const [aY, aCol] = a[0].split('_').map(Number)
+      const [bY, bCol] = b[0].split('_').map(Number)
+      if (aY !== bY) return aY - bY // Sort by Y first
+      return aCol - bCol // Then by column index
+    })
     
     sortedLines.forEach(([lineY, lineItems], lineIndex) => {
       // Sort items by X position to ensure correct order
@@ -2869,11 +2905,30 @@ function App() {
       
       // For justified text, we can infer the right margin from the next line's start position
       // if the next line starts at the same X as the current line (same left margin)
-      // The right margin would be where the next line would end if it were justified
-      // But actually, we can look at the gap between the rightmost item and where the next line starts
+      // IMPORTANT: Only compare with lines in the same column (same column index in key)
+      const [currentY, currentCol] = lineY.split('_').map(Number)
+      
       if (lineIndex < sortedLines.length - 1) {
-        const nextLineItems = sortedLines[lineIndex + 1][1]
-        if (nextLineItems && nextLineItems.length > 0) {
+        // Find the next line in the same column (not just the next line overall)
+        let nextLineInSameColumn = null
+        for (let i = lineIndex + 1; i < sortedLines.length; i++) {
+          const [nextLineKey, nextLineItems] = sortedLines[i]
+          const [nextY, nextCol] = nextLineKey.split('_').map(Number)
+          
+          // Check if it's in the same column
+          if (nextCol === currentCol) {
+            nextLineInSameColumn = { key: nextLineKey, items: nextLineItems }
+            break
+          }
+          
+          // If we've moved to a different Y position significantly, stop searching
+          if (nextY > currentY + lineTolerance * 2) {
+            break
+          }
+        }
+        
+        if (nextLineInSameColumn && nextLineInSameColumn.items && nextLineInSameColumn.items.length > 0) {
+          const nextLineItems = nextLineInSameColumn.items
           nextLineItems.sort((a, b) => a.baseX - b.baseX)
           const nextLineFirstItem = nextLineItems[0]
           const nextLineStartX = nextLineFirstItem.baseX
@@ -2912,9 +2967,13 @@ function App() {
             let maxLineWidth = currentLineMeasuredWidth
             
             // Look at a few lines ahead to find the maximum line width
+            // IMPORTANT: Only consider lines in the same column
             for (let i = lineIndex; i < Math.min(lineIndex + 10, sortedLines.length); i++) {
-              const [checkLineY, checkLineItems] = sortedLines[i]
-              if (checkLineItems && checkLineItems.length > 0) {
+              const [checkLineKey, checkLineItems] = sortedLines[i]
+              const [checkY, checkCol] = checkLineKey.split('_').map(Number)
+              
+              // Only consider lines in the same column
+              if (checkCol === currentCol && checkLineItems && checkLineItems.length > 0) {
                 checkLineItems.sort((a, b) => a.baseX - b.baseX)
                 const checkLeftmost = checkLineItems[0]
                 const checkRightmost = checkLineItems[checkLineItems.length - 1]
@@ -2949,9 +3008,13 @@ function App() {
               const justifiedThreshold = 0.92 // 92% of max width indicates justification
               
               // Analyze nearby lines to determine if this is a justified paragraph
+              // IMPORTANT: Only consider lines in the same column
               for (let i = lineIndex; i < Math.min(lineIndex + 10, sortedLines.length); i++) {
-                const [checkLineY, checkLineItems] = sortedLines[i]
-                if (checkLineItems && checkLineItems.length > 0) {
+                const [checkLineKey, checkLineItems] = sortedLines[i]
+                const [checkY, checkCol] = checkLineKey.split('_').map(Number)
+                
+                // Only consider lines in the same column
+                if (checkCol === currentCol && checkLineItems && checkLineItems.length > 0) {
                   checkLineItems.sort((a, b) => a.baseX - b.baseX)
                   const checkLeftmost = checkLineItems[0]
                   const checkRightmost = checkLineItems[checkLineItems.length - 1]
