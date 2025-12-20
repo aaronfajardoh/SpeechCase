@@ -2901,15 +2901,17 @@ function App() {
           // finding the maximum X position of all items on the line, then adding the
           // measured width of the rightmost item, but accounting for justification spacing
           
-          // Check if next line starts at same left margin (justified paragraph)
+          // Check if next line starts at same left margin (same paragraph/column)
           const xDiff = Math.abs(nextLineStartX - lineStartX)
           if (xDiff < 10) {
-            // Next line starts at same left margin - this is justified text
-            // For justified text, all lines should have the same width
-            // Find the maximum line width by looking at nearby lines
-            let maxLineEndX = rightmostItem.baseX + rightmostItem.itemWidth
+            // Next line starts at same left margin - could be justified or left-aligned
+            // First, calculate the current line's measured width
+            const currentLineMeasuredWidth = rightmostItem.baseX + rightmostItem.itemWidth - lineStartX
             
-            // Look at a few lines ahead to find the maximum rightmost position
+            // Find the maximum line width by looking at nearby lines
+            let maxLineWidth = currentLineMeasuredWidth
+            
+            // Look at a few lines ahead to find the maximum line width
             for (let i = lineIndex; i < Math.min(lineIndex + 10, sortedLines.length); i++) {
               const [checkLineY, checkLineItems] = sortedLines[i]
               if (checkLineItems && checkLineItems.length > 0) {
@@ -2919,14 +2921,29 @@ function App() {
                 
                 // Only consider lines that start at roughly the same X (same left margin)
                 if (Math.abs(checkLeftmost.baseX - lineStartX) < 10) {
-                  const checkLineEndX = checkRightmost.baseX + checkRightmost.itemWidth
-                  maxLineEndX = Math.max(maxLineEndX, checkLineEndX)
+                  const checkLineWidth = (checkRightmost.baseX + checkRightmost.itemWidth) - checkLeftmost.baseX
+                  maxLineWidth = Math.max(maxLineWidth, checkLineWidth)
                 }
               }
             }
             
-            // Use the maximum line end position as the right margin
-            lineEndX = maxLineEndX
+            // Determine if this line is actually justified
+            // If the current line's width is close to the maximum (within 5% or 20px),
+            // it's likely justified. Otherwise, it's left-aligned.
+            const widthDiff = maxLineWidth - currentLineMeasuredWidth
+            const widthRatio = maxLineWidth > 0 ? currentLineMeasuredWidth / maxLineWidth : 1.0
+            
+            // Line is justified if it's within 5% of max width or within 20px
+            const isJustified = widthRatio >= 0.95 || widthDiff < 20
+            
+            if (isJustified) {
+              // This line is justified - use the maximum line end position
+              lineEndX = lineStartX + maxLineWidth
+            } else {
+              // This line is left-aligned (e.g., header, last line of paragraph)
+              // Use the actual measured end position
+              lineEndX = rightmostItem.baseX + rightmostItem.itemWidth
+            }
           }
         }
       }
