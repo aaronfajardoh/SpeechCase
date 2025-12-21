@@ -7462,6 +7462,127 @@ function App() {
       return range.toString()
     }
 
+    // Helper function to expand selection to full words
+    // Returns the expanded text that includes full words, even if only part of a word was selected
+    // But preserves the exact selection if it's already at word boundaries
+    const expandSelectionToWords = (range) => {
+      if (!range || range.collapsed) {
+        return range ? range.toString() : ''
+      }
+
+      // Get the actual selected text (what the user sees)
+      const nativeSelection = window.getSelection()
+      let selectedText = ''
+      if (nativeSelection && nativeSelection.rangeCount > 0) {
+        selectedText = nativeSelection.toString().trim()
+      }
+      if (!selectedText) {
+        selectedText = range.toString().trim()
+      }
+      if (!selectedText) {
+        return ''
+      }
+
+      // Check if selection starts/ends in the middle of a word by examining the DOM
+      const startContainer = range.startContainer
+      const startOffset = range.startOffset
+      const endContainer = range.endContainer
+      const endOffset = range.endOffset
+      
+      let isStartInWord = false
+      let isEndInWord = false
+      
+      // Check if start is in the middle of a word
+      if (startContainer && startContainer.nodeType === Node.TEXT_NODE) {
+        const textBefore = startContainer.textContent.substring(0, startOffset)
+        // Check if there's a non-whitespace character immediately before the start
+        isStartInWord = textBefore.length > 0 && /\S/.test(textBefore[textBefore.length - 1])
+      }
+      
+      // Check if end is in the middle of a word
+      if (endContainer && endContainer.nodeType === Node.TEXT_NODE) {
+        const textAtEnd = endContainer.textContent.substring(endOffset)
+        // Check if there's a non-whitespace character immediately after the end
+        isEndInWord = textAtEnd.length > 0 && /\S/.test(textAtEnd[0])
+      }
+      
+      // If neither start nor end is in the middle of a word, return the selection as-is
+      if (!isStartInWord && !isEndInWord) {
+        return selectedText
+      }
+      
+      // We need to expand word boundaries in the DOM
+      // Clone the range and expand it to include full words
+      const expandedRange = range.cloneRange()
+      
+      // Expand start backward to include full word
+      if (isStartInWord && startContainer && startContainer.nodeType === Node.TEXT_NODE) {
+        const textNode = startContainer
+        let newStartOffset = startOffset
+        
+        // Move backward to find word start
+        while (newStartOffset > 0 && /\S/.test(textNode.textContent[newStartOffset - 1])) {
+          newStartOffset--
+        }
+        
+        expandedRange.setStart(textNode, newStartOffset)
+      }
+      
+      // Expand end forward to include full word
+      if (isEndInWord && endContainer && endContainer.nodeType === Node.TEXT_NODE) {
+        const textNode = endContainer
+        let newEndOffset = endOffset
+        
+        // Move forward to find word end
+        while (newEndOffset < textNode.textContent.length && /\S/.test(textNode.textContent[newEndOffset])) {
+          newEndOffset++
+        }
+        
+        expandedRange.setEnd(textNode, newEndOffset)
+      }
+      
+      // Extract text from the expanded range
+      // First try native selection API which preserves spaces properly
+      const savedSelection = window.getSelection()
+      const savedRanges = []
+      
+      // Save current selection ranges
+      for (let i = 0; i < savedSelection.rangeCount; i++) {
+        savedRanges.push(savedSelection.getRangeAt(i).cloneRange())
+      }
+      
+      // Set selection to expanded range and get text
+      savedSelection.removeAllRanges()
+      savedSelection.addRange(expandedRange)
+      let expandedText = savedSelection.toString().trim()
+      
+      // Restore original selection
+      savedSelection.removeAllRanges()
+      savedRanges.forEach(r => savedSelection.addRange(r))
+      
+      // If native selection didn't work or lost spaces, try extractTextFromRange
+      if (!expandedText || expandedText.length === 0 || !expandedText.includes(' ')) {
+        if (extractedText) {
+          const extracted = extractTextFromRange(expandedRange).trim()
+          // Only use if it has spaces (indicating it preserved them)
+          if (extracted && extracted.includes(' ')) {
+            expandedText = extracted
+          }
+        }
+      }
+      
+      // Final fallback to range.toString()
+      if (!expandedText || expandedText.length === 0) {
+        expandedText = expandedRange.toString().trim()
+      }
+      
+      // Normalize whitespace (collapse multiple spaces to single space, but preserve spaces between words)
+      expandedText = expandedText.replace(/\s+/g, ' ').trim()
+      
+      // Return the expanded text (which now includes full words with proper spacing)
+      return expandedText || selectedText
+    }
+
     const getRangeFromPoint = (x, y) => {
       if (document.caretRangeFromPoint) {
         return document.caretRangeFromPoint(x, y)
@@ -7624,9 +7745,25 @@ function App() {
         console.warn('Failed to add range to selection:', e)
       }
 
-      // Primary: Use native browser selection text (what user actually sees)
-      // This directly captures the text content from the selected DOM nodes
-      let selectedText = nativeSelection.toString().trim()
+      // Calculate precise rectangles FIRST (before expanding text)
+      // This preserves the visual selection as the user sees it
+      const textLayerDiv = textLayerRefs.current[pageNum]
+      if (!textLayerDiv) {
+        isDraggingSelectionRef.current = false
+        return
+      }
+
+      const rectangles = calculatePreciseRectangles(selectionRange, textLayerDiv)
+      
+      // Now expand the selection to full words for the highlights-editor
+      // This ensures that when user highlights any portion of a word, the whole word gets added
+      // But the visual highlight (rectangles) remains as the user selected it
+      let selectedText = expandSelectionToWords(selectionRange)
+      
+      // Fallback: If expansion failed, try native selection
+      if (!selectedText || selectedText.length === 0) {
+        selectedText = nativeSelection.toString().trim()
+      }
       
       // Fallback: If native selection is empty, use range text directly
       if (!selectedText || selectedText.length === 0) {
@@ -7634,7 +7771,6 @@ function App() {
       }
       
       // Final fallback: Use custom extraction only if both above fail
-      // This should rarely be needed
       if (!selectedText || selectedText.length === 0) {
         selectedText = extractTextFromRange(selectionRange).trim()
       }
@@ -7651,15 +7787,6 @@ function App() {
         selectionStartRangeRef.current = null
         return
       }
-
-      const textLayerDiv = textLayerRefs.current[pageNum]
-      if (!textLayerDiv) {
-        isDraggingSelectionRef.current = false
-        return
-      }
-
-      // Calculate precise rectangles
-      const rectangles = calculatePreciseRectangles(selectionRange, textLayerDiv)
       
       if (rectangles && rectangles.length > 0) {
         // Get page info to store scale and text layer dimensions
@@ -7672,12 +7799,13 @@ function App() {
         const textLayerWidthAtCreation = textLayerRect ? textLayerRect.width : null
         const textLayerHeightAtCreation = textLayerRect ? textLayerRect.height : null
         
-        // Create highlight with array of rectangles
+        // Create highlight with array of rectangles (visual selection)
+        // But use expanded text (full words) for the highlights-editor
         const highlight = {
           id: Date.now() + Math.random(),
           page: pageNum,
           rects: rectangles,
-          text: selectedText,
+          text: selectedText, // This now contains full words even if only part was selected
           color: highlightColor,
           scale,
           textLayerWidth: textLayerWidthAtCreation,
@@ -7699,11 +7827,11 @@ function App() {
           return newHighlights
         })
         
-        // Add to highlight items for sidebar
+        // Add to highlight items for sidebar (with expanded text)
         setHighlightItems(prev => {
           const newItem = {
             id: highlight.id,
-            text: selectedText.trim(),
+            text: selectedText.trim(), // Full words in the highlights-editor
             color: highlightColor,
             order: prev.length
           }
