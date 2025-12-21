@@ -2738,6 +2738,58 @@ function App() {
       })
     })
     
+    // Helper function to detect if an item is a drop cap
+    // A drop cap is typically a single letter with dramatically larger font size
+    const isDropCap = (item, allItems) => {
+      const itemText = item.trimmedStr
+      
+      // Check if item is a single character (or very short, like 1-2 chars)
+      // and is a letter (not punctuation or number)
+      if (itemText.length > 2 || !/[a-zA-ZÀ-ÿ]/.test(itemText)) {
+        return false
+      }
+      
+      // Calculate median font size of all items to compare
+      // This is more robust than average, as it's less affected by outliers
+      const fontSizes = allItems.map(i => i.fontSize).sort((a, b) => a - b)
+      const medianFontSize = fontSizes.length > 0 
+        ? fontSizes[Math.floor(fontSizes.length / 2)]
+        : item.fontSize
+      
+      // Also check average of items excluding potential drop caps (items with font size > 2x median)
+      let sumFontSize = 0
+      let count = 0
+      for (const otherItem of allItems) {
+        // Only include items that are likely normal text (not other drop caps)
+        if (otherItem.fontSize <= medianFontSize * 2.5) {
+          sumFontSize += otherItem.fontSize
+          count++
+        }
+      }
+      
+      if (count === 0) return false
+      
+      const avgNormalFontSize = sumFontSize / count
+      
+      // If item's font size is at least 2x larger than average of normal text items,
+      // it's likely a drop cap
+      return item.fontSize >= avgNormalFontSize * 2
+    }
+    
+    // Detect and filter out drop caps (large first letters)
+    // Check all items to find drop caps anywhere in the text
+    const itemsToRemove = []
+    for (let i = 0; i < allItems.length; i++) {
+      if (isDropCap(allItems[i], allItems)) {
+        itemsToRemove.push(i)
+      }
+    }
+    
+    // Remove drop caps from allItems (iterate backwards to maintain indices)
+    for (let i = itemsToRemove.length - 1; i >= 0; i--) {
+      allItems.splice(itemsToRemove[i], 1)
+    }
+    
     // First, cluster items by Y coordinate only
     // Then split by columns (X position gaps) within each Y group
     const itemsByY = new Map()
@@ -3063,9 +3115,41 @@ function App() {
       }
       // #endregion
       
-      // Get line Y position and font properties (use first item as reference)
-      const firstItemData = lineItems[0]
-      const firstTx = firstItemData.tx
+      // Get line Y position and font properties
+      // Skip drop caps when determining font size - use first non-drop-cap item
+      let firstItemData = null
+      let firstTx = null
+      
+      // Find first item that's not a drop cap
+      for (const itemData of lineItems) {
+        const itemText = itemData.trimmedStr
+        // Quick check: if it's a single letter and font size is much larger than others on the line, skip it
+        const isLikelyDropCap = itemText.length <= 2 && /[a-zA-ZÀ-ÿ]/.test(itemText)
+        if (isLikelyDropCap) {
+          // Calculate average font size of other items on this line
+          let sumFontSize = 0
+          let count = 0
+          for (const otherItem of lineItems) {
+            if (otherItem !== itemData) {
+              sumFontSize += otherItem.fontSize
+              count++
+            }
+          }
+          if (count > 0 && itemData.fontSize >= (sumFontSize / count) * 2) {
+            continue // Skip this drop cap
+          }
+        }
+        firstItemData = itemData
+        firstTx = itemData.tx
+        break
+      }
+      
+      // Fallback to first item if no non-drop-cap found
+      if (!firstItemData) {
+        firstItemData = lineItems[0]
+        firstTx = firstItemData.tx
+      }
+      
       const angle = Math.atan2(firstTx[1], firstTx[0])
       const fontHeight = Math.sqrt(firstTx[2] * firstTx[2] + firstTx[3] * firstTx[3])
       const fontSize = fontHeight * scaleY
@@ -3073,11 +3157,32 @@ function App() {
       const ascentRatio = 0.8
       const baseY = (firstTx[5] - fontHeight * ascentRatio) * scaleY
       
-      // Collect all words from all items on this line
+      // Filter out drop caps from lineItems before processing words
+      const filteredLineItems = lineItems.filter(itemData => {
+        const itemText = itemData.trimmedStr
+        const isLikelyDropCap = itemText.length <= 2 && /[a-zA-ZÀ-ÿ]/.test(itemText)
+        if (isLikelyDropCap) {
+          // Calculate average font size of other items on this line
+          let sumFontSize = 0
+          let count = 0
+          for (const otherItem of lineItems) {
+            if (otherItem !== itemData) {
+              sumFontSize += otherItem.fontSize
+              count++
+            }
+          }
+          if (count > 0 && itemData.fontSize >= (sumFontSize / count) * 2) {
+            return false // Filter out this drop cap
+          }
+        }
+        return true // Keep this item
+      })
+      
+      // Collect all words from all items on this line (excluding drop caps)
       const lineWords = []
       let lineCharIndex = pageCharOffset + charIndex
       
-      lineItems.forEach((itemData, itemIdx) => {
+      filteredLineItems.forEach((itemData, itemIdx) => {
         const trimmedStr = itemData.trimmedStr
         
         // Account for space between items (extractedText joins trimmed items with ' ')
