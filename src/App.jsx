@@ -32,7 +32,9 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconExpandTimeline,
-  IconMinimizeTimeline
+  IconMinimizeTimeline,
+  IconEye,
+  IconEyeOff
 } from './components/Icons.jsx'
 import ProportionalTimeline from './components/ProportionalTimeline.jsx'
 import PagesSidebar from './components/PagesSidebar.jsx'
@@ -164,6 +166,7 @@ function App() {
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true) // Auto-scroll to follow reading position
   const autoScrollEnabledRef = useRef(true) // Ref to track auto-scroll state synchronously
   const [hasCurrentReadingPosition, setHasCurrentReadingPosition] = useState(false) // Track if there's a current reading position (for button visibility)
+  const [textLayerVisible, setTextLayerVisible] = useState(false) // Track text layer visibility (default: invisible)
   const isProgrammaticScrollRef = useRef(false) // Track if scroll is programmatic (from our code) vs manual
   const lastProgrammaticScrollTimeRef = useRef(0) // Track when we last scrolled programmatically
   const pendingScrollTimeoutRef = useRef(null) // Track pending scroll timeout to cancel if needed
@@ -2572,6 +2575,12 @@ function App() {
           const canvasRect = canvas.getBoundingClientRect()
           highlightLayerDiv.style.width = canvasRect.width + 'px'
           highlightLayerDiv.style.height = canvasRect.height + 'px'
+          
+          // #region agent log
+          const textLayerDiv = textLayerRefs.current[pageNum]
+          const parentContainer = highlightLayerDiv.parentElement
+          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:2576',message:'Setting highlight layer dimensions',data:{pageNum,canvasRect:{width:canvasRect.width,height:canvasRect.height,left:canvasRect.left,top:canvasRect.top},textLayerRect:textLayerDiv?.getBoundingClientRect(),highlightLayerRect:highlightLayerDiv.getBoundingClientRect(),highlightLayerStyle:{width:highlightLayerDiv.style.width,height:highlightLayerDiv.style.height,position:highlightLayerDiv.style.position,left:highlightLayerDiv.style.left,top:highlightLayerDiv.style.top},parentContainer:parentContainer?.className,parentRect:parentContainer?.getBoundingClientRect()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
         }
         
         // Set connection layer dimensions to match canvas display size
@@ -3518,30 +3527,57 @@ function App() {
     if (wordSpans.length > 0) {
       const boundingBox = getCombinedBoundingBox(wordSpans)
       if (boundingBox && boundingBox.container) {
-        // Create haze overlay element
-        const overlay = document.createElement('div')
-        overlay.className = 'reading-haze-overlay active'
-        
-        // Calculate padding to make the haze extend beyond the word (reduced by another 20% for smaller height)
-        const padding = Math.max(boundingBox.height * 0.512, 7)
-        const hazeWidth = boundingBox.width + padding * 2
-        const hazeHeight = boundingBox.height + padding * 2
-        
-        // Position the overlay relative to container
-        overlay.style.position = 'absolute'
-        overlay.style.left = (boundingBox.x - padding) + 'px'
-        overlay.style.top = (boundingBox.y - padding) + 'px'
-        overlay.style.width = hazeWidth + 'px'
-        overlay.style.height = hazeHeight + 'px'
-        
-        // Add some organic variation to the shape for more natural look
-        const variation = Math.random() * 15 - 7.5 // -7.5 to 7.5
-        overlay.style.borderRadius = `${50 + variation}% ${40 + variation}% ${60 - variation}% ${30 - variation}% / ${60 + variation}% ${30 - variation}% ${70 + variation}% ${40 - variation}%`
-        
-        // Append to container
-        boundingBox.container.appendChild(overlay)
-        
-        currentHazeOverlayRef.current = overlay
+        // Get the page number to find the correct highlight layer
+        const elementPage = getElementPageNumber(element)
+        if (elementPage !== null) {
+          const highlightLayer = highlightLayerRefs.current[elementPage]
+          if (highlightLayer) {
+            // Create haze overlay element
+            const overlay = document.createElement('div')
+            overlay.className = 'reading-haze-overlay active'
+            
+            // Calculate padding to make the haze extend beyond the word (reduced by another 20% for smaller height)
+            const padding = Math.max(boundingBox.height * 0.512, 7)
+            const hazeWidth = boundingBox.width + padding * 2
+            const hazeHeight = boundingBox.height + padding * 2
+            
+            // Position the overlay relative to highlight layer (same position as text layer)
+            overlay.style.position = 'absolute'
+            overlay.style.left = (boundingBox.x - padding) + 'px'
+            overlay.style.top = (boundingBox.y - padding) + 'px'
+            overlay.style.width = hazeWidth + 'px'
+            overlay.style.height = hazeHeight + 'px'
+            
+            // Add some organic variation to the shape for more natural look
+            const variation = Math.random() * 15 - 7.5 // -7.5 to 7.5
+            overlay.style.borderRadius = `${50 + variation}% ${40 + variation}% ${60 - variation}% ${30 - variation}% / ${60 + variation}% ${30 - variation}% ${70 + variation}% ${40 - variation}%`
+            
+            // Append to highlight layer instead of text layer so it's always visible
+            highlightLayer.appendChild(overlay)
+            
+            currentHazeOverlayRef.current = overlay
+          } else {
+            // Fallback to original container if highlight layer not available
+            const overlay = document.createElement('div')
+            overlay.className = 'reading-haze-overlay active'
+            
+            const padding = Math.max(boundingBox.height * 0.512, 7)
+            const hazeWidth = boundingBox.width + padding * 2
+            const hazeHeight = boundingBox.height + padding * 2
+            
+            overlay.style.position = 'absolute'
+            overlay.style.left = (boundingBox.x - padding) + 'px'
+            overlay.style.top = (boundingBox.y - padding) + 'px'
+            overlay.style.width = hazeWidth + 'px'
+            overlay.style.height = hazeHeight + 'px'
+            
+            const variation = Math.random() * 15 - 7.5
+            overlay.style.borderRadius = `${50 + variation}% ${40 + variation}% ${60 - variation}% ${30 - variation}% / ${60 + variation}% ${30 - variation}% ${70 + variation}% ${40 - variation}%`
+            
+            boundingBox.container.appendChild(overlay)
+            currentHazeOverlayRef.current = overlay
+          }
+        }
       }
     }
     
@@ -7171,14 +7207,46 @@ function App() {
       
       // Only add if there's actually a selected portion
       if (startOffset < endOffset && startOffset >= 0 && endOffset <= textNode.textContent.length) {
+        // Get span position - use getBoundingClientRect if inline styles are not available
+        let spanLeft = parseFloat(span.style.left)
+        let spanTop = parseFloat(span.style.top)
+        
+        // Get font size - try inline style first, then computed style, then bounding rect height
+        let spanHeight = parseFloat(span.style.fontSize)
+        let spanRect = null
+        
+        // If inline styles are empty, use getBoundingClientRect to calculate relative position
+        if (isNaN(spanLeft) || isNaN(spanTop) || span.style.left === '' || span.style.top === '') {
+          spanRect = span.getBoundingClientRect()
+          spanLeft = spanRect.left - textLayerRect.left
+          spanTop = spanRect.top - textLayerRect.top
+          // Also get actual height from bounding rect if fontSize is not available
+          if (isNaN(spanHeight) || span.style.fontSize === '') {
+            spanHeight = spanRect.height
+          }
+        }
+        
+        // If fontSize is still not available, use computed style
+        if (isNaN(spanHeight) || span.style.fontSize === '') {
+          const computedStyle = window.getComputedStyle(span)
+          spanHeight = parseFloat(computedStyle.fontSize)
+          // If computed style also fails, use bounding rect height if available
+          if (isNaN(spanHeight)) {
+            if (!spanRect) {
+              spanRect = span.getBoundingClientRect()
+            }
+            spanHeight = spanRect ? spanRect.height : 12
+          }
+        }
+        
         selectedSpans.push({
           span,
           textNode,
           startOffset,
           endOffset,
-          spanLeft: parseFloat(span.style.left) || 0,
-          spanTop: parseFloat(span.style.top) || 0,
-          fontSize: parseFloat(span.style.fontSize) || 12,
+          spanLeft,
+          spanTop,
+          fontSize: spanHeight,
           fontFamily: span.style.fontFamily || 'sans-serif',
           transform: span.style.transform
         })
@@ -7990,7 +8058,7 @@ function App() {
         renderHighlight(highlight, highlightLayer)
       }
     })
-  }, [highlights, pageData, renderedPages, pageScale, hoveredHighlightId, connectingFrom, interactionMode])
+  }, [highlights, pageData, renderedPages, pageScale, hoveredHighlightId, connectingFrom, interactionMode, textLayerVisible])
 
   // Re-render highlights immediately when viewport resizes (e.g., dev tools open/close)
   // This runs independently of renderPages() for instant updates
@@ -8740,6 +8808,21 @@ function App() {
     })
   }, [renderedPages])
 
+  // Ensure highlights are always visible regardless of text layer visibility
+  useEffect(() => {
+    Object.values(highlightLayerRefs.current).forEach(layer => {
+      if (layer) {
+        // Ensure highlight layer itself is visible
+        layer.style.opacity = '1'
+        // Ensure all highlight rects are visible
+        const highlightRects = layer.querySelectorAll('.highlight-rect')
+        highlightRects.forEach(rect => {
+          rect.style.opacity = '1'
+        })
+      }
+    })
+  }, [textLayerVisible, highlights])
+
   // Undo/redo functions for highlights
   const handleUndoHighlight = useCallback(() => {
     setHighlightHistory(hist => {
@@ -8803,9 +8886,9 @@ function App() {
   // Helper function to get highlight color
   const getHighlightColor = (color) => {
     const colors = {
-      yellow: 'rgba(251, 188, 4, 0.24)',
-      green: 'rgba(52, 168, 83, 0.24)',
-      blue: 'rgba(66, 133, 244, 0.24)'
+      yellow: 'rgba(251, 188, 4, 0.6)', // Increased opacity for better visibility when text layer is invisible
+      green: 'rgba(52, 168, 83, 0.6)', // Increased opacity for better visibility when text layer is invisible
+      blue: 'rgba(66, 133, 244, 0.6)' // Increased opacity for better visibility when text layer is invisible
     }
     return colors[color] || colors.yellow
   }
@@ -8831,6 +8914,11 @@ function App() {
   }
 
   const renderHighlight = (highlight, highlightLayer) => {
+    // Ensure highlight layer is always visible
+    if (highlightLayer) {
+      highlightLayer.style.opacity = '1'
+    }
+    
     const highlightBgColor = getHighlightColor(highlight.color || 'yellow')
     const borderColor = getHighlightBorderColor(highlight.color || 'yellow')
     const dotColor = getDotColor(highlight.color || 'yellow')
@@ -8857,6 +8945,16 @@ function App() {
     const canvasRect = canvas.getBoundingClientRect()
     const currentCanvasDisplayedWidth = canvasRect.width
     const currentCanvasDisplayedHeight = canvasRect.height
+    
+    // Ensure highlight layer has dimensions set (critical for visibility)
+    if (highlightLayer) {
+      if (!highlightLayer.style.width || highlightLayer.style.width === '0px' || highlightLayer.style.width === '') {
+        highlightLayer.style.width = currentCanvasDisplayedWidth + 'px'
+      }
+      if (!highlightLayer.style.height || highlightLayer.style.height === '0px' || highlightLayer.style.height === '') {
+        highlightLayer.style.height = currentCanvasDisplayedHeight + 'px'
+      }
+    }
 
     // Get text layer dimensions at creation time (stored with highlight)
     // If not stored (old highlights), estimate from current dimensions
@@ -8894,7 +8992,13 @@ function App() {
       const x = rect.x * scaleRatio
       const y = rect.y * scaleRatioY
       const width = rect.width * scaleRatio
-      const height = rect.height * scaleRatioY * 1.15 // Increase height by 15% downward
+      // Height calculation: scale the stored height, then add padding for better alignment
+      // The stored height is the font size, but we need more to cover descenders and line spacing
+      // Use a percentage-based padding that scales with font size (larger fonts need more padding)
+      const baseHeight = rect.height * scaleRatioY
+      // Add 15-20% padding, with a minimum of 2px for small fonts and scaling for larger fonts
+      const paddingRatio = Math.max(0.15, Math.min(0.20, 0.15 + (baseHeight / 100) * 0.05))
+      const height = baseHeight * (1 + paddingRatio)
 
       const div = document.createElement('div')
       div.className = 'highlight-rect'
@@ -8906,12 +9010,25 @@ function App() {
       div.style.width = width + 'px'
       div.style.height = height + 'px'
       div.style.backgroundColor = highlightBgColor
+      // Ensure highlight is always visible regardless of text layer opacity
+      div.style.opacity = '1'
       // In read mode, allow clicks to pass through to text spans below
       // In highlight mode, enable pointer events for hover interactions
       div.style.pointerEvents = interactionMode === 'read' ? 'none' : 'auto'
       div.style.zIndex = '10' // Higher z-index to be above text spans
       div.style.cursor = 'default'
       div.style.transition = 'border-color 0.2s ease'
+      div.style.visibility = 'visible'
+      div.style.display = 'block'
+      // Force the highlight to be visible even when text layer is invisible
+      div.style.mixBlendMode = 'normal'
+      div.style.willChange = 'opacity, transform'
+      
+      // Ensure highlight layer is visible before appending
+      if (highlightLayer) {
+        highlightLayer.style.opacity = '1'
+        highlightLayer.style.visibility = 'visible'
+      }
       
       // Add hover effect (only in highlight mode)
       if (interactionMode === 'highlight') {
@@ -8963,7 +9080,25 @@ function App() {
         })
       }
       
+      // Ensure highlight layer is visible before appending
+      if (highlightLayer) {
+        highlightLayer.style.opacity = '1'
+        highlightLayer.style.visibility = 'visible'
+        highlightLayer.style.display = 'block'
+        // Force browser to apply styles
+        void highlightLayer.offsetHeight
+      }
+      
       highlightLayer.appendChild(div)
+      
+      // Double-check highlight is visible after appending
+      div.style.opacity = '1'
+      div.style.visibility = 'visible'
+      div.style.display = 'block'
+      // Ensure backgroundColor is set (in case it was overridden)
+      div.style.backgroundColor = highlightBgColor
+      // Force browser to apply styles
+      void div.offsetHeight
     })
     
     // Render connection dots on first and last rectangles
@@ -10297,6 +10432,13 @@ function App() {
               <IconZoomIn size={16} />
             </button>
           </div>
+          <button
+            onClick={() => setTextLayerVisible(!textLayerVisible)}
+            className="btn-toolbar"
+            title={textLayerVisible ? "Hide text layer" : "Show text layer"}
+          >
+            {textLayerVisible ? <IconEye size={16} /> : <IconEyeOff size={16} />}
+          </button>
           
           <button
             onClick={handleReset}
@@ -10585,12 +10727,14 @@ function App() {
                         if (el) textLayerRefs.current[pageInfo.pageNum] = el
                       }}
                       className="text-layer"
+                      style={{ opacity: textLayerVisible ? 1 : 0 }}
                     />
                     <div
                       ref={(el) => {
                         if (el) highlightLayerRefs.current[pageInfo.pageNum] = el
                       }}
                       className="highlight-layer"
+                      style={{ opacity: 1, position: 'absolute', top: 0, left: 0 }}
                     />
                     <div
                       ref={(el) => {

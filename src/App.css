@@ -3150,6 +3150,9 @@
   /* Smooth fade in/out transitions (25% slower) */
   opacity: 0;
   animation: hazeFadeIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  /* Always keep reading haze visible regardless of parent text layer opacity */
+  /* Note: opacity inheritance means we need to handle this differently - 
+     the animation sets opacity, so we'll override after animation */
   /* Ensure smooth rendering */
   will-change: opacity, transform, background;
   transform: translateZ(0) scale(1);
@@ -3422,6 +3425,10 @@
   touch-action: pan-x pan-y pinch-zoom;
   /* Dimensions will be set by JavaScript to match canvas display size */
   transform-origin: 0 0;
+  /* Always keep highlight layer visible regardless of text layer opacity */
+  opacity: 1 !important;
+  /* Ensure highlights are always visible by creating a new stacking context */
+  isolation: isolate;
 }
 
 .highlight-layer > * {
@@ -3430,6 +3437,8 @@
 
 .highlight-rect {
   border-radius: 2px;
+  /* Ensure highlights are always visible regardless of text layer opacity */
+  opacity: 1 !important;
 }
 
 .connection-layer {
