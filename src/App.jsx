@@ -7915,7 +7915,14 @@ function App() {
     }
 
     const handleMouseMove = (e) => {
-      if (!isDraggingSelectionRef.current) return
+      const isDragging = isDraggingSelectionRef.current
+      if (!isDragging) {
+        // Clear any lingering overlay when not dragging
+        Object.values(selectionLayerRefs.current).forEach(layer => {
+          if (layer) layer.innerHTML = ''
+        })
+        return
+      }
 
       // Find which page we're on
       let pageNum = null
@@ -8003,11 +8010,72 @@ function App() {
             // Only update last valid range if the selection is NOT collapsed
             // This ensures we only track valid selections, not cursor positions
             if (!selectionRange.collapsed) {
-              // Update last valid range to the END of the selection, not just cursor position
-              // This preserves the actual selection end when we move to whitespace
-              lastValidRangeRef.current = {
-                endContainer: selectionRange.endContainer,
-                endOffset: selectionRange.endOffset
+              // Check if the new range is extending the selection in the same direction
+              // Don't update lastValidRangeRef if we're jumping to a completely different text node
+              // that's not part of the same selection flow
+              const startContainer = selectionStartRangeRef.current.startContainer
+              const newEndContainer = selectionRange.endContainer
+              
+              // Update lastValidRangeRef intelligently to balance two needs:
+              // 1. Allow multi-word selections (tracking across multiple text nodes)
+              // 2. Prevent overwriting with unrelated text (like "—" when selecting "accountability")
+              // Strategy: Only update if the new end is "related" to the current selection
+              let shouldUpdate = true
+              if (lastValidRangeRef.current && typeof lastValidRangeRef.current === 'object') {
+                const lastEndContainer = lastValidRangeRef.current.endContainer
+                
+                // Always update if:
+                // - Same container as start (extending within same word)
+                // - Same container as last valid (continuing on same text node)
+                if (newEndContainer === startContainer || newEndContainer === lastEndContainer) {
+                  shouldUpdate = true
+                } else {
+                  // Different container - check if it's part of a continuous forward selection
+                  // This allows multi-word selections while preventing backward jumps to unrelated text
+                  try {
+                    // Check if new end comes after last valid end in document order
+                    const range = document.createRange()
+                    range.setStartBefore(lastEndContainer)
+                    range.setEndBefore(newEndContainer)
+                    const position = range.compareBoundaryPoints(Range.START_TO_END, range)
+                    
+                    // Also check if they're in the same text layer (same page context)
+                    const newParent = newEndContainer.parentElement
+                    const lastParent = lastEndContainer?.parentElement
+                    const sameTextLayer = newParent?.closest('.textLayer') === lastParent?.closest('.textLayer')
+                    
+                    // Check if new end is a very short punctuation node (like "—") that would overwrite a longer word
+                    const newEndText = newEndContainer.textContent || ''
+                    const lastEndText = lastEndContainer?.textContent || ''
+                    const isShortPunctuation = newEndText.length <= 2 && /^[^\w\s]+$/.test(newEndText.trim())
+                    const isLongWord = lastEndText.length > 5
+                    
+                    // Only update if:
+                    // - New end is after last valid end in document order (forward selection)
+                    // - AND they're in the same text layer (same page context)
+                    // - AND it's not a short punctuation node overwriting a longer word selection
+                    // This allows multi-word selections while preventing "—" from overwriting "accountability"
+                    if (position >= 0 && sameTextLayer && !(isShortPunctuation && isLongWord)) {
+                      // Forward selection in same text layer, not overwriting word with punctuation - allow update
+                      shouldUpdate = true
+                    } else {
+                      // Backward, different text layer, or short punctuation overwriting word - don't update
+                      shouldUpdate = false
+                    }
+                  } catch (e) {
+                    // If comparison fails, be conservative and don't update
+                    shouldUpdate = false
+                  }
+                }
+              }
+              
+              if (shouldUpdate) {
+                // Update last valid range to the END of the selection, not just cursor position
+                // This preserves the actual selection end when we move to whitespace
+                lastValidRangeRef.current = {
+                  endContainer: selectionRange.endContainer,
+                  endOffset: selectionRange.endOffset
+                }
               }
             } else {
             }
@@ -8496,14 +8564,36 @@ function App() {
       const startToEnd = selectionRange.compareBoundaryPoints(Range.START_TO_END, selectionRange)
       // Only swap if we didn't just fix the collapsed start and the range is actually backwards
       // If we fixed it, the range should already be correct (start=0, end=lastValidOffset)
-      if (startToEnd > 0 && !fixedCollapsedStart) {
-        // Selection is backwards, swap start and end
+      // IMPORTANT: Only swap if the range is not collapsed AND swapping won't collapse it
+      // Check if the range is actually backwards by comparing positions directly
+      if (startToEnd > 0 && !fixedCollapsedStart && !selectionRange.collapsed) {
         const startContainer = selectionRange.startContainer
         const startOffset = selectionRange.startOffset
         const endContainer = selectionRange.endContainer
         const endOffset = selectionRange.endOffset
-        selectionRange.setStart(endContainer, endOffset)
-        selectionRange.setEnd(startContainer, startOffset)
+        
+        // Verify the range is actually backwards by comparing positions
+        // If containers are the same, compare offsets directly
+        // If different, compareBoundaryPoints should be reliable
+        let isActuallyBackwards = false
+        if (startContainer === endContainer) {
+          // Same container - range is backwards if startOffset > endOffset
+          isActuallyBackwards = startOffset > endOffset
+        } else {
+          // Different containers - trust compareBoundaryPoints
+          isActuallyBackwards = true
+        }
+        
+        if (isActuallyBackwards) {
+          // Selection is backwards, swap start and end
+          // But first, check if swapping would collapse it
+          if (startContainer === endContainer && startOffset === endOffset) {
+            // Swapping would collapse it, don't swap
+          } else {
+            selectionRange.setStart(endContainer, endOffset)
+            selectionRange.setEnd(startContainer, startOffset)
+          }
+        }
       }
       
       // Final validation - ensure the range is not collapsed after all adjustments
@@ -8662,6 +8752,15 @@ function App() {
           }
           return [...prev, newItem]
         })
+        
+        // Immediately clear selection overlay and reset state after highlight is created
+        // This prevents the overlay from following the cursor after release
+        Object.values(selectionLayerRefs.current).forEach(layer => {
+          if (layer) layer.innerHTML = ''
+        })
+        isDraggingSelectionRef.current = false
+        selectionStartRangeRef.current = null
+        lastValidRangeRef.current = null
       } else {
         // No rectangles calculated - log warning with details for debugging
         console.warn('No rectangles calculated for selection', {
@@ -8679,16 +8778,14 @@ function App() {
             offset: selectionRange.endOffset
           } : null
         })
+        // Still clear overlay and reset state even if no rectangles
+        Object.values(selectionLayerRefs.current).forEach(layer => {
+          if (layer) layer.innerHTML = ''
+        })
+        isDraggingSelectionRef.current = false
+        selectionStartRangeRef.current = null
+        lastValidRangeRef.current = null
       }
-
-      // Clear selection overlay and reset state
-      Object.values(selectionLayerRefs.current).forEach(layer => {
-        if (layer) layer.innerHTML = ''
-      })
-
-      isDraggingSelectionRef.current = false
-      selectionStartRangeRef.current = null
-      lastValidRangeRef.current = null
     }
 
     // Add event listeners
