@@ -2821,7 +2821,10 @@ function App() {
     })
     
     // Step 2: Split each Y group by columns (X position gaps)
+    // First pass: detect columns per line and collect all column X positions
     const itemsByLine = new Map()
+    const allColumnXPositions = [] // Collect X positions of all detected columns
+    
     itemsByY.forEach((yItems, y) => {
       // Sort items by X position
       yItems.sort((a, b) => a.baseX - b.baseX)
@@ -2847,12 +2850,90 @@ function App() {
       }
       columns.push(currentColumn) // Don't forget the last column
       
-      // Create separate line entries for each column
-      columns.forEach((columnItems, columnIndex) => {
-        // Use composite key: Y_columnIndex to uniquely identify each line+column
-        const lineKey = `${y}_${columnIndex}`
-        itemsByLine.set(lineKey, columnItems)
+      // Store columns temporarily and collect their X positions
+      columns.forEach((columnItems) => {
+        const firstItemX = columnItems[0]?.baseX
+        if (firstItemX !== undefined) {
+          allColumnXPositions.push(firstItemX)
+        }
       })
+      
+      // Store columns with temporary local indices
+      columns.forEach((columnItems, localColumnIndex) => {
+        const lineKey = `${y}_${localColumnIndex}`
+        itemsByLine.set(lineKey, { items: columnItems, localIndex: localColumnIndex })
+      })
+    })
+    
+    // Determine global column boundaries by clustering X positions
+    // Sort all X positions and find natural clusters (columns)
+    allColumnXPositions.sort((a, b) => a - b)
+    const globalColumnBoundaries = []
+    const xTolerance = 50 // X positions within 50px are considered the same column
+    
+    allColumnXPositions.forEach(x => {
+      // Find if this X position belongs to an existing global column
+      let assignedToColumn = false
+      for (let i = 0; i < globalColumnBoundaries.length; i++) {
+        const boundary = globalColumnBoundaries[i]
+        // Check if X is within tolerance of this column's range
+        if (x >= boundary.minX - xTolerance && x <= boundary.maxX + xTolerance) {
+          // Update boundary to include this X
+          boundary.minX = Math.min(boundary.minX, x)
+          boundary.maxX = Math.max(boundary.maxX, x)
+          assignedToColumn = true
+          break
+        }
+      }
+      
+      if (!assignedToColumn) {
+        // Create new global column boundary
+        globalColumnBoundaries.push({ minX: x, maxX: x, globalIndex: globalColumnBoundaries.length })
+      }
+    })
+    
+    // Sort global columns by X position
+    globalColumnBoundaries.sort((a, b) => a.minX - b.minX)
+    // Reassign global indices based on sorted order
+    globalColumnBoundaries.forEach((boundary, index) => {
+      boundary.globalIndex = index
+    })
+    
+    // Helper function to find global column index for a given X position
+    const getGlobalColumnIndex = (x) => {
+      for (const boundary of globalColumnBoundaries) {
+        if (x >= boundary.minX - xTolerance && x <= boundary.maxX + xTolerance) {
+          return boundary.globalIndex
+        }
+      }
+      // Fallback: find closest column
+      let closestIndex = 0
+      let minDistance = Infinity
+      globalColumnBoundaries.forEach((boundary, index) => {
+        const distance = Math.min(Math.abs(x - boundary.minX), Math.abs(x - boundary.maxX))
+        if (distance < minDistance) {
+          minDistance = distance
+          closestIndex = index
+        }
+      })
+      return closestIndex
+    }
+    
+    // Second pass: update itemsByLine with global column indices
+    const itemsByLineWithGlobalColumns = new Map()
+    itemsByLine.forEach((value, lineKey) => {
+      const { items, localIndex } = value
+      const firstItemX = items[0]?.baseX
+      const globalColumnIndex = firstItemX !== undefined ? getGlobalColumnIndex(firstItemX) : 0
+      // Use composite key: Y_globalColumnIndex
+      const newLineKey = `${lineKey.split('_')[0]}_${globalColumnIndex}`
+      itemsByLineWithGlobalColumns.set(newLineKey, items)
+    })
+    
+    // Replace itemsByLine with the version using global column indices
+    itemsByLine.clear()
+    itemsByLineWithGlobalColumns.forEach((items, key) => {
+      itemsByLine.set(key, items)
     })
     
     
@@ -7113,6 +7194,48 @@ function App() {
     return context.measureText(text).width
   }
 
+  // Helper function to extract column index from a selection range
+  const getColumnIndexFromRange = (range) => {
+    if (!range) return null
+    
+    try {
+      // Find the span that contains the start of the selection
+      const startContainer = range.startContainer
+      let span = null
+      
+      if (startContainer.nodeType === Node.TEXT_NODE) {
+        span = startContainer.parentElement
+      } else if (startContainer.nodeType === Node.ELEMENT_NODE) {
+        span = startContainer
+      }
+      
+      // Look for column index in the span or its parent line container
+      if (span) {
+        // Check if span has column index
+        const spanColIdx = span.dataset.columnIndex
+        
+        if (spanColIdx !== undefined) {
+          const colIdx = parseInt(spanColIdx)
+          return colIdx
+        }
+        
+        // Fallback: check parent line container
+        const lineContainer = span.closest('span[data-column-index]')
+        if (lineContainer) {
+          const lineColIdx = lineContainer.dataset.columnIndex
+          if (lineColIdx !== undefined) {
+            const colIdx = parseInt(lineColIdx)
+            return colIdx
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to extract column index from range:', e)
+    }
+    
+    return null
+  }
+
   // Helper function to calculate precise rectangles from a Range
   // Returns an array of rectangles (one per line segment) instead of a single bounding box
   const calculatePreciseRectangles = (range, textLayerDiv) => {
@@ -8789,6 +8912,9 @@ function App() {
         const textLayerWidthAtCreation = textLayerRect ? textLayerRect.width : null
         const textLayerHeightAtCreation = textLayerRect ? textLayerRect.height : null
         
+        // Extract column index from selection range for column-aware sorting
+        const columnIndex = getColumnIndexFromRange(selectionRange)
+        
         // Create highlight with array of rectangles (visual selection)
         // But use expanded text (full words) for the highlights-editor
         const highlight = {
@@ -8799,7 +8925,8 @@ function App() {
           color: highlightColor,
           scale,
           textLayerWidth: textLayerWidthAtCreation,
-          textLayerHeight: textLayerHeightAtCreation
+          textLayerHeight: textLayerHeightAtCreation,
+          columnIndex: columnIndex // Store column index for sorting (null for non-column PDFs)
         }
         
         // Add to history for undo/redo
@@ -9554,8 +9681,24 @@ function App() {
         // Merge connected highlights
         const groupHighlights = group.map(id => highlights.find(h => h.id === id)).filter(Boolean)
         const sortedGroup = groupHighlights.sort((a, b) => {
-          // Sort by page, then by position
+          // Sort by page, then by column index (if available), then by Y position
           if (a.page !== b.page) return a.page - b.page
+          
+          // If both have column indices, sort by column first
+          const aHasColumn = a.columnIndex !== null && a.columnIndex !== undefined
+          const bHasColumn = b.columnIndex !== null && b.columnIndex !== undefined
+          
+          if (aHasColumn && bHasColumn) {
+            // Both have column indices - sort by column, then Y
+            if (a.columnIndex !== b.columnIndex) {
+              return a.columnIndex - b.columnIndex
+            }
+          } else if (aHasColumn || bHasColumn) {
+            // One has column index, one doesn't - sort by Y position (treat as same column)
+            // This handles mixed column/non-column PDFs
+          }
+          // If neither has column index, or both have same column, sort by Y position
+          
           const aY = (a.rects && a.rects[0]?.y) || a.y || 0
           const bY = (b.rects && b.rects[0]?.y) || b.y || 0
           return aY - bY
@@ -9594,7 +9737,27 @@ function App() {
       const aHighlight = highlights.find(h => h.id === a.id)
       const bHighlight = highlights.find(h => h.id === b.id)
       if (!aHighlight || !bHighlight) return 0
-      if (aHighlight.page !== bHighlight.page) return aHighlight.page - bHighlight.page
+      
+      // Sort by page first
+      if (aHighlight.page !== bHighlight.page) {
+        return aHighlight.page - bHighlight.page
+      }
+      
+      // Then by column index (if available), then by Y position
+      const aHasColumn = aHighlight.columnIndex !== null && aHighlight.columnIndex !== undefined
+      const bHasColumn = bHighlight.columnIndex !== null && bHighlight.columnIndex !== undefined
+      
+      if (aHasColumn && bHasColumn) {
+        // Both have column indices - sort by column, then Y
+        if (aHighlight.columnIndex !== bHighlight.columnIndex) {
+          return aHighlight.columnIndex - bHighlight.columnIndex
+        }
+      } else if (aHasColumn || bHasColumn) {
+        // One has column index, one doesn't - sort by Y position (treat as same column)
+        // This handles mixed column/non-column PDFs
+      }
+      // If neither has column index, or both have same column, sort by Y position
+      
       const aY = (aHighlight.rects && aHighlight.rects[0]?.y) || aHighlight.y || 0
       const bY = (bHighlight.rects && bHighlight.rects[0]?.y) || bHighlight.y || 0
       return aY - bY
