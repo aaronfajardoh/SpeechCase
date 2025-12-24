@@ -2801,7 +2801,7 @@ function App() {
     // Then split by columns (X position gaps) within each Y group
     const itemsByY = new Map()
     const lineTolerance = 5 * scaleY // Scale tolerance with display scale
-    const columnGapThreshold = (viewport.width * scaleX) * 0.03 // 12% of page width indicates a column gap
+    const columnGapThreshold = (viewport.width * scaleX) * 0.01 // 12% of page width indicates a column gap
     
     // Step 1: Group by Y coordinate
     allItems.forEach(itemData => {
@@ -3244,6 +3244,8 @@ function App() {
       lineContainer.style.whiteSpace = 'pre'
       lineContainer.style.display = 'inline-block'
       lineContainer.style.overflow = 'visible'
+      // Store column index on line container for column-aware highlighting
+      lineContainer.dataset.columnIndex = currentCol
       
       // Render all words in the line container with spacing
       let wordTokenIndex = 0
@@ -3259,6 +3261,8 @@ function App() {
         span.style.pointerEvents = interactionMode === 'highlight' ? 'auto' : 'auto'
         span.dataset.page = pageNum
         span.dataset.charIndex = wordCharIndex
+        // Store column index on span for column-aware highlighting
+        span.dataset.columnIndex = currentCol
         
         if (!/\S/.test(word)) {
           span.classList.add('text-space')
@@ -7225,6 +7229,16 @@ function App() {
           }
         }
         
+        // Get column index from span's data attribute (or from parent line container)
+        let columnIndex = span.dataset.columnIndex
+        if (!columnIndex) {
+          // Fallback: try to get from parent line container
+          const lineContainer = span.closest('span[data-column-index]')
+          if (lineContainer) {
+            columnIndex = lineContainer.dataset.columnIndex
+          }
+        }
+        
         selectedSpans.push({
           span,
           textNode,
@@ -7234,10 +7248,48 @@ function App() {
           spanTop,
           fontSize: spanHeight,
           fontFamily: span.style.fontFamily || 'sans-serif',
-          transform: span.style.transform
+          transform: span.style.transform,
+          columnIndex: columnIndex !== undefined ? parseInt(columnIndex) : null
         })
       }
     })
+    
+    // Filter spans to only include those in the same column as the selection start
+    // This prevents highlighting across columns in multi-column layouts
+    if (selectedSpans.length > 0) {
+      // Find the column index of the span where the selection starts
+      // Check which span contains the startContainer of the selection range
+      let startColumnIndex = null
+      
+      // First, try to find the span that directly contains the start container
+      for (const spanInfo of selectedSpans) {
+        if (spanInfo.span.contains(clonedRange.startContainer) || 
+            spanInfo.textNode === clonedRange.startContainer) {
+          if (spanInfo.columnIndex !== null) {
+            startColumnIndex = spanInfo.columnIndex
+            break
+          }
+        }
+      }
+      
+      // If not found, use the first span's column index as fallback
+      if (startColumnIndex === null && selectedSpans.length > 0) {
+        startColumnIndex = selectedSpans[0].columnIndex
+      }
+      
+      // If we have a valid column index, filter to only include spans in that column
+      if (startColumnIndex !== null) {
+        const filteredSpans = selectedSpans.filter(spanInfo => 
+          spanInfo.columnIndex === startColumnIndex
+        )
+        
+        // Only use filtered spans if we have at least one (to avoid losing all selection)
+        if (filteredSpans.length > 0) {
+          selectedSpans.length = 0
+          selectedSpans.push(...filteredSpans)
+        }
+      }
+    }
     
     if (selectedSpans.length === 0) {
       // Fallback to getClientRects if no spans were processed
@@ -7344,24 +7396,32 @@ function App() {
       }
     }
     
-    // Sort selected spans by their position (top, then left)
+    // Sort selected spans by their position (top, then column, then left)
     selectedSpans.sort((a, b) => {
       const topDiff = a.spanTop - b.spanTop
       if (Math.abs(topDiff) > 1) { // Allow small tolerance for same line
         return topDiff
       }
+      // If on same line (same Y), sort by column index first, then by left position
+      if (a.columnIndex !== null && b.columnIndex !== null) {
+        const colDiff = a.columnIndex - b.columnIndex
+        if (colDiff !== 0) return colDiff
+      }
       return a.spanLeft - b.spanLeft
     })
     
-    // Group consecutive spans on the same line and combine them
+    // Group consecutive spans on the same line AND same column, then combine them
     let currentGroup = []
     let currentTop = null
+    let currentColumn = null
     const tolerance = 1 // Tolerance for considering spans on the same line
     
     selectedSpans.forEach((spanInfo, index) => {
       const isNewLine = currentTop === null || Math.abs(spanInfo.spanTop - currentTop) > tolerance
+      const isNewColumn = currentColumn === null || spanInfo.columnIndex !== currentColumn
       
-      if (isNewLine) {
+      // Start a new group if it's a new line OR a new column (even on the same line)
+      if (isNewLine || isNewColumn) {
         // Process previous group if it exists
         if (currentGroup.length > 0) {
           const combinedRect = combineSpansOnLine(currentGroup)
@@ -7372,8 +7432,9 @@ function App() {
         // Start new group
         currentGroup = [spanInfo]
         currentTop = spanInfo.spanTop
+        currentColumn = spanInfo.columnIndex
       } else {
-        // Add to current group
+        // Same line and same column - add to current group
         currentGroup.push(spanInfo)
       }
     })
