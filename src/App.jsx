@@ -7841,9 +7841,6 @@ function App() {
     }
 
     const handleMouseDown = (e) => {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:7843',message:'handleMouseDown entry',data:{clientX:e.clientX,clientY:e.clientY,target:e.target?.tagName,hasHighlightAtPoint:!!e.target.closest('.highlight-rect, .highlight-connection-dot')},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-      // #endregion
       // Don't handle if clicking on a highlight (let highlights handle their own events)
       if (e.target.closest('.highlight-rect, .highlight-connection-dot')) {
         return
@@ -7904,9 +7901,6 @@ function App() {
         // Store start of selection
         selectionStartRangeRef.current = range.cloneRange()
         isDraggingSelectionRef.current = true
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:7902',message:'handleMouseDown set start range',data:{hasRange:!!range,isOnText,startOffset:range?.startOffset,startContainer:range?.startContainer?.nodeName,textContent:range?.startContainer?.textContent?.substring(0,20)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-        // #endregion
         // Don't initialize lastValidRangeRef here - wait until we have an actual selection
         // This prevents both start and end from being at the same position
         // lastValidRangeRef will be set in handleMouseMove when we have a non-collapsed selection
@@ -7914,9 +7908,6 @@ function App() {
         // Clicking on whitespace - set dragging flag but don't set start range yet
         // Start range will be set in handleMouseMove when we first hover over text
         isDraggingSelectionRef.current = true
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:7910',message:'handleMouseDown whitespace click',data:{hasRange:!!range,isOnText},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-        // #endregion
       }
       
       // Don't set native selection here - wait until mouseup
@@ -7925,10 +7916,6 @@ function App() {
 
     const handleMouseMove = (e) => {
       if (!isDraggingSelectionRef.current) return
-
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:7917',message:'handleMouseMove entry',data:{clientX:e.clientX,clientY:e.clientY,hasStartRange:!!selectionStartRangeRef.current,hasLastValidRange:!!lastValidRangeRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-      // #endregion
 
       // Find which page we're on
       let pageNum = null
@@ -7964,9 +7951,6 @@ function App() {
                 // Set start range to current position (not the beginning of the text node)
                 // This ensures we only highlight from where we first hover, not from the start
                 selectionStartRangeRef.current = range.cloneRange()
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:7953',message:'handleMouseMove initialized start range',data:{startOffset:range.startOffset,startContainer:range.startContainer?.nodeName},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-                // #endregion
                 // Don't initialize lastValidRangeRef here - wait until we have an actual selection
                 // This prevents both start and end from being at the same position
                 // lastValidRangeRef will be set in handleMouseMove when we have a non-collapsed selection
@@ -8019,12 +8003,7 @@ function App() {
             const wouldBeCollapsed = selectionRange.startContainer === range.endContainer && 
                                      selectionRange.startOffset === range.endOffset
             
-            const beforeSetEnd = {startOffset:selectionRange.startOffset,endOffset:selectionRange.endOffset,collapsed:selectionRange.collapsed}
             selectionRange.setEnd(range.endContainer, range.endOffset)
-            const afterSetEnd = {startOffset:selectionRange.startOffset,endOffset:selectionRange.endOffset,collapsed:selectionRange.collapsed,rangeEndOffset:range.endOffset,rangeEndContainer:range.endContainer?.nodeName}
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8000',message:'handleMouseMove setEnd over text',data:{beforeSetEnd,afterSetEnd,wouldBeCollapsed},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-            // #endregion
             // Only update last valid range if the selection is NOT collapsed AFTER setEnd
             // This ensures we only track valid selections, not cursor positions
             // Check both collapsed property AND explicit offset comparison (in case collapsed property is incorrect)
@@ -8053,9 +8032,6 @@ function App() {
               (isSameTextNode && sameOffsetAfterSetEnd) ||
               isZeroOffsetCollapsed ||
               alwaysCollapsedIfBothZero
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8032',message:'handleMouseMove checking isEffectivelyCollapsed',data:{wouldBeCollapsed,collapsed:selectionRange.collapsed,sameContainerAfterSetEnd,sameOffsetAfterSetEnd,isSameTextNode,bothOffsetsZero,isZeroOffsetCollapsed,alwaysCollapsedIfBothZero,startOffset:selectionRange.startOffset,endOffset:selectionRange.endOffset,isEffectivelyCollapsed},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-            // #endregion
             if (!isEffectivelyCollapsed) {
               // Update last valid range to the END of the selection, not just cursor position
               // This preserves the actual selection end when we move to whitespace
@@ -8063,16 +8039,6 @@ function App() {
                 endContainer: selectionRange.endContainer,
                 endOffset: selectionRange.endOffset
               }
-              // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8008',message:'handleMouseMove updated lastValidRange',data:{endContainer:selectionRange.endContainer?.nodeName,endOffset:selectionRange.endOffset},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-              // #endregion
-            } else {
-              // #region agent log
-              const isEffectivelyCollapsedForLog = wouldBeCollapsed || selectionRange.collapsed || 
-                (selectionRange.startContainer === selectionRange.endContainer && 
-                 selectionRange.startOffset === selectionRange.endOffset)
-              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8034',message:'handleMouseMove skipped lastValidRange - collapsed',data:{wouldBeCollapsed,collapsed:selectionRange.collapsed,startOffset:selectionRange.startOffset,endOffset:selectionRange.endOffset,sameContainer:selectionRange.startContainer===selectionRange.endContainer,isEffectivelyCollapsed:isEffectivelyCollapsedForLog,startContainer:selectionRange.startContainer?.nodeName,endContainer:selectionRange.endContainer?.nodeName},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-              // #endregion
             }
           } catch (e) {
             console.warn('Failed to set selection end in mouse move:', e)
@@ -8114,13 +8080,7 @@ function App() {
     }
 
     const handleMouseUp = (e) => {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8053',message:'handleMouseUp entry',data:{clientX:e.clientX,clientY:e.clientY,isDragging:isDraggingSelectionRef.current,hasStartRange:!!selectionStartRangeRef.current,hasLastValidRange:!!lastValidRangeRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       if (!isDraggingSelectionRef.current) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8054',message:'handleMouseUp early return - not dragging',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
         isDraggingSelectionRef.current = false
         lastValidRangeRef.current = null
         return
@@ -8128,9 +8088,6 @@ function App() {
 
       // If we don't have a start range, clear and return
       if (!selectionStartRangeRef.current) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8061',message:'handleMouseUp early return - no start range',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-        // #endregion
         isDraggingSelectionRef.current = false
         lastValidRangeRef.current = null
         return
@@ -8189,9 +8146,6 @@ function App() {
       }
       
       if (!pageNum) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8119',message:'handleMouseUp early return - no pageNum',data:{clientX:e.clientX,clientY:e.clientY},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-        // #endregion
         // Clear selection overlay
         Object.values(selectionLayerRefs.current).forEach(layer => {
           if (layer) layer.innerHTML = ''
@@ -8261,9 +8215,6 @@ function App() {
       // We'll use lastValidRangeRef's end position directly when setting the selection end
       if (!range && !(lastValidRangeRef.current && typeof lastValidRangeRef.current === 'object' && 
           lastValidRangeRef.current.endContainer && lastValidRangeRef.current.endOffset !== undefined)) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8187',message:'handleMouseUp early return - no range and no lastValidRange',data:{hasRange:!!range,hasLastValidRange:!!lastValidRangeRef.current,isOverText},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-        // #endregion
         isDraggingSelectionRef.current = false
         selectionStartRangeRef.current = null
         lastValidRangeRef.current = null
@@ -8284,18 +8235,12 @@ function App() {
       if (range) {
         // If range containers are not connected, try to use last valid range
         if (!validateRangeContainer(range.startContainer) || !validateRangeContainer(range.endContainer)) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8208',message:'handleMouseUp range containers disconnected',data:{startConnected:validateRangeContainer(range.startContainer),endConnected:validateRangeContainer(range.endContainer),hasLastValidRange:!!lastValidRangeRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-        // #endregion
         if (lastValidRangeRef.current) {
           const lastValid = lastValidRangeRef.current
           if (validateRangeContainer(lastValid.startContainer) && validateRangeContainer(lastValid.endContainer)) {
             range = lastValid.cloneRange()
           } else {
             console.warn('Range containers are not connected and last valid range is also invalid')
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8214',message:'handleMouseUp early return - disconnected containers',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-            // #endregion
             isDraggingSelectionRef.current = false
             selectionStartRangeRef.current = null
             lastValidRangeRef.current = null
@@ -8303,9 +8248,6 @@ function App() {
           }
         } else {
           console.warn('Range containers are not connected and no last valid range available')
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8221',message:'handleMouseUp early return - disconnected containers no fallback',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-          // #endregion
           isDraggingSelectionRef.current = false
           selectionStartRangeRef.current = null
           lastValidRangeRef.current = null
@@ -8317,9 +8259,6 @@ function App() {
       // Also validate selection start range
       if (!validateRangeContainer(selectionStartRangeRef.current.startContainer)) {
         console.warn('Selection start range container is not connected')
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8231',message:'handleMouseUp early return - start range disconnected',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-        // #endregion
         isDraggingSelectionRef.current = false
         selectionStartRangeRef.current = null
         lastValidRangeRef.current = null
@@ -8332,9 +8271,6 @@ function App() {
       const isStartRangeCollapsed = selectionStartRangeRef.current.collapsed || 
         (selectionStartRangeRef.current.startContainer === selectionStartRangeRef.current.endContainer &&
          selectionStartRangeRef.current.startOffset === selectionStartRangeRef.current.endOffset)
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8322',message:'handleMouseUp checking collapsed start',data:{isStartRangeCollapsed,collapsed:selectionStartRangeRef.current.collapsed,startOffset:selectionStartRangeRef.current.startOffset,endOffset:selectionStartRangeRef.current.endOffset,hasLastValidRange:!!lastValidRangeRef.current,lastValidEndOffset:lastValidRangeRef.current?.endOffset,isOverText,hasRange:!!range,rangeEndOffset:range?.endOffset},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       
       let fixedCollapsedStart = false
       let selectionRange = null
@@ -8352,13 +8288,7 @@ function App() {
         const sameContainer = startContainer === endContainer
         const sameOffset = startOffset === endOffset
         const wouldBeCollapsed = sameContainer && sameOffset
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8337',message:'handleMouseUp validating lastValidRangeRef for collapsed start',data:{sameContainer,sameOffset,wouldBeCollapsed,startContainer:startContainer?.nodeName,startOffset,endContainer:endContainer?.nodeName,endOffset},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
         if (wouldBeCollapsed) {
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8307',message:'handleMouseUp lastValidRange would create collapsed range',data:{startContainer:startContainer?.nodeName,startOffset,endContainer:endContainer?.nodeName,endOffset,hasRange:!!range,rangeEndOffset:range?.endOffset,isOverText},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-          // #endregion
           // lastValidRangeRef is collapsed - try using range if available and valid
           // But only if range would create a non-collapsed selection
           if (range && isOverText && range.endContainer && range.endOffset !== undefined) {
@@ -8369,9 +8299,6 @@ function App() {
               selectionRange.setStart(startContainer, startOffset)
               selectionRange.setEnd(range.endContainer, range.endOffset)
               fixedCollapsedStart = true
-              // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8352',message:'handleMouseUp using range as fallback when lastValidRange collapsed',data:{startContainer:startContainer?.nodeName,startOffset,endContainer:range.endContainer?.nodeName,endOffset:range.endOffset},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-              // #endregion
             } else {
               // Both lastValidRangeRef and range are collapsed - reject selection
               Object.values(selectionLayerRefs.current).forEach(layer => {
@@ -8438,10 +8365,7 @@ function App() {
           // Check if using range would create a non-collapsed selection
           const wouldBeCollapsed = selectionRange.startContainer === range.endContainer && 
                                    selectionRange.startOffset === range.endOffset
-          if (wouldBeCollapsed) {
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8371',message:'handleMouseUp collapsed start and range would create collapsed selection',data:{startContainer:selectionRange.startContainer?.nodeName,startOffset:selectionRange.startOffset,endContainer:range.endContainer?.nodeName,endOffset:range.endOffset},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-            // #endregion
+            if (wouldBeCollapsed) {
             // Clear selection overlay
             Object.values(selectionLayerRefs.current).forEach(layer => {
               if (layer) layer.innerHTML = ''
@@ -8461,9 +8385,6 @@ function App() {
           const wouldBeCollapsed = selectionRange.startContainer === lastValidRangeRef.current.endContainer && 
                                    selectionRange.startOffset === lastValidRangeRef.current.endOffset
           if (wouldBeCollapsed) {
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8369',message:'handleMouseUp lastValidRange would create collapsed range (whitespace path)',data:{startContainer:selectionRange.startContainer?.nodeName,startOffset:selectionRange.startOffset,endContainer:lastValidRangeRef.current.endContainer?.nodeName,endOffset:lastValidRangeRef.current.endOffset},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-            // #endregion
             // Clear selection overlay
             Object.values(selectionLayerRefs.current).forEach(layer => {
               if (layer) layer.innerHTML = ''
@@ -8478,9 +8399,6 @@ function App() {
           fixedCollapsedStart = true // Mark as fixed so we don't overwrite it below
         }
       }
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8298',message:'handleMouseUp selectionRange created',data:{collapsed:selectionRange?.collapsed,startContainer:selectionRange?.startContainer?.nodeName,startOffset:selectionRange?.startOffset,endContainer:selectionRange?.endContainer?.nodeName,endOffset:selectionRange?.endOffset,fixedCollapsedStart},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       // Use the end position of the range (which could be from last valid range if over whitespace)
       // Skip this if we already fixed the collapsed start - we don't want to overwrite our fix
       if (!fixedCollapsedStart) {
@@ -8529,9 +8447,6 @@ function App() {
           // But first check if this would create a collapsed selection
           const wouldBeCollapsedUsingRange = selectionRange.startContainer === range.endContainer && 
               selectionRange.startOffset === range.endOffset
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8483',message:'handleMouseUp checking range over text',data:{wouldBeCollapsedUsingRange,startContainer:selectionRange.startContainer?.nodeName,startOffset:selectionRange.startOffset,endContainer:range.endContainer?.nodeName,endOffset:range.endOffset,hasLastValidRange:!!lastValidRangeRef.current,lastValidEndOffset:lastValidRangeRef.current?.endOffset},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-          // #endregion
           if (wouldBeCollapsedUsingRange) {
             // Would be collapsed - prefer lastValidRangeRef if available
             if (lastValidRangeRef.current && typeof lastValidRangeRef.current === 'object' &&
@@ -8668,9 +8583,6 @@ function App() {
       
       // Check again if still collapsed after extension attempts
       if (selectionRange.collapsed) {
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8481',message:'handleMouseUp early return - collapsed after extension',data:{startContainer:selectionRange.startContainer?.nodeName,startOffset:selectionRange.startOffset,endContainer:selectionRange.endContainer?.nodeName,endOffset:selectionRange.endOffset},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-          // #endregion
           // Clear selection overlay
           Object.values(selectionLayerRefs.current).forEach(layer => {
             if (layer) layer.innerHTML = ''
@@ -8700,9 +8612,6 @@ function App() {
       
       // Final validation - ensure the range is not collapsed after all adjustments
       if (selectionRange.collapsed) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8510',message:'handleMouseUp early return - collapsed final check',data:{startContainer:selectionRange.startContainer?.nodeName,startOffset:selectionRange.startOffset,endContainer:selectionRange.endContainer?.nodeName,endOffset:selectionRange.endOffset},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
         Object.values(selectionLayerRefs.current).forEach(layer => {
           if (layer) layer.innerHTML = ''
         })
@@ -8731,9 +8640,6 @@ function App() {
       }
 
       let rectangles = calculatePreciseRectangles(selectionRange, textLayerDiv)
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8538',message:'handleMouseUp rectangles calculated',data:{rectanglesCount:rectangles?.length||0,hasRectangles:!!rectangles},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-      // #endregion
       
       // If rectangles calculation failed, try fallback using getClientRects
       if (!rectangles || rectangles.length === 0) {
@@ -8798,17 +8704,10 @@ function App() {
         selectedText = extractTextFromRange(selectionRange).trim()
       }
       
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8586',message:'handleMouseUp selectedText extracted',data:{selectedTextLength:selectedText?.length||0,selectedTextPreview:selectedText?.substring(0,50)||'',hasSelectedText:!!selectedText&&selectedText.length>0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
-      
       // Clear native selection after capturing (we use custom overlay for display)
       nativeSelection.removeAllRanges()
       
       if (selectedText.length === 0) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8606',message:'handleMouseUp early return - empty selectedText',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-        // #endregion
         // Clear selection overlay
         Object.values(selectionLayerRefs.current).forEach(layer => {
           if (layer) layer.innerHTML = ''
@@ -8819,9 +8718,6 @@ function App() {
       }
       
       if (rectangles && rectangles.length > 0) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8616',message:'handleMouseUp creating highlight',data:{rectanglesCount:rectangles.length,selectedTextLength:selectedText.length,pageNum},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
         // Get page info to store scale and text layer dimensions
         const pageInfo = pageData.find(p => p.pageNum === pageNum)
         const scale = pageInfo ? pageScale : 1.5
@@ -8870,13 +8766,7 @@ function App() {
           }
           return [...prev, newItem]
         })
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8654',message:'handleMouseUp highlight created successfully',data:{highlightId:highlight.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
       } else {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8665',message:'handleMouseUp no rectangles - highlight skipped',data:{hasSelectionRange:!!selectionRange,isCollapsed:selectionRange?.collapsed,hasSelectedText:selectedText.length>0,pageNum,hasTextLayer:!!textLayerDiv},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
         // No rectangles calculated - log warning with details for debugging
         console.warn('No rectangles calculated for selection', {
           hasSelectionRange: !!selectionRange,
