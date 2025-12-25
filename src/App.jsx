@@ -8213,6 +8213,9 @@ function App() {
             // Compare selectionRange's start position with range's end position
             const wouldBeCollapsed = selectionRange.startContainer === range.endContainer && 
                                      selectionRange.startOffset === range.endOffset
+            // Also check BEFORE setEnd if this would create a backwards range (end before start in same container)
+            const wouldBeBackwards = selectionRange.startContainer === range.endContainer && 
+                                    selectionRange.startOffset > range.endOffset
             
             selectionRange.setEnd(range.endContainer, range.endOffset)
             // Only update last valid range if the selection is NOT collapsed AFTER setEnd
@@ -8243,13 +8246,29 @@ function App() {
               (isSameTextNode && sameOffsetAfterSetEnd) ||
               isZeroOffsetCollapsed ||
               alwaysCollapsedIfBothZero
-            if (!isEffectivelyCollapsed) {
+            
+            // Also check if the range is backwards (end before start in same container)
+            // Don't update lastValidRangeRef with backwards positions
+            // Use wouldBeBackwards (checked before setEnd) since Range API might normalize backwards ranges
+            const isBackwards = wouldBeBackwards || (selectionRange.startContainer === selectionRange.endContainer && 
+                               selectionRange.startOffset > selectionRange.endOffset)
+            // Additional check: if endOffset is 0 and startOffset > 0 in same container, it's backwards
+            // This catches cases where dragging backwards results in endOffset: 0
+            const isBackwardsByZeroOffset = selectionRange.startContainer === selectionRange.endContainer && 
+                                           selectionRange.startOffset > 0 && selectionRange.endOffset === 0
+            // Conservative check: if endOffset is 0 and startOffset > 0, don't update (likely backwards drag)
+            // This prevents storing endOffset: 0 which can later create backwards ranges
+            const isSuspiciousZeroOffset = selectionRange.startOffset > 0 && selectionRange.endOffset === 0
+            
+            if (!isEffectivelyCollapsed && !isBackwards && !isBackwardsByZeroOffset && !isSuspiciousZeroOffset) {
               // Update last valid range to the END of the selection, not just cursor position
               // This preserves the actual selection end when we move to whitespace
+              // Only update if the range is not collapsed and not backwards
               lastValidRangeRef.current = {
                 endContainer: selectionRange.endContainer,
                 endOffset: selectionRange.endOffset
               }
+            } else {
             }
           } catch (e) {
             console.warn('Failed to set selection end in mouse move:', e)
@@ -8571,13 +8590,53 @@ function App() {
         // Create final selection range normally
         selectionRange = selectionStartRangeRef.current.cloneRange()
         
-        // If selectionStartRangeRef is collapsed and we don't have lastValidRangeRef, check if we can use range
-        if (isStartRangeCollapsed && !lastValidRangeRef.current && range && isOverText) {
-          // Check if using range would create a non-collapsed selection
-          const wouldBeCollapsed = selectionRange.startContainer === range.endContainer && 
-                                   selectionRange.startOffset === range.endOffset
+        // If selectionStartRangeRef is collapsed, we need to fix it using lastValidRangeRef or range
+        if (isStartRangeCollapsed) {
+          // Check if we can use lastValidRangeRef to fix the collapsed range
+          if (lastValidRangeRef.current && typeof lastValidRangeRef.current === 'object' &&
+              lastValidRangeRef.current.endContainer && lastValidRangeRef.current.endOffset !== undefined) {
+            // Only reject if using lastValidRangeRef would create a collapsed range in the SAME container
+            // If it's a different container, it's a valid multi-node selection
+            const sameContainer = selectionRange.startContainer === lastValidRangeRef.current.endContainer
+            const sameOffset = selectionRange.startOffset === lastValidRangeRef.current.endOffset
+            const wouldBeCollapsed = sameContainer && sameOffset
+            // Also check if using lastValidRangeRef would create a backwards range (end before start in same container)
+            const wouldBeBackwards = sameContainer && selectionRange.startOffset > lastValidRangeRef.current.endOffset
+            // Additional check: if lastValidRangeRef has endOffset: 0 and startOffset > 0 in same container, it's backwards
+            const wouldBeBackwardsByZeroOffset = sameContainer && selectionRange.startOffset > 0 && lastValidRangeRef.current.endOffset === 0
+            
+            if (wouldBeCollapsed || wouldBeBackwards || wouldBeBackwardsByZeroOffset) {
+              // lastValidRangeRef would create a collapsed or backwards range - reject
+              Object.values(selectionLayerRefs.current).forEach(layer => {
+                if (layer) layer.innerHTML = ''
+              })
+              isDraggingSelectionRef.current = false
+              selectionStartRangeRef.current = null
+              lastValidRangeRef.current = null
+              return
+            }
+            // Use lastValidRangeRef to fix the collapsed range (different container = valid)
+            selectionRange.setEnd(lastValidRangeRef.current.endContainer, lastValidRangeRef.current.endOffset)
+            fixedCollapsedStart = true
+          } else if (!lastValidRangeRef.current && range && isOverText) {
+            // No lastValidRangeRef, try using range
+            const wouldBeCollapsed = selectionRange.startContainer === range.endContainer && 
+                                     selectionRange.startOffset === range.endOffset
             if (wouldBeCollapsed) {
-            // Clear selection overlay
+              // Range would also create a collapsed selection - reject
+              Object.values(selectionLayerRefs.current).forEach(layer => {
+                if (layer) layer.innerHTML = ''
+              })
+              isDraggingSelectionRef.current = false
+              selectionStartRangeRef.current = null
+              lastValidRangeRef.current = null
+              return
+            }
+            // Use range to fix the collapsed range
+            selectionRange.setEnd(range.endContainer, range.endOffset)
+            fixedCollapsedStart = true
+          } else {
+            // No way to fix collapsed range - reject
             Object.values(selectionLayerRefs.current).forEach(layer => {
               if (layer) layer.innerHTML = ''
             })
@@ -8588,14 +8647,20 @@ function App() {
           }
         }
         
-        // If range is null (we're over whitespace), we need to set the end using lastValidRangeRef
-        // This ensures we use the actual selection end, not the collapsed end from selectionStartRangeRef
-        if (!range && lastValidRangeRef.current && typeof lastValidRangeRef.current === 'object' &&
+        // If range is null (we're over whitespace) and we haven't fixed the collapsed start yet,
+        // we need to set the end using lastValidRangeRef
+        if (!range && !fixedCollapsedStart && lastValidRangeRef.current && typeof lastValidRangeRef.current === 'object' &&
             lastValidRangeRef.current.endContainer && lastValidRangeRef.current.endOffset !== undefined) {
           // Validate that lastValidRangeRef won't create a collapsed range
           const wouldBeCollapsed = selectionRange.startContainer === lastValidRangeRef.current.endContainer && 
                                    selectionRange.startOffset === lastValidRangeRef.current.endOffset
-          if (wouldBeCollapsed) {
+          // Also check if it would create a backwards range (end before start in same container)
+          const wouldBeBackwards = selectionRange.startContainer === lastValidRangeRef.current.endContainer && 
+                                  selectionRange.startOffset > lastValidRangeRef.current.endOffset
+          // Additional check: if lastValidRangeRef has endOffset: 0 and startOffset > 0 in same container, it's backwards
+          const wouldBeBackwardsByZeroOffset = selectionRange.startContainer === lastValidRangeRef.current.endContainer && 
+                                              selectionRange.startOffset > 0 && lastValidRangeRef.current.endOffset === 0
+          if (wouldBeCollapsed || wouldBeBackwards || wouldBeBackwardsByZeroOffset) {
             // Clear selection overlay
             Object.values(selectionLayerRefs.current).forEach(layer => {
               if (layer) layer.innerHTML = ''
@@ -8635,9 +8700,13 @@ function App() {
           const endOffset = lastValidRangeRef.current.endOffset
           
           // Check if start and end would be the same (collapsed)
-          if (startContainer === endContainer && startOffset === endOffset) {
-            // Start and end are the same - extend to end of text node if possible
-            if (endContainer.nodeType === Node.TEXT_NODE) {
+          const wouldBeCollapsedUsingLastValid = startContainer === endContainer && startOffset === endOffset
+          // Check if it would create a backwards range (end before start in same container)
+          const wouldBeBackwardsUsingLastValid = startContainer === endContainer && startOffset > endOffset
+          
+          if (wouldBeCollapsedUsingLastValid || wouldBeBackwardsUsingLastValid) {
+            // Would be collapsed or backwards - try to extend to end of text node if possible
+            if (endContainer.nodeType === Node.TEXT_NODE && !wouldBeBackwardsUsingLastValid) {
               const textLength = endContainer.textContent.length
               if (endOffset < textLength) {
                 // Extend to end of text node
@@ -8647,10 +8716,11 @@ function App() {
                 selectionRange.setEnd(endContainer, endOffset)
               }
             } else {
+              // Can't fix backwards or collapsed range - will be handled below
               selectionRange.setEnd(endContainer, endOffset)
             }
           } else {
-            // Start and end are different - safe to set
+            // Start and end are different and not backwards - safe to set
             selectionRange.setEnd(endContainer, endOffset)
           }
         } else if (range && isOverText) {
@@ -8793,7 +8863,11 @@ function App() {
       }
       
       // Check again if still collapsed after extension attempts
-      if (selectionRange.collapsed) {
+      // Check both the collapsed property AND explicit offset comparison (Range API can be unreliable)
+      const isStillCollapsed = selectionRange.collapsed || 
+                              (selectionRange.startContainer === selectionRange.endContainer && 
+                               selectionRange.startOffset === selectionRange.endOffset)
+      if (isStillCollapsed) {
           // Clear selection overlay
           Object.values(selectionLayerRefs.current).forEach(layer => {
             if (layer) layer.innerHTML = ''
@@ -8822,7 +8896,24 @@ function App() {
       }
       
       // Final validation - ensure the range is not collapsed after all adjustments
-      if (selectionRange.collapsed) {
+      // Check both the collapsed property AND explicit offset comparison (Range API can be unreliable)
+      // A range is collapsed ONLY if:
+      // 1. Same container AND same offset, OR
+      // 2. Range has zero length (no text selected)
+      const sameContainer = selectionRange.startContainer === selectionRange.endContainer
+      const sameOffset = selectionRange.startOffset === selectionRange.endOffset
+      const isExplicitlyCollapsed = sameContainer && sameOffset
+      
+      // Check if range has zero length (no text selected) - this is the definitive test
+      // Note: toString() works across multiple text nodes, so this catches all collapsed cases
+      const rangeLength = selectionRange.toString().length
+      const hasZeroLength = rangeLength === 0
+      
+      // Only treat as collapsed if same container AND same offset, OR if zero length
+      // If containers are different, even with same offset, it's a valid selection across nodes
+      const isEffectivelyCollapsed = isExplicitlyCollapsed || hasZeroLength
+      
+      if (selectionRange.collapsed || isEffectivelyCollapsed) {
         Object.values(selectionLayerRefs.current).forEach(layer => {
           if (layer) layer.innerHTML = ''
         })
@@ -8831,6 +8922,7 @@ function App() {
         lastValidRangeRef.current = null
         return
       }
+      
       
       // Update native selection to match our range so we can capture the text
       const nativeSelection = window.getSelection()
@@ -8851,6 +8943,7 @@ function App() {
       }
 
       let rectangles = calculatePreciseRectangles(selectionRange, textLayerDiv)
+      
       
       // If rectangles calculation failed, try fallback using getClientRects
       if (!rectangles || rectangles.length === 0) {
