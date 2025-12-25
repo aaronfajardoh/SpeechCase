@@ -7213,20 +7213,14 @@ function App() {
       if (span) {
         // Check if span has column index
         const spanColIdx = span.dataset.columnIndex
-        
         if (spanColIdx !== undefined) {
-          const colIdx = parseInt(spanColIdx)
-          return colIdx
+          return parseInt(spanColIdx)
         }
         
         // Fallback: check parent line container
         const lineContainer = span.closest('span[data-column-index]')
-        if (lineContainer) {
-          const lineColIdx = lineContainer.dataset.columnIndex
-          if (lineColIdx !== undefined) {
-            const colIdx = parseInt(lineColIdx)
-            return colIdx
-          }
+        if (lineContainer && lineContainer.dataset.columnIndex !== undefined) {
+          return parseInt(lineContainer.dataset.columnIndex)
         }
       }
     } catch (e) {
@@ -7635,20 +7629,30 @@ function App() {
     // Helper function to extract text from a range, preserving spaces between spans
     // Uses the same logic as calculatePreciseRectangles to find selected spans,
     // then extracts from extractedText using charIndex values
-    const extractTextFromRange = (range) => {
+    const extractTextFromRange = (range, originalRangeStartContainer = null) => {
       if (!range || range.collapsed || !extractedText) {
         return range ? range.toString() : ''
       }
       
       // Find the text layer
       const commonAncestor = range.commonAncestorContainer
-      const textLayer = commonAncestor.closest('.text-layer')
+      // If commonAncestor is a text node, get its parent element to use closest()
+      const ancestorElement = commonAncestor.nodeType === Node.TEXT_NODE 
+        ? commonAncestor.parentElement 
+        : commonAncestor
+      
+      const textLayer = ancestorElement?.closest('.text-layer')
+      
       if (!textLayer) {
         return range.toString()
       }
       
       // Clone the range to avoid modifying the original
       const clonedRange = range.cloneRange()
+      
+      // Use original range start container for column filtering if provided
+      // This ensures column filtering works correctly when range is expanded for word boundaries
+      const columnFilterStartContainer = originalRangeStartContainer || clonedRange.startContainer
       
       // Get all spans in the text layer
       const allSpans = Array.from(textLayer.querySelectorAll('span[data-char-index]'))
@@ -7718,93 +7722,110 @@ function App() {
         
         // Only add if there's actually a selected portion
         if (startOffset < endOffset && startOffset >= 0 && endOffset <= textNode.textContent.length) {
+          // Get column index from span (or parent line container)
+          let columnIndex = span.dataset.columnIndex
+          if (columnIndex === undefined) {
+            const lineContainer = span.closest('span[data-column-index]')
+            if (lineContainer) {
+              columnIndex = lineContainer.dataset.columnIndex
+            }
+          }
+          
           const spanCharIndex = parseInt(span.dataset.charIndex) || 0
           selectedSpans.push({
             span,
             charIndex: spanCharIndex,
             startOffset,
-            endOffset
+            endOffset,
+            columnIndex: columnIndex !== undefined ? parseInt(columnIndex) : null
           })
         }
       })
+      
+      // Filter spans to only include those in the same column as the selection start
+      // This prevents extracting text from other columns in multi-column layouts
+      if (selectedSpans.length > 0) {
+        // Find the column index of the span where the selection starts
+        let startColumnIndex = null
+        
+        // Find the span that contains the start of the selection (use original start container for column filtering)
+        for (const spanInfo of selectedSpans) {
+          if (spanInfo.span.contains(columnFilterStartContainer) || 
+              spanInfo.span.firstChild === columnFilterStartContainer) {
+            if (spanInfo.columnIndex !== null) {
+              startColumnIndex = spanInfo.columnIndex
+              break
+            }
+          }
+        }
+        
+        // If not found, use the first span's column index as fallback
+        if (startColumnIndex === null && selectedSpans.length > 0) {
+          startColumnIndex = selectedSpans[0].columnIndex
+        }
+        
+        // If we have a valid column index, filter to only include spans in that column
+        if (startColumnIndex !== null) {
+          const filteredSpans = selectedSpans.filter(spanInfo => 
+            spanInfo.columnIndex === startColumnIndex
+          )
+          
+          // Only use filtered spans if we have at least one (to avoid losing all selection)
+          if (filteredSpans.length > 0) {
+            selectedSpans.length = 0
+            selectedSpans.push(...filteredSpans)
+          }
+        }
+      }
       
       if (selectedSpans.length === 0) {
         return range.toString()
       }
       
-      // Sort by charIndex to ensure correct order
+      // Sort by charIndex to ensure correct order (for display order, not for extraction)
       selectedSpans.sort((a, b) => a.charIndex - b.charIndex)
       
-      // Calculate start and end charIndex in extractedText
+      // Extract text directly from the filtered spans' textContent
+      // This is more reliable than using charIndex to index into extractedText,
+      // especially in multi-column layouts where charIndex might not align correctly
       const firstSpan = selectedSpans[0]
       const lastSpan = selectedSpans[selectedSpans.length - 1]
       
-      // Account for coordinate misalignment: be more aggressive about including full spans
-      // When selection is near span boundaries, always include the full span to prevent missing characters
-      const firstSpanText = firstSpan.span.firstChild?.textContent || ''
-      const firstSpanFullLength = firstSpanText.length
-      const lastSpanText = lastSpan.span.firstChild?.textContent || ''
-      const lastSpanFullLength = lastSpanText.length
+      let extractedTextParts = []
       
-      // More aggressive expansion: if selection doesn't start at the very beginning of first span,
-      // include the full span to avoid missing characters due to misalignment
-      let startCharIndex = firstSpan.charIndex + firstSpan.startOffset
-      // Expand to full span if selection starts anywhere except at the very start
-      // This is more aggressive but prevents missing characters
-      if (firstSpan.startOffset > 0) {
-        // Check if selection is in the first 50% of the span - if so, include full span
-        const startRatio = firstSpan.startOffset / firstSpanFullLength
-        if (startRatio < 0.5) {
-          // Selection starts in first half of span - include full span to prevent missing start
-          startCharIndex = firstSpan.charIndex
-        }
-      }
-      
-      // More aggressive expansion: if selection doesn't end at the very end of last span,
-      // include the full span to avoid missing characters due to misalignment
-      let endCharIndex = lastSpan.charIndex + lastSpan.endOffset
-      const charsFromEnd = lastSpanFullLength - lastSpan.endOffset
-      if (charsFromEnd > 0) {
-        // Check if selection ends in the last 50% of the span - if so, include full span
-        const endRatio = charsFromEnd / lastSpanFullLength
-        if (endRatio < 0.5) {
-          // Selection ends in last half of span - include full span to prevent missing end
-          endCharIndex = lastSpan.charIndex + lastSpanFullLength
-        }
-      }
-      
-      // Additionally, try to include adjacent spans if they're very close
-      // This handles cases where misalignment causes selection to miss adjacent words entirely
-      const allSpansArray = Array.from(allSpans)
-      if (allSpansArray.length > 0) {
-        // Check for span immediately before firstSpan
-        const prevSpanIndex = allSpansArray.findIndex(s => s === firstSpan.span)
-        if (prevSpanIndex > 0) {
-          const prevSpan = allSpansArray[prevSpanIndex - 1]
-          const prevCharIndex = parseInt(prevSpan.dataset.charIndex) || 0
-          // If first span selection starts very close to its beginning, include previous span
-          if (firstSpan.startOffset <= Math.max(1, Math.floor(firstSpanFullLength * 0.3))) {
-            const prevSpanText = prevSpan.firstChild?.textContent || ''
-            startCharIndex = Math.min(startCharIndex, prevCharIndex)
-          }
+      selectedSpans.forEach((spanInfo, index) => {
+        const textNode = spanInfo.span.firstChild
+        if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return
+        
+        const spanText = textNode.textContent
+        let textToAdd = ''
+        
+        if (selectedSpans.length === 1) {
+          // Single span - use selected portion only
+          textToAdd = spanText.substring(spanInfo.startOffset, spanInfo.endOffset)
+        } else if (index === 0) {
+          // First span - use from startOffset to end
+          textToAdd = spanText.substring(spanInfo.startOffset)
+        } else if (index === selectedSpans.length - 1) {
+          // Last span - use from start to endOffset
+          textToAdd = spanText.substring(0, spanInfo.endOffset)
+        } else {
+          // Middle spans - use full text
+          textToAdd = spanText
         }
         
-        // Check for span immediately after lastSpan
-        const nextSpanIndex = allSpansArray.findIndex(s => s === lastSpan.span)
-        if (nextSpanIndex >= 0 && nextSpanIndex < allSpansArray.length - 1) {
-          const nextSpan = allSpansArray[nextSpanIndex + 1]
-          const nextCharIndex = parseInt(nextSpan.dataset.charIndex) || 0
-          const nextSpanText = nextSpan.firstChild?.textContent || ''
-          // If last span selection ends very close to its end, include next span
-          if (charsFromEnd <= Math.max(1, Math.floor(lastSpanFullLength * 0.3))) {
-            endCharIndex = Math.max(endCharIndex, nextCharIndex + nextSpanText.length)
-          }
+        if (textToAdd.length > 0) {
+          extractedTextParts.push(textToAdd)
         }
-      }
+      })
       
-      // Extract text directly from extractedText
-      if (startCharIndex >= 0 && endCharIndex <= extractedText.length && startCharIndex < endCharIndex) {
-        return extractedText.substring(startCharIndex, endCharIndex)
+      // Join the text parts (spans are already in correct order)
+      // Note: We don't add spaces between spans because the DOM structure already
+      // preserves the spacing between words as rendered
+      const extracted = extractedTextParts.join('')
+      
+      if (extracted && extracted.length > 0) {
+        return extracted
       }
       
       // Fallback to standard toString
@@ -7855,8 +7876,16 @@ function App() {
         isEndInWord = textAtEnd.length > 0 && /\S/.test(textAtEnd[0])
       }
       
-      // If neither start nor end is in the middle of a word, return the selection as-is
+      // If neither start nor end is in the middle of a word, use extractTextFromRange
+      // to ensure column filtering is applied (even if selection is at word boundaries)
       if (!isStartInWord && !isEndInWord) {
+        if (extractedText) {
+          // Pass original start container to ensure column filtering works correctly
+          const extracted = extractTextFromRange(range, startContainer).trim()
+          if (extracted && extracted.length > 0) {
+            return extracted
+          }
+        }
         return selectedText
       }
       
@@ -7891,33 +7920,31 @@ function App() {
       }
       
       // Extract text from the expanded range
-      // First try native selection API which preserves spaces properly
-      const savedSelection = window.getSelection()
-      const savedRanges = []
-      
-      // Save current selection ranges
-      for (let i = 0; i < savedSelection.rangeCount; i++) {
-        savedRanges.push(savedSelection.getRangeAt(i).cloneRange())
+      // Prefer extractTextFromRange which filters by column in multi-column layouts
+      // Pass original range start container to ensure column filtering uses the original selection start
+      let expandedText = ''
+      if (extractedText) {
+        expandedText = extractTextFromRange(expandedRange, startContainer).trim()
       }
       
-      // Set selection to expanded range and get text
-      savedSelection.removeAllRanges()
-      savedSelection.addRange(expandedRange)
-      let expandedText = savedSelection.toString().trim()
-      
-      // Restore original selection
-      savedSelection.removeAllRanges()
-      savedRanges.forEach(r => savedSelection.addRange(r))
-      
-      // If native selection didn't work or lost spaces, try extractTextFromRange
-      if (!expandedText || expandedText.length === 0 || !expandedText.includes(' ')) {
-        if (extractedText) {
-          const extracted = extractTextFromRange(expandedRange).trim()
-          // Only use if it has spaces (indicating it preserved them)
-          if (extracted && extracted.includes(' ')) {
-            expandedText = extracted
-          }
+      // If extractTextFromRange didn't work, try native selection API as fallback
+      if (!expandedText || expandedText.length === 0) {
+        const savedSelection = window.getSelection()
+        const savedRanges = []
+        
+        // Save current selection ranges
+        for (let i = 0; i < savedSelection.rangeCount; i++) {
+          savedRanges.push(savedSelection.getRangeAt(i).cloneRange())
         }
+        
+        // Set selection to expanded range and get text
+        savedSelection.removeAllRanges()
+        savedSelection.addRange(expandedRange)
+        expandedText = savedSelection.toString().trim()
+        
+        // Restore original selection
+        savedSelection.removeAllRanges()
+        savedRanges.forEach(r => savedSelection.addRange(r))
       }
       
       // Final fallback to range.toString()
