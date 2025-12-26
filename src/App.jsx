@@ -9911,17 +9911,37 @@ function App() {
     })
   }, [highlights, mergeConnectedHighlights])
 
-  // Update all existing highlight opacities to ensure they use the latest value
+  // Helper function to get highlight color
+  const getHighlightColor = (color) => {
+    const colors = {
+      yellow: 'rgba(251, 188, 4, 0.3)', // Reduced opacity for better appearance
+      green: 'rgba(52, 168, 83, 0.3)', // Reduced opacity for better appearance
+      blue: 'rgba(66, 133, 244, 0.3)' // Reduced opacity for better appearance
+    }
+    return colors[color] || colors.yellow
+  }
+
+  // Update all existing highlight colors to ensure they use the latest values
+  // This ensures highlights maintain their correct colors after re-renders
   useEffect(() => {
     Object.values(highlightLayerRefs.current).forEach(layer => {
       if (layer) {
         const highlightRects = layer.querySelectorAll('.highlight-rect')
         highlightRects.forEach(rect => {
-          rect.style.backgroundColor = 'rgba(251, 188, 4, 0.24)'
+          // Get the highlight ID from the rect and find the corresponding highlight
+          const highlightId = rect.dataset.highlightId
+          if (highlightId) {
+            const highlight = highlights.find(h => h.id === highlightId)
+            if (highlight) {
+              // Use the correct color for this highlight instead of hardcoded yellow
+              const highlightBgColor = getHighlightColor(highlight.color || 'yellow')
+              rect.style.backgroundColor = highlightBgColor
+            }
+          }
         })
       }
     })
-  }, [renderedPages])
+  }, [renderedPages, highlights])
 
   // Ensure highlights are always visible regardless of text layer visibility
   useEffect(() => {
@@ -9998,16 +10018,6 @@ function App() {
     }
   }, [handleUndoHighlight, handleRedoHighlight])
 
-  // Helper function to get highlight color
-  const getHighlightColor = (color) => {
-    const colors = {
-      yellow: 'rgba(251, 188, 4, 0.6)', // Increased opacity for better visibility when text layer is invisible
-      green: 'rgba(52, 168, 83, 0.6)', // Increased opacity for better visibility when text layer is invisible
-      blue: 'rgba(66, 133, 244, 0.6)' // Increased opacity for better visibility when text layer is invisible
-    }
-    return colors[color] || colors.yellow
-  }
-
   // Helper function to get darker border color for hover
   const getHighlightBorderColor = (color) => {
     const colors = {
@@ -10039,10 +10049,23 @@ function App() {
     const dotColor = getDotColor(highlight.color || 'yellow')
     
     // Remove existing highlights and dots for this highlight to re-render fresh
+    // Query for all elements with this highlight ID (includes both rects and dots)
     const existingHighlights = highlightLayer.querySelectorAll(`[data-highlight-id="${highlight.id}"]`)
-    existingHighlights.forEach(el => el.remove())
-    const existingDots = highlightLayer.querySelectorAll(`[data-highlight-id="${highlight.id}"][data-dot]`)
-    existingDots.forEach(el => el.remove())
+    // Remove all found elements immediately
+    existingHighlights.forEach(el => {
+      if (el.parentNode === highlightLayer) {
+        el.remove()
+      }
+    })
+    // Double-check: query again after removal to catch any elements that might have been
+    // added by a concurrent render call. This prevents duplicate layers when multiple
+    // effects trigger renderHighlight simultaneously.
+    const remainingHighlights = highlightLayer.querySelectorAll(`[data-highlight-id="${highlight.id}"]`)
+    remainingHighlights.forEach(el => {
+      if (el.parentNode === highlightLayer) {
+        el.remove()
+      }
+    })
 
     // Get current page info to adjust coordinates if scale changed
     const pageInfo = pageData.find(p => p.pageNum === highlight.page)
