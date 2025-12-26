@@ -5,6 +5,35 @@
  * 2. Repetition-based detection (text appearing on multiple pages)
  */
 
+// Helper function to check if text is a common word that shouldn't be filtered
+// Common words (articles, prepositions, common verbs) are part of normal content
+// and shouldn't be filtered just because they're short or repeat across pages
+function isCommonWord(normalizedText) {
+  if (!normalizedText || normalizedText.length === 0) return false
+  
+  // Common Spanish words
+  const spanishCommonWords = new Set([
+    'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas',
+    'de', 'del', 'al', 'a', 'en', 'con', 'por', 'para', 'sin', 'sobre',
+    'es', 'son', 'está', 'están', 'ser', 'estar', 'tener', 'haber',
+    'y', 'o', 'pero', 'mas', 'más', 'muy', 'también', 'como', 'cuando',
+    'se', 'le', 'les', 'lo', 'que', 'quien', 'cual', 'donde', 'cuando',
+    'su', 'sus', 'mi', 'mis', 'tu', 'tus', 'nuestro', 'nuestros'
+  ])
+  
+  // Common English words
+  const englishCommonWords = new Set([
+    'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'of', 'to', 'in', 'on', 'at', 'by', 'for', 'with', 'from', 'as',
+    'and', 'or', 'but', 'if', 'when', 'where', 'what', 'who', 'why', 'how',
+    'this', 'that', 'these', 'those', 'he', 'she', 'it', 'they', 'we', 'you',
+    'his', 'her', 'its', 'their', 'my', 'your', 'our', 'has', 'have', 'had'
+  ])
+  
+  const trimmed = normalizedText.trim().toLowerCase()
+  return spanishCommonWords.has(trimmed) || englishCommonWords.has(trimmed)
+}
+
 /**
  * Filter headers and footers from PDF page data
  * Uses position-based and repetition-based filtering
@@ -42,11 +71,23 @@ export async function filterHeadersAndFooters(
     const pagesWithThisText = textToPages.get(normalized);
     const repetitionCount = pagesWithThisText ? pagesWithThisText.size : 0;
 
+    // Extract normalized text from composite key (format: "text|length")
+    let normalizedTextOnly = normalized;
+    let normalizedLength = normalized.length;
+    if (normalized.includes('|')) {
+      normalizedTextOnly = normalized.split('|')[0];
+      normalizedLength = normalizedTextOnly.length;
+    }
+
+    // Check if this is a common word that shouldn't be filtered
+    const isCommon = isCommonWord(normalizedTextOnly);
+
     // Filter if:
-    // 1. Text appears on multiple pages (likely header/footer), OR
-    // 2. Text is very short (1-3 chars) and in header/footer region (likely page numbers, dates)
-    const isLikelyHeaderFooter = repetitionCount >= minRepetitions ||
-                                 (normalized.length <= 3 && isInHeaderFooterRegion);
+    // 1. Text appears on multiple pages (likely header/footer) AND it's NOT a common word, OR
+    // 2. Text is very short (1-3 chars) and in header/footer region AND it's NOT a common word (likely page numbers, dates)
+    // Common words are kept even if they repeat or are short, as they're part of normal content
+    const isLikelyHeaderFooter = (repetitionCount >= minRepetitions && !isCommon) ||
+                                 (normalizedLength <= 3 && isInHeaderFooterRegion && !isCommon);
 
     return !isLikelyHeaderFooter;
   }).map(({ item }) => item); // Return just the original items
@@ -78,11 +119,23 @@ export function filterHeadersAndFootersSync(pageData, textToPages, minRepetition
     const pagesWithThisText = textToPages.get(normalized);
     const repetitionCount = pagesWithThisText ? pagesWithThisText.size : 0;
 
+    // Extract normalized text from composite key (format: "text|length")
+    let normalizedTextOnly = normalized;
+    let normalizedLength = normalized.length;
+    if (normalized.includes('|')) {
+      normalizedTextOnly = normalized.split('|')[0];
+      normalizedLength = normalizedTextOnly.length;
+    }
+
+    // Check if this is a common word that shouldn't be filtered
+    const isCommon = isCommonWord(normalizedTextOnly);
+
     // Filter if:
-    // 1. Text appears on multiple pages (likely header/footer), OR
-    // 2. Text is very short (1-3 chars) and in header/footer region (likely page numbers, dates)
-    const isLikelyHeaderFooter = repetitionCount >= minRepetitions ||
-                                 (normalized.length <= 3 && isInHeaderFooterRegion);
+    // 1. Text appears on multiple pages (likely header/footer) AND it's NOT a common word, OR
+    // 2. Text is very short (1-3 chars) and in header/footer region AND it's NOT a common word (likely page numbers, dates)
+    // Common words are kept even if they repeat or are short, as they're part of normal content
+    const isLikelyHeaderFooter = (repetitionCount >= minRepetitions && !isCommon) ||
+                                 (normalizedLength <= 3 && isInHeaderFooterRegion && !isCommon);
 
     return !isLikelyHeaderFooter;
   }).map(({ item }) => item); // Return just the original items

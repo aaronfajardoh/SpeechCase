@@ -1217,9 +1217,39 @@ function App() {
         }
       })
       pageTextItems.push({ pageNum, items: pageItems, viewport })
+      
     }
     
     return { textToPages, pageTextItems }
+  }
+
+  // Helper function to check if text is a common word that shouldn't be filtered
+  // Common words (articles, prepositions, common verbs) are part of normal content
+  // and shouldn't be filtered just because they're short or repeat across pages
+  const isCommonWord = (normalizedText) => {
+    if (!normalizedText || normalizedText.length === 0) return false
+    
+    // Common Spanish words
+    const spanishCommonWords = new Set([
+      'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas',
+      'de', 'del', 'al', 'a', 'en', 'con', 'por', 'para', 'sin', 'sobre',
+      'es', 'son', 'está', 'están', 'ser', 'estar', 'tener', 'haber',
+      'y', 'o', 'pero', 'mas', 'más', 'muy', 'también', 'como', 'cuando',
+      'se', 'le', 'les', 'lo', 'que', 'quien', 'cual', 'donde', 'cuando',
+      'su', 'sus', 'mi', 'mis', 'tu', 'tus', 'nuestro', 'nuestros'
+    ])
+    
+    // Common English words
+    const englishCommonWords = new Set([
+      'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+      'of', 'to', 'in', 'on', 'at', 'by', 'for', 'with', 'from', 'as',
+      'and', 'or', 'but', 'if', 'when', 'where', 'what', 'who', 'why', 'how',
+      'this', 'that', 'these', 'those', 'he', 'she', 'it', 'they', 'we', 'you',
+      'his', 'her', 'its', 'their', 'my', 'your', 'our', 'has', 'have', 'had'
+    ])
+    
+    const trimmed = normalizedText.trim().toLowerCase()
+    return spanishCommonWords.has(trimmed) || englishCommonWords.has(trimmed)
   }
 
   // Sync version for immediate rendering (no LLM, fast)
@@ -1248,20 +1278,27 @@ function App() {
       
       // Get normalized text length (extract from composite key if needed)
       let normalizedLength
+      let normalizedTextOnly
       if (originalNormalized) {
+        normalizedTextOnly = originalNormalized
         normalizedLength = originalNormalized.length
       } else if (normalized.includes('|')) {
-        normalizedLength = normalized.split('|')[0].length
+        normalizedTextOnly = normalized.split('|')[0]
+        normalizedLength = normalizedTextOnly.length
       } else {
+        normalizedTextOnly = normalized
         normalizedLength = normalized.length
       }
       
+      // Check if this is a common word that shouldn't be filtered
+      const isCommon = isCommonWord(normalizedTextOnly)
+      
       // Filter if:
-      // 1. Text appears on multiple pages (likely header/footer), OR
-      // 2. Text is very short (1-3 chars) and in header/footer region (likely page numbers, dates)
-      // BUT: Only filter if it's actually in the header/footer region (already checked above)
-      const isLikelyHeaderFooter = repetitionCount >= minRepetitions || 
-                                 (normalizedLength <= 3 && isInHeaderFooterRegion)
+      // 1. Text appears on multiple pages (likely header/footer) AND it's NOT a common word, OR
+      // 2. Text is very short (1-3 chars) and in header/footer region AND it's NOT a common word (likely page numbers, dates)
+      // Common words are kept even if they repeat or are short, as they're part of normal content
+      const isLikelyHeaderFooter = (repetitionCount >= minRepetitions && !isCommon) || 
+                                 (normalizedLength <= 3 && isInHeaderFooterRegion && !isCommon)
       
       return !isLikelyHeaderFooter
     }).map(({ item }) => item)
@@ -2427,15 +2464,128 @@ function App() {
         const page = await pdfDoc.getPage(pageNum)
         const viewport = page.getViewport({ scale: pageScale })
         
-        // Get the page data from our repetition map
+        // Get original textContent first - we need ALL items including spaces
+        const textContent = await page.getTextContent()
+        
+        // Get the page data from our repetition map (for filtering decisions)
         const pageData = pageTextItems.find(p => p.pageNum === pageNum)
         if (!pageData) continue
         
-        // Filter out headers and footers using repetition detection (sync for immediate rendering)
-        const filteredItems = filterHeadersAndFootersSync(pageData, textToPages)
+        // Build filtering decisions based on pageData items
+        // Since text items may be split differently between the two getTextContent() calls,
+        // we'll build a cumulative text string and match based on character positions
+        // CRITICAL: Use the same viewport scale as buildRepetitionMap (1.0) for Y position calculations
+        // to ensure consistent header/footer region detection
+        const buildRepetitionViewport = page.getViewport({ scale: 1.0 })
+        const headerThreshold = buildRepetitionViewport.height * 0.15
+        const footerThreshold = buildRepetitionViewport.height * 0.80
         
-        // Get original textContent for rendering (we'll use filtered items)
-        const textContent = await page.getTextContent()
+        // Build a map of text segments to filtering decisions
+        // Key: normalized text segment, Value: shouldKeep
+        const textSegmentKeepMap = new Map()
+        
+        pageData.items.forEach(({ item, normalized, originalNormalized, yPos }) => {
+          // yPos was calculated using scale 1.0 in buildRepetitionMap, so use the same thresholds
+          const isInHeader = yPos <= headerThreshold
+          const isInFooter = yPos >= footerThreshold
+          const isInHeaderFooterRegion = isInHeader || isInFooter
+          
+          let shouldKeep = true
+          
+          if (isInHeaderFooterRegion) {
+            const lookupKey = normalized.includes('|') ? normalized : normalizeText(item.str) + '|' + item.str.length
+            const pagesWithThisText = textToPages.get(lookupKey)
+            const repetitionCount = pagesWithThisText ? pagesWithThisText.size : 0
+            
+            let normalizedLength
+            let normalizedTextOnly
+            if (originalNormalized) {
+              normalizedTextOnly = originalNormalized
+              normalizedLength = originalNormalized.length
+            } else if (normalized.includes('|')) {
+              normalizedTextOnly = normalized.split('|')[0]
+              normalizedLength = normalizedTextOnly.length
+            } else {
+              normalizedTextOnly = normalized
+              normalizedLength = normalized.length
+            }
+            
+            const isCommon = isCommonWord(normalizedTextOnly)
+            const isLikelyHeaderFooter = (repetitionCount >= 2 && !isCommon) || 
+                                       (normalizedLength <= 3 && isInHeaderFooterRegion && !isCommon)
+            shouldKeep = !isLikelyHeaderFooter
+          }
+          
+          // Store decision for this text segment (normalized for matching)
+          const normalizedText = normalizeText(item.str.trim())
+          if (normalizedText.length > 0) {
+            // Use normalized text as key to handle whitespace differences
+            textSegmentKeepMap.set(normalizedText, shouldKeep)
+          }
+        })
+        
+        // Filter textContent.items by checking if their normalized text matches any segment
+        // Since items may be split differently, we need to handle partial matches
+        // Strategy: If an item's text is a substring of a pageData segment, use that segment's decision
+        const filteredItems = textContent.items.filter((item) => {
+          // Always keep empty/whitespace items (they weren't in pageData but are needed for spacing)
+          if (!item.str || item.str.trim().length === 0) {
+            return true
+          }
+          
+          const normalizedItemText = normalizeText(item.str.trim())
+          
+          // First, try exact match
+          let shouldKeep = textSegmentKeepMap.get(normalizedItemText)
+          
+          if (shouldKeep !== undefined) {
+            // Found exact match - use the filtering decision
+            return shouldKeep
+          }
+          
+          // No exact match - check if this item's text is a substring of any pageData segment
+          // or if any pageData segment is a substring of this item's text
+          // This handles cases where items are split differently
+          // CRITICAL: Be conservative - only filter if we're very confident it's a header/footer
+          // If an item doesn't match anything, keep it (safer to keep than to filter)
+          let foundMatch = false
+          let bestMatch = null
+          let bestMatchRatio = 0
+          for (const [segmentText, segmentKeep] of textSegmentKeepMap.entries()) {
+            // Check if item text is contained in segment, or segment is contained in item text
+            if (normalizedItemText.includes(segmentText) || segmentText.includes(normalizedItemText)) {
+              // Calculate length similarity ratio to prefer better matches
+              const lengthRatio = Math.min(normalizedItemText.length, segmentText.length) / Math.max(normalizedItemText.length, segmentText.length)
+              // Only consider matches where lengths are similar (at least 50% overlap)
+              // AND only filter out if the segment was marked to filter (shouldKeep === false)
+              // If segment should be kept, we keep the item regardless of match quality
+              if (lengthRatio >= 0.5 && lengthRatio > bestMatchRatio) {
+                // Only use this match if it's a filter decision (shouldKeep === false)
+                // If segment should be kept, we'll keep the item anyway, so don't override
+                if (segmentKeep === false) {
+                  bestMatch = segmentKeep
+                  bestMatchRatio = lengthRatio
+                  foundMatch = true
+                } else if (!foundMatch) {
+                  // If we haven't found a filter match yet, and this is a keep match,
+                  // remember it but don't use it yet (we might find a better filter match)
+                  bestMatch = segmentKeep
+                  bestMatchRatio = lengthRatio
+                }
+              }
+            }
+          }
+          
+          // Only apply filter decision if we found a confident match to a filtered segment
+          // Otherwise, keep the item (safer to keep than to filter)
+          if (foundMatch && bestMatch === false) {
+            return false
+          }
+          
+          // No confident filter match found - keep the item to be safe
+          return true
+        })
+        
         const filteredTextContent = {
           ...textContent,
           items: filteredItems
@@ -2711,9 +2861,49 @@ function App() {
     textLayerDiv.style.height = displayedHeight + 'px'
 
     // Build text position mapping
-    // CRITICAL: Use trimmed items to match extractedText construction
-    // extractedText is built by trimming items and joining with ' ', so we must do the same here
+    // CRITICAL: extractedText is built from filteredItems in PDF.js extraction order,
+    // but we render items in visual order (Y then X). We need to map each item to its
+    // actual position in extractedText.
     const pageTextItems = []
+    
+    // Get page info to find pageCharOffset
+    const pageInfo = pageData.find(p => p.pageNum === pageNum)
+    if (!pageInfo) return
+    
+    const pageStartCharIndex = pageInfo.pageCharOffset
+    
+    // Build a map: item index -> charIndex in extractedText
+    // extractedText is built by: filteredItems.map(i => i.str.trim()).filter(s => s.length > 0).join(' ')
+    // So we can iterate through textContent.items (which are filteredItems) in PDF.js order
+    // and calculate each item's charIndex
+    const itemIndexToCharIndex = new Map()
+    let currentPos = pageStartCharIndex
+    
+    // Iterate through textContent.items (which are filteredItems) in PDF.js order
+    // and build the charIndex map using item index as key
+    textContent.items.forEach((item, itemIndex) => {
+      if (!item.str || item.str.trim().length === 0) return
+      const trimmedText = item.str.trim()
+      
+      // Store the charIndex for this item using its index
+      itemIndexToCharIndex.set(itemIndex, currentPos)
+      
+      // Advance position: item text + space (except for last non-empty item)
+      currentPos += trimmedText.length
+      // Add space between items (extractedText joins with ' ')
+      // Check if there's a next non-empty item
+      let hasNextNonEmpty = false
+      for (let i = itemIndex + 1; i < textContent.items.length; i++) {
+        if (textContent.items[i].str && textContent.items[i].str.trim().length > 0) {
+          hasNextNonEmpty = true
+          break
+        }
+      }
+      if (hasNextNonEmpty) {
+        currentPos += 1
+      }
+    })
+    
     let charIndex = 0
     let isFirstItem = true
 
@@ -2724,7 +2914,9 @@ function App() {
     textContent.items.forEach((item, itemIndex) => {
       // Only process items that will actually be rendered (non-empty after trimming)
       const trimmedStr = item.str ? item.str.trim() : ''
-      if (trimmedStr.length === 0) return
+      if (trimmedStr.length === 0) {
+        return
+      }
       
       const tx = pdfjsLib.Util.transform(viewport.transform, item.transform)
       const fontHeight = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3])
@@ -2927,7 +3119,18 @@ function App() {
       const globalColumnIndex = firstItemX !== undefined ? getGlobalColumnIndex(firstItemX) : 0
       // Use composite key: Y_globalColumnIndex
       const newLineKey = `${lineKey.split('_')[0]}_${globalColumnIndex}`
-      itemsByLineWithGlobalColumns.set(newLineKey, items)
+      
+      // CRITICAL FIX: If multiple lines map to the same key, merge them instead of overwriting
+      // This happens when items at the same Y position are split into different columns
+      // but then map back to the same global column index
+      if (itemsByLineWithGlobalColumns.has(newLineKey)) {
+        // Merge with existing items (sort by X position to maintain order)
+        const existingItems = itemsByLineWithGlobalColumns.get(newLineKey)
+        const mergedItems = [...existingItems, ...items].sort((a, b) => a.baseX - b.baseX)
+        itemsByLineWithGlobalColumns.set(newLineKey, mergedItems)
+      } else {
+        itemsByLineWithGlobalColumns.set(newLineKey, items)
+      }
     })
     
     // Replace itemsByLine with the version using global column indices
@@ -3261,42 +3464,74 @@ function App() {
       filteredLineItems.forEach((itemData, itemIdx) => {
         const trimmedStr = itemData.trimmedStr
         
-        // Account for space between items (extractedText joins trimmed items with ' ')
-        if (itemIdx > 0) {
-          charIndex += 1 // Add space between items
-          lineCharIndex = pageCharOffset + charIndex
+        // Look up the charIndex for this item from the map using its original index
+        // itemData.itemIndex is the index in textContent.items (PDF.js order)
+        let itemCharIndex = itemIndexToCharIndex.get(itemData.itemIndex)
+        if (itemCharIndex === undefined) {
+          // Fallback: calculate sequentially (shouldn't happen if map is built correctly)
+          if (itemIdx > 0) {
+            charIndex += 1 // Add space between items
+          }
+          itemCharIndex = pageCharOffset + charIndex
+          charIndex += trimmedStr.length
         }
         
+        lineCharIndex = itemCharIndex
+        
         // Split item text into words and spaces
+        // CRITICAL: Don't split items that have spaces between characters - these are likely malformed PDF extractions
+        // Instead, treat the entire trimmed string as a single "word" to preserve the text
         const words = []
-        let currentWord = ''
-        for (let i = 0; i < trimmedStr.length; i++) {
-          const char = trimmedStr[i]
-          if (/\w/.test(char)) {
-            currentWord += char
-          } else {
-            if (currentWord.length > 0) {
-              words.push(currentWord)
-              currentWord = ''
-            }
-            words.push(char)
+        
+        // Check if this item has spaces between characters (malformed PDF extraction)
+        // Pattern: if item has many single characters separated by spaces, don't split it
+        const hasSpacesBetweenChars = trimmedStr.length > 3 && /^(\S\s)+\S?$/.test(trimmedStr.trim())
+        
+        if (hasSpacesBetweenChars) {
+          // Malformed item with spaces between characters - treat as single word
+          // Remove internal spaces to normalize it
+          const normalizedWord = trimmedStr.replace(/\s+/g, '')
+          if (normalizedWord.length > 0) {
+            words.push(normalizedWord)
           }
-        }
-        if (currentWord.length > 0) {
-          words.push(currentWord)
+        } else {
+          // Normal item - split into words and spaces as before
+          let currentWord = ''
+          for (let i = 0; i < trimmedStr.length; i++) {
+            const char = trimmedStr[i]
+            if (/\w/.test(char)) {
+              currentWord += char
+            } else {
+              if (currentWord.length > 0) {
+                words.push(currentWord)
+                currentWord = ''
+              }
+              words.push(char)
+            }
+          }
+          if (currentWord.length > 0) {
+            words.push(currentWord)
+          }
         }
         
         // Add words to line words array with their char indices
+        // CRITICAL: extractedText is built by joining trimmed items with spaces, not words
+        // So words within an item should have charIndex based on the item's position in extractedText
+        // The item's position is at lineCharIndex, and words are substrings of the item
+        const itemStartCharIndex = lineCharIndex
+        let wordOffsetInItem = 0
         words.forEach(word => {
           lineWords.push({
             word,
-            charIndex: lineCharIndex,
+            charIndex: itemStartCharIndex + wordOffsetInItem,
             itemIndex: itemData.itemIndex
           })
-          lineCharIndex += word.length
+          wordOffsetInItem += word.length
         })
         
-        charIndex += trimmedStr.length
+        // charIndex is now calculated from the map, so we don't need to update it sequentially
+        // But we still track it for fallback cases
+        // The item's charIndex is already set in lineCharIndex from the map lookup above
       })
       
       // Calculate natural width of all words (without spacing)
@@ -4179,6 +4414,8 @@ function App() {
     const finalMatchingItems = filteredMatchingItems
 
     // Validate that the element's text matches what's in extractedText at that position
+    // CRITICAL: Be more lenient - if items don't match exactly, still allow them if they're close
+    // This handles cases where PDF text extraction produces malformed items
     const validateElementText = (item) => {
       const relativePos = position - item.charIndex
       if (relativePos < 0 || relativePos >= item.str.length) {
@@ -4187,17 +4424,48 @@ function App() {
       
       // CRITICAL: Validate that the element's charIndex actually corresponds to the correct position in extractedText
       // Check if the text at item.charIndex in extractedText matches item.str
+      // Be more lenient - allow partial matches to handle malformed PDF text extraction
       if (item.charIndex >= 0 && item.charIndex + item.str.length <= extractedText.length) {
         const extractedTextAtItem = extractedText.substring(item.charIndex, item.charIndex + item.str.length)
         // Normalize for comparison (handle whitespace differences)
         const normalize = (str) => str.replace(/\s+/g, ' ').trim()
-        if (normalize(extractedTextAtItem) !== normalize(item.str)) {
-          // Text doesn't match at this charIndex - this item's charIndex is wrong
-          return false
+        const normalizedExtracted = normalize(extractedTextAtItem)
+        const normalizedItem = normalize(item.str)
+        
+        // Allow exact match
+        if (normalizedExtracted === normalizedItem) {
+          // Exact match - validate character
+          const elementChar = item.str[relativePos]
+          const extractedChar = extractedText[position]
+          if (elementChar === extractedChar) {
+            return true
+          }
+          // Also allow if both are whitespace (different types)
+          if (/\s/.test(elementChar) && /\s/.test(extractedChar)) {
+            return true
+          }
         }
+        
+        // Allow partial match - if item text is a substring of extracted text or vice versa
+        // This handles cases where PDF text extraction splits items differently
+        if (normalizedExtracted.includes(normalizedItem) || normalizedItem.includes(normalizedExtracted)) {
+          // Partial match found - check if character at position matches
+          const elementChar = item.str[relativePos]
+          const extractedChar = extractedText[position]
+          if (elementChar === extractedChar) {
+            return true
+          }
+          // Also allow if both are whitespace (different types)
+          if (/\s/.test(elementChar) && /\s/.test(extractedChar)) {
+            return true
+          }
+        }
+        
+        // No match found - reject this item
+        return false
       }
       
-      // Check if the character at this position in the element matches extractedText
+      // Fallback: check if the character at this position in the element matches extractedText
       const elementChar = item.str[relativePos]
       const extractedChar = extractedText[position]
       // Allow for whitespace differences (element might have normalized spaces)
