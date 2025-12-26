@@ -7793,6 +7793,17 @@ function App() {
       
       let extractedTextParts = []
       
+      // Get Y positions for all spans to detect line breaks
+      const spanPositions = selectedSpans.map((spanInfo, index) => {
+        const rect = spanInfo.span.getBoundingClientRect()
+        return {
+          spanInfo,
+          index,
+          top: rect.top,
+          bottom: rect.bottom
+        }
+      })
+      
       selectedSpans.forEach((spanInfo, index) => {
         const textNode = spanInfo.span.firstChild
         if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return
@@ -7816,12 +7827,24 @@ function App() {
         
         if (textToAdd.length > 0) {
           extractedTextParts.push(textToAdd)
+          
+          // Check if next span is on a different line
+          // If so, we'll add a space when joining
+          if (index < selectedSpans.length - 1) {
+            const currentPos = spanPositions[index]
+            const nextPos = spanPositions[index + 1]
+            // If Y positions differ significantly (more than 1px tolerance), they're on different lines
+            const isDifferentLine = Math.abs(currentPos.top - nextPos.top) > 1
+            if (isDifferentLine) {
+              // Mark that we need a space after this part
+              extractedTextParts.push(' ')
+            }
+          }
         }
       })
       
       // Join the text parts (spans are already in correct order)
-      // Note: We don't add spaces between spans because the DOM structure already
-      // preserves the spacing between words as rendered
+      // Spaces between lines have already been added above
       const extracted = extractedTextParts.join('')
       
       if (extracted && extracted.length > 0) {
