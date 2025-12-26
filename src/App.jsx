@@ -2511,8 +2511,22 @@ function App() {
             }
             
             const isCommon = isCommonWord(normalizedTextOnly)
-            const isLikelyHeaderFooter = (repetitionCount >= 2 && !isCommon) || 
-                                       (normalizedLength <= 3 && isInHeaderFooterRegion && !isCommon)
+            
+            // CRITICAL FIX: Be more conservative - don't filter words that are:
+            // 1. 3+ characters (technical terms, proper nouns, etc.) - these are likely content
+            // 2. Only filter very short words (1-2 chars) in header/footer regions (likely page numbers)
+            // 3. For words 3+ chars, require much higher repetition threshold (4+ pages) to filter
+            // This prevents filtering legitimate technical terms like "machine", "AI", etc.
+            const isVeryShort = normalizedLength <= 2
+            const isThreeOrMoreChars = normalizedLength >= 3
+            
+            // For words 3+ chars, require much higher repetition threshold (4+ pages) to filter
+            // This prevents filtering legitimate technical terms that appear in multiple section headers
+            // For very short words (1-2 chars), keep the original logic (likely page numbers)
+            const repetitionThreshold = isThreeOrMoreChars ? 4 : 2
+            
+            const isLikelyHeaderFooter = (repetitionCount >= repetitionThreshold && !isCommon) || 
+                                       (isVeryShort && isInHeaderFooterRegion && !isCommon)
             shouldKeep = !isLikelyHeaderFooter
           }
           
@@ -2592,6 +2606,7 @@ function App() {
         }
         
         // Build pageText consistently: trim items to avoid double spaces, join with single space
+        // This is used for extractedText (TTS purposes) - filtered
         const pageText = filteredItems.map(item => item.str.trim()).filter(str => str.length > 0).join(' ')
 
         pages.push({
@@ -2601,7 +2616,11 @@ function App() {
             height: viewport.height
           },
           pageCharOffset,
-          textContent: filteredTextContent
+          // CRITICAL: Store BOTH filtered and unfiltered textContent
+          // - textContent (unfiltered): used for rendering text layer (all text visible for highlighting)
+          // - filteredTextContent: used for building extractedText (TTS purposes, headers/footers filtered)
+          textContent: textContent, // Unfiltered - for text layer rendering
+          filteredTextContent: filteredTextContent // Filtered - for TTS/extractedText
         })
 
         // Calculate offset for next page: current page text + '\n\n' (except for last page)
@@ -2640,6 +2659,7 @@ function App() {
             }
             
             // Build pageText consistently: trim items to avoid double spaces, join with single space
+            // This is used for extractedText (TTS purposes) - filtered
             const pageText = filteredItems.map(item => item.str.trim()).filter(str => str.length > 0).join(' ')
             
             enhancedPages.push({
@@ -2649,7 +2669,11 @@ function App() {
                 height: viewport.height
               },
               pageCharOffset,
-              textContent: filteredTextContent
+              // CRITICAL: Store BOTH filtered and unfiltered textContent
+              // - textContent (unfiltered): used for rendering text layer (all text visible for highlighting)
+              // - filteredTextContent: used for building extractedText (TTS purposes, headers/footers filtered)
+              textContent: textContent, // Unfiltered - for text layer rendering
+              filteredTextContent: filteredTextContent // Filtered - for TTS/extractedText
             })
             
             // Calculate offset for next page: current page text + '\n\n' (except for last page)
@@ -2872,29 +2896,37 @@ function App() {
     
     const pageStartCharIndex = pageInfo.pageCharOffset
     
-    // Build a map: item index -> charIndex in extractedText
+    // CRITICAL: textContent is now UNFILTERED (all items for text layer rendering)
+    // But extractedText is built from FILTERED items (for TTS)
+    // We need to map unfiltered items to their positions in extractedText
+    // Items that were filtered won't have a charIndex in extractedText
+    
+    // Get the filtered items to build the charIndex map
+    const filteredItems = pageInfo.filteredTextContent ? pageInfo.filteredTextContent.items : []
+    
+    // Build a map: filtered item -> charIndex in extractedText
     // extractedText is built by: filteredItems.map(i => i.str.trim()).filter(s => s.length > 0).join(' ')
-    // So we can iterate through textContent.items (which are filteredItems) in PDF.js order
-    // and calculate each item's charIndex
-    const itemIndexToCharIndex = new Map()
+    const filteredItemToCharIndex = new Map()
     let currentPos = pageStartCharIndex
     
-    // Iterate through textContent.items (which are filteredItems) in PDF.js order
-    // and build the charIndex map using item index as key
-    textContent.items.forEach((item, itemIndex) => {
+    // Iterate through filteredItems to build charIndex map
+    filteredItems.forEach((item, itemIndex) => {
       if (!item.str || item.str.trim().length === 0) return
       const trimmedText = item.str.trim()
+      const normalizedText = normalizeText(trimmedText)
       
-      // Store the charIndex for this item using its index
-      itemIndexToCharIndex.set(itemIndex, currentPos)
+      // Store charIndex by normalized text (for matching with unfiltered items)
+      if (!filteredItemToCharIndex.has(normalizedText)) {
+        filteredItemToCharIndex.set(normalizedText, currentPos)
+      }
       
       // Advance position: item text + space (except for last non-empty item)
       currentPos += trimmedText.length
       // Add space between items (extractedText joins with ' ')
       // Check if there's a next non-empty item
       let hasNextNonEmpty = false
-      for (let i = itemIndex + 1; i < textContent.items.length; i++) {
-        if (textContent.items[i].str && textContent.items[i].str.trim().length > 0) {
+      for (let i = itemIndex + 1; i < filteredItems.length; i++) {
+        if (filteredItems[i].str && filteredItems[i].str.trim().length > 0) {
           hasNextNonEmpty = true
           break
         }
@@ -2902,6 +2934,21 @@ function App() {
       if (hasNextNonEmpty) {
         currentPos += 1
       }
+    })
+    
+    // Now build a map from unfiltered textContent.items indices to charIndex
+    // by matching text content with filtered items
+    const itemIndexToCharIndex = new Map()
+    textContent.items.forEach((item, itemIndex) => {
+      if (!item.str || item.str.trim().length === 0) return
+      const normalizedText = normalizeText(item.str.trim())
+      const charIndex = filteredItemToCharIndex.get(normalizedText)
+      if (charIndex !== undefined) {
+        itemIndexToCharIndex.set(itemIndex, charIndex)
+        // Remove from map to handle duplicates (first match wins)
+        filteredItemToCharIndex.delete(normalizedText)
+      }
+      // If not found, this item was filtered out - no charIndex assigned
     })
     
     let charIndex = 0
@@ -3465,15 +3512,13 @@ function App() {
         const trimmedStr = itemData.trimmedStr
         
         // Look up the charIndex for this item from the map using its original index
-        // itemData.itemIndex is the index in textContent.items (PDF.js order)
+        // itemData.itemIndex is the index in textContent.items (unfiltered PDF.js order)
+        // If this item was filtered out, it won't have a charIndex in extractedText
         let itemCharIndex = itemIndexToCharIndex.get(itemData.itemIndex)
         if (itemCharIndex === undefined) {
-          // Fallback: calculate sequentially (shouldn't happen if map is built correctly)
-          if (itemIdx > 0) {
-            charIndex += 1 // Add space between items
-          }
-          itemCharIndex = pageCharOffset + charIndex
-          charIndex += trimmedStr.length
+          // This item was filtered out - assign -1 to indicate it's not in extractedText
+          // It will still be rendered but won't be part of TTS/highlighting
+          itemCharIndex = -1
         }
         
         lineCharIndex = itemCharIndex
@@ -3518,12 +3563,14 @@ function App() {
         // CRITICAL: extractedText is built by joining trimmed items with spaces, not words
         // So words within an item should have charIndex based on the item's position in extractedText
         // The item's position is at lineCharIndex, and words are substrings of the item
+        // If lineCharIndex is -1, this item was filtered out and won't have a charIndex in extractedText
         const itemStartCharIndex = lineCharIndex
         let wordOffsetInItem = 0
         words.forEach(word => {
+          const wordCharIndex = itemStartCharIndex >= 0 ? itemStartCharIndex + wordOffsetInItem : -1
           lineWords.push({
             word,
-            charIndex: itemStartCharIndex + wordOffsetInItem,
+            charIndex: wordCharIndex,
             itemIndex: itemData.itemIndex
           })
           wordOffsetInItem += word.length
@@ -3576,7 +3623,11 @@ function App() {
         span.style.userSelect = interactionMode === 'highlight' ? 'text' : 'none'
         span.style.pointerEvents = interactionMode === 'highlight' ? 'auto' : 'auto'
         span.dataset.page = pageNum
-        span.dataset.charIndex = wordCharIndex
+        // Only set charIndex if the item is in extractedText (not filtered)
+        // Items with charIndex -1 were filtered out and won't be part of TTS/highlighting
+        if (wordCharIndex >= 0) {
+          span.dataset.charIndex = wordCharIndex
+        }
         // Store column index on span for column-aware highlighting
         span.dataset.columnIndex = currentCol
         
@@ -3591,25 +3642,30 @@ function App() {
           wordTokenIndex++
         }
         
-        const textItem = {
-          str: word,
-          page: pageNum,
-          charIndex: wordCharIndex,
-          element: span
-        }
-        pageTextItems.push(textItem)
-        
-        span.addEventListener('click', (e) => {
-          if (interactionMode === 'read') {
-            e.preventDefault()
-            if (/\S/.test(word)) {
-              handleWordClick(textItem.charIndex, word, textItem.element)
-            } else {
-              const nextWordStart = findWordStart(extractedText, textItem.charIndex + word.length)
-              handleWordClick(nextWordStart, word)
-            }
+        // Only add to pageTextItems if the item is in extractedText (has valid charIndex >= 0)
+        // Filtered items are still rendered but not added to textItems for TTS/highlighting
+        if (wordCharIndex >= 0) {
+          const textItem = {
+            str: word,
+            page: pageNum,
+            charIndex: wordCharIndex,
+            element: span
           }
-        })
+          pageTextItems.push(textItem)
+          
+          span.addEventListener('click', (e) => {
+            if (interactionMode === 'read') {
+              e.preventDefault()
+              if (/\S/.test(word)) {
+                handleWordClick(textItem.charIndex, word, textItem.element)
+              } else {
+                const nextWordStart = findWordStart(extractedText, textItem.charIndex + word.length)
+                handleWordClick(nextWordStart, word)
+              }
+            }
+          })
+        }
+        // Filtered items are still rendered visually but won't have click handlers for TTS
         
         lineContainer.appendChild(span)
       })
