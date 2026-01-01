@@ -12277,19 +12277,37 @@ function App() {
         {isSummaryExpanded && summaryText ? (
           <SummaryFullView
             summaryText={summaryText}
+            highlightItems={highlightItems}
+            setHighlightItems={setHighlightItems}
+            documentId={documentId}
+            highlights={highlights}
+            onColorChange={handleChangeHighlightColor}
+            onDelete={handleDeleteHighlight}
             pdfFileName={pdfFile?.name}
             onMinimize={() => {
               setIsSummaryExpanded(false)
               setIsSidebarCollapsed(false)
             }}
+            onSummaryGenerated={(text) => {
+              setSummaryText(text)
+            }}
           />
         ) : isHighlightsExpanded && highlightItems.length > 0 ? (
           <HighlightsFullView
             highlightItems={highlightItems}
+            setHighlightItems={setHighlightItems}
+            documentId={documentId}
+            highlights={highlights}
+            onColorChange={handleChangeHighlightColor}
+            onDelete={handleDeleteHighlight}
             pdfFileName={pdfFile?.name}
+            summaryText={summaryText}
             onMinimize={() => {
               setIsHighlightsExpanded(false)
               setIsSidebarCollapsed(false)
+            }}
+            onSummaryGenerated={(text) => {
+              setSummaryText(text)
             }}
           />
         ) : isTimelineExpanded && timeline && timeline.length > 0 ? (
