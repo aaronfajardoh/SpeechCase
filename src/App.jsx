@@ -278,10 +278,13 @@ function App() {
       // Minimize control panel
       setIsControlsPanelMinimized(true)
     } else if (!isHighlight && wasHighlight) {
-      // Highlight mode was just deactivated, reverse expansion if still on highlights tab
-      if (sidebarViewRef.current === 'highlights' && sidebarWidthRef.current >= 500) {
+      // Highlight mode was just deactivated
+      // If sidebar is showing highlights and is expanded, keep it that way
+      // Only reverse expansion if NOT on highlights tab
+      if (sidebarViewRef.current !== 'highlights' && sidebarWidthRef.current >= 500) {
         setSidebarWidth(normalSidebarWidthRef.current || 230)
       }
+      // If on highlights tab and expanded, keep it expanded (don't change anything)
       
       // Maximize control panel (only if switching to read mode)
       if (interactionMode === 'read') {
