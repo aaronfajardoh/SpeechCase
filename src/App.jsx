@@ -3040,7 +3040,7 @@ function App() {
     // Then split by columns (X position gaps) within each Y group
     const itemsByY = new Map()
     const lineTolerance = 5 * scaleY // Scale tolerance with display scale
-    const columnGapThreshold = (viewport.width * scaleX) * 0.01 // 12% of page width indicates a column gap
+    const columnGapThreshold = (viewport.width * scaleX) * 0.025 // 12% of page width indicates a column gap
     
     // Step 1: Group by Y coordinate
     allItems.forEach(itemData => {
@@ -3060,18 +3060,17 @@ function App() {
     })
     
     // Step 2: Split each Y group by columns (X position gaps)
-    // First pass: detect columns per line and collect all column X positions
-    const itemsByLine = new Map()
-    const allColumnXPositions = [] // Collect X positions of all detected columns
+    // First pass: detect potential gaps on each line and record them
+    const lineGapData = [] // Array of { y, items, gaps } where gaps is array of { gapX, gapEndX }
+    const sortedYPositions = Array.from(itemsByY.keys()).sort((a, b) => a - b)
     
-    itemsByY.forEach((yItems, y) => {
+    sortedYPositions.forEach(y => {
+      const yItems = itemsByY.get(y)
       // Sort items by X position
       yItems.sort((a, b) => a.baseX - b.baseX)
       
-      // Detect columns by finding large X gaps
-      const columns = []
-      let currentColumn = [yItems[0]]
-      
+      // Detect potential gaps on this line
+      const gaps = []
       for (let i = 1; i < yItems.length; i++) {
         const prevItem = yItems[i - 1]
         const currentItem = yItems[i]
@@ -3079,11 +3078,112 @@ function App() {
         const gap = currentItem.baseX - prevItemEndX
         
         if (gap > columnGapThreshold) {
-          // Large gap detected - start a new column
+          // Record this gap position (use the X position where the gap starts)
+          gaps.push({ gapX: prevItemEndX, gapEndX: currentItem.baseX, gapSize: gap })
+        }
+      }
+      
+      lineGapData.push({ y, items: yItems, gaps })
+    })
+    
+    // Second pass: Find gaps that appear consistently across 3+ consecutive lines
+    // A gap is considered consistent if it appears at a similar X position across lines
+    const validatedGapBoundaries = [] // Array of { minX, maxX } representing validated column boundaries
+    const gapTolerance = 50 // X positions within 50px are considered the same gap
+    
+    // Track consecutive lines with similar gap patterns
+    for (let i = 0; i < lineGapData.length; i++) {
+      const currentLine = lineGapData[i]
+      
+      // For each gap on the current line, check if it appears in 3+ consecutive lines
+      currentLine.gaps.forEach(gap => {
+        let consecutiveCount = 1
+        let minGapX = gap.gapX
+        let maxGapX = gap.gapEndX
+        
+        // Check forward to see how many consecutive lines have a similar gap
+        for (let j = i + 1; j < lineGapData.length; j++) {
+          const nextLine = lineGapData[j]
+          let foundSimilarGap = false
+          
+          for (const nextGap of nextLine.gaps) {
+            // Check if this gap is at a similar X position (within tolerance)
+            if (Math.abs(nextGap.gapX - gap.gapX) < gapTolerance || 
+                Math.abs(nextGap.gapEndX - gap.gapEndX) < gapTolerance ||
+                (nextGap.gapX >= gap.gapX - gapTolerance && nextGap.gapX <= gap.gapX + gapTolerance)) {
+              consecutiveCount++
+              minGapX = Math.min(minGapX, nextGap.gapX, nextGap.gapEndX)
+              maxGapX = Math.max(maxGapX, nextGap.gapX, nextGap.gapEndX)
+              foundSimilarGap = true
+              break
+            }
+          }
+          
+          if (!foundSimilarGap) {
+            break // Gap pattern broken, stop checking
+          }
+        }
+        
+        // Only add gap as column boundary if it appears in 3+ consecutive lines
+        if (consecutiveCount >= 3) {
+          // Check if this gap boundary already exists (merge if close)
+          let merged = false
+          for (const boundary of validatedGapBoundaries) {
+            if ((minGapX >= boundary.minX - gapTolerance && minGapX <= boundary.maxX + gapTolerance) ||
+                (maxGapX >= boundary.minX - gapTolerance && maxGapX <= boundary.maxX + gapTolerance) ||
+                (boundary.minX >= minGapX - gapTolerance && boundary.minX <= maxGapX + gapTolerance)) {
+              // Merge boundaries
+              boundary.minX = Math.min(boundary.minX, minGapX)
+              boundary.maxX = Math.max(boundary.maxX, maxGapX)
+              merged = true
+              break
+            }
+          }
+          
+          if (!merged) {
+            validatedGapBoundaries.push({ minX: minGapX, maxX: maxGapX })
+          }
+        }
+      })
+    }
+    
+    // Sort validated boundaries by X position
+    validatedGapBoundaries.sort((a, b) => a.minX - b.minX)
+    
+    // Third pass: Split items by validated column boundaries only
+    const itemsByLine = new Map()
+    const allColumnXPositions = [] // Collect X positions of all detected columns
+    
+    lineGapData.forEach(({ y, items }) => {
+      // Split items by validated gap boundaries
+      const columns = []
+      let currentColumn = [items[0]]
+      
+      for (let i = 1; i < items.length; i++) {
+        const prevItem = items[i - 1]
+        const currentItem = items[i]
+        const prevItemEndX = prevItem.baseX + prevItem.itemWidth
+        const gapStartX = prevItemEndX
+        const gapEndX = currentItem.baseX
+        
+        // Check if this gap matches any validated boundary
+        let isColumnBoundary = false
+        for (const boundary of validatedGapBoundaries) {
+          // Check if gap overlaps with validated boundary
+          if ((gapStartX >= boundary.minX - gapTolerance && gapStartX <= boundary.maxX + gapTolerance) ||
+              (gapEndX >= boundary.minX - gapTolerance && gapEndX <= boundary.maxX + gapTolerance) ||
+              (gapStartX <= boundary.minX && gapEndX >= boundary.maxX)) {
+            isColumnBoundary = true
+            break
+          }
+        }
+        
+        if (isColumnBoundary) {
+          // Validated column boundary - start a new column
           columns.push(currentColumn)
           currentColumn = [currentItem]
         } else {
-          // Small gap - same column
+          // Not a validated boundary - same column
           currentColumn.push(currentItem)
         }
       }
