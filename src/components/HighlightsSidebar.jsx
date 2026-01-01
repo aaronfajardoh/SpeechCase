@@ -39,11 +39,14 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
   useEffect(() => {
     // Only auto-scroll if the length increased (new highlight added) and we're on the highlights tab
     if (highlightItems.length > prevHighlightItemsLengthRef.current && highlightsItemsRef.current && activeTab === 'highlights') {
-      // Use requestAnimationFrame to ensure DOM has updated, then scroll
+      // Use requestAnimationFrame to ensure DOM has updated, then scroll smoothly
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           if (highlightsItemsRef.current) {
-            highlightsItemsRef.current.scrollTop = highlightsItemsRef.current.scrollHeight
+            highlightsItemsRef.current.scrollTo({
+              top: highlightsItemsRef.current.scrollHeight,
+              behavior: 'smooth'
+            })
           }
         })
       })

@@ -12204,7 +12204,7 @@ function App() {
               className={`mode-btn ${interactionMode === 'read' ? 'active' : ''}`}
               title="Click words to set reading start position"
             >
-              <IconCursor size={14} />
+              <IconSpeaker size={14} />
               <span>Set Start</span>
             </button>
             <button
