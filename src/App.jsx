@@ -147,6 +147,8 @@ function App() {
   const lastHighlightedElementRef = useRef(null) // Track the actual DOM element that was last highlighted
   const currentHazeOverlayRef = useRef(null) // Track the current haze overlay element
   const historyIndexRef = useRef(0) // Track current history index for undo/redo
+  const highlightHistoryRef = useRef([[]]) // Track current highlight history for undo/redo
+  const highlightsRef = useRef([]) // Track current highlights for undo/redo
   const textItemsRef = useRef([]) // Track text items for event handlers
   const audioRef = useRef(null) // Track audio element for Google TTS playback
   const googleTtsTextRef = useRef('') // Track text being spoken via Google TTS
@@ -5739,6 +5741,8 @@ function App() {
       setHighlightHistory([[]]) // Reset history
       setHistoryIndex(0)
       historyIndexRef.current = 0
+      highlightHistoryRef.current = [[]]
+      highlightsRef.current = []
 
       // Extract all text, filtering out headers and footers using repetition detection
       // First, build a map of text repetition across pages
@@ -7595,6 +7599,8 @@ function App() {
     setHighlightHistory([[]])
     setHistoryIndex(0)
     historyIndexRef.current = 0
+    highlightHistoryRef.current = [[]]
+    highlightsRef.current = []
     setInteractionMode('read')
     canvasRefs.current = {}
     textLayerRefs.current = {}
@@ -9501,6 +9507,12 @@ function App() {
           const newHighlights = [...prev, highlight]
           setHighlightHistory(hist => {
             const currentIdx = historyIndexRef.current
+            // Prevent duplicate entries: if the last history entry already matches newHighlights, don't add a new entry
+            const lastEntry = hist[currentIdx]
+            if (lastEntry && lastEntry.length === newHighlights.length && 
+                lastEntry.every((h, i) => h.id === newHighlights[i]?.id)) {
+              return hist
+            }
             const newHistory = hist.slice(0, currentIdx + 1)
             newHistory.push(newHighlights)
             const newIdx = newHistory.length - 1
@@ -10436,10 +10448,12 @@ function App() {
     })
   }, [])
 
-  // Update ref when history index changes
+  // Update refs when state changes
   useEffect(() => {
     historyIndexRef.current = historyIndex
-  }, [historyIndex])
+    highlightHistoryRef.current = highlightHistory
+    highlightsRef.current = highlights
+  }, [historyIndex, highlightHistory, highlights])
 
   // Keyboard handler for undo/redo (Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y)
   useEffect(() => {
@@ -11964,7 +11978,7 @@ function App() {
               <button
                 onClick={handleUndoHighlight}
                 className="btn-toolbar-undo-redo"
-                disabled={historyIndex <= 0}
+                disabled={historyIndexRef.current <= 0}
                 title="Undo (Ctrl+Z)"
               >
                 <IconUndo size={14} />
@@ -11972,7 +11986,7 @@ function App() {
               <button
                 onClick={handleRedoHighlight}
                 className="btn-toolbar-undo-redo"
-                disabled={historyIndex >= highlightHistory.length - 1}
+                disabled={historyIndexRef.current >= highlightHistoryRef.current.length - 1}
                 title="Redo (Ctrl+Shift+Z)"
               >
                 <IconRedo size={14} />
