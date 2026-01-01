@@ -2168,82 +2168,142 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: white;
+  background: #fafafa;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
 }
 
 .highlights-items {
   flex: 1;
   overflow-y: auto;
-  display: block;
-  padding: 0.5rem 0.75rem;
-  line-height: 1.6;
-  white-space: normal;
-  word-wrap: break-word;
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0;
   min-height: 0;
+  /* macOS-style scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+.highlights-items::-webkit-scrollbar {
+  width: 8px;
+}
+
+.highlights-items::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.highlights-items::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+.highlights-items::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.3);
+}
+
+/* Highlight item wrapper for zebra striping */
+.highlight-item-wrapper {
+  display: block;
+  margin-bottom: 5px;
+  transition: background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  border-radius: 0;
+}
+
+/* First item - no top margin needed */
+.highlight-item-wrapper:first-child {
+  margin-top: 0;
+}
+
+/* Last item - ensure proper spacing at bottom */
+.highlight-item-wrapper:last-child {
+  margin-bottom: 0.5rem;
+}
+
+/* Zebra striping - alternate subtle backgrounds */
+.highlight-item-wrapper:nth-child(odd) {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.highlight-item-wrapper:nth-child(even) {
+  background-color: transparent;
+}
+
+.highlight-item-wrapper:hover {
+  background-color: rgba(0, 0, 0, 0.114) !important;
 }
 
 .highlight-item {
-  display: inline-block;
+  display: block;
   background: transparent;
   border: none;
-  border-radius: 0;
+  border-radius: 8px;
   cursor: text;
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
-  padding: 0;
-  margin-right: 0.5rem;
-  vertical-align: baseline;
+  padding: 0.625rem 1rem;
+  margin: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-/* Inline items don't have line breaks and appear on same line */
+/* Inline items - still display as block in vertical list, but with slightly different styling */
 .highlight-item.inline-item {
-  display: inline;
-  margin-right: 0.5rem;
+  display: block;
+  width: 100%;
 }
 
 .highlight-item:hover {
   background-color: transparent;
 }
 
-/* Color-based hover highlighting - matches line height */
-.highlight-item[data-color="yellow"]:hover {
-  background-color: rgba(255, 235, 59, 0.3);
-  padding: 0 1px;
-  margin: 0 -1px;
-  border-radius: 2px;
+/* Subtle hover effect for the item content */
+.highlight-item:hover .highlight-item-content {
+  color: rgba(0, 0, 0, 0.9);
+}
+
+/* Color-based subtle accent on hover - macOS style */
+.highlight-item[data-color="yellow"]:hover .highlight-item-content {
+  background-color: rgba(251, 188, 4, 0.08);
+  padding: 0.125rem 0.25rem;
+  margin: -0.125rem -0.25rem;
+  border-radius: 4px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
 
-.highlight-item[data-color="green"]:hover {
-  background-color: rgba(76, 175, 80, 0.3);
-  padding: 0 1px;
-  margin: 0 -1px;
-  border-radius: 2px;
+.highlight-item[data-color="green"]:hover .highlight-item-content {
+  background-color: rgba(52, 168, 83, 0.08);
+  padding: 0.125rem 0.25rem;
+  margin: -0.125rem -0.25rem;
+  border-radius: 4px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
 
-.highlight-item[data-color="blue"]:hover {
-  background-color: rgba(33, 150, 243, 0.3);
-  padding: 0 1px;
-  margin: 0 -1px;
-  border-radius: 2px;
+.highlight-item[data-color="blue"]:hover .highlight-item-content {
+  background-color: rgba(66, 133, 244, 0.08);
+  padding: 0.125rem 0.25rem;
+  margin: -0.125rem -0.25rem;
+  border-radius: 4px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
 
 .highlight-item.dragging {
-  opacity: 0.5;
+  opacity: 0.4;
+}
+
+.highlight-item-wrapper.dragging {
+  opacity: 0.4;
 }
 
 .highlight-item.drag-over {
-  background-color: rgba(66, 133, 244, 0.2);
-  padding: 0 1px;
-  margin: 0 -1px;
-  border-radius: 2px;
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
+  background-color: rgba(66, 133, 244, 0.1);
+}
+
+.highlight-item-wrapper.drag-over {
+  background-color: rgba(66, 133, 244, 0.08) !important;
 }
 
 /* Drop preview for inline placement */
@@ -2263,13 +2323,13 @@
   }
 }
 
-/* Drop indicator for new line */
+/* Drop indicator for new line - macOS style */
 .drop-indicator {
   display: block;
-  height: 1px;
-  background: #4285f4;
-  margin: 0.5rem 0;
-  border-radius: 0;
+  height: 2px;
+  background: rgba(66, 133, 244, 0.4);
+  margin: 2.5px 1rem;
+  border-radius: 1px;
   animation: newLineDropIndicator 0.2s ease;
   opacity: 0.6;
 }
@@ -2283,17 +2343,17 @@
   }
 }
 
-/* Inline drop indicator */
+/* Inline drop indicator - macOS style */
 .drop-indicator-inline {
   display: inline-block;
   width: 2px;
   height: 1.2em;
-  background: #4285f4;
+  background: rgba(66, 133, 244, 0.5);
   vertical-align: middle;
   margin: 0 2px;
   animation: inlineDropIndicator 0.3s ease;
   border-radius: 1px;
-  box-shadow: 0 0 4px rgba(66, 133, 244, 0.6);
+  box-shadow: 0 0 2px rgba(66, 133, 244, 0.3);
 }
 
 .drop-indicator-inline-before {
@@ -2323,55 +2383,76 @@
   display: inline;
   cursor: text;
   user-select: text;
+  transition: all 0.15s ease;
 }
 
 .highlight-item-normal {
-  font-family: 'Poppins', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   font-size: 0.875rem;
-  color: #202124;
+  color: rgba(0, 0, 0, 0.85);
   font-weight: 400;
-  line-height: inherit;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .highlight-item-h2 {
-  font-family: 'Poppins', sans-serif;
-  font-size: 1.125rem;
-  color: #202124;
-  font-weight: 700;
-  line-height: inherit;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif;
+  font-size: 1rem;
+  color: rgba(0, 0, 0, 0.9);
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .highlight-item-bullet {
-  font-family: 'Poppins', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   font-size: 0.875rem;
-  color: #202124;
+  color: rgba(0, 0, 0, 0.85);
   font-weight: 400;
-  line-height: inherit;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .highlight-item-bullet .bullet-point {
   margin-right: 0.5rem;
-  color: #2196f3;
+  color: rgba(66, 133, 244, 0.8);
+  font-weight: 500;
 }
 
 .highlight-edit-input {
-  display: inline-block;
-  background: white;
-  border: 1px solid #4285f4;
-  border-radius: 4px;
-  padding: 0.25rem 0.5rem;
-  color: #202124;
-  font-family: 'Poppins', sans-serif;
+  display: block;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(66, 133, 244, 0.3);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  color: rgba(0, 0, 0, 0.85);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   font-size: 0.875rem;
   outline: none;
-  min-width: 200px;
-  vertical-align: baseline;
+  box-sizing: border-box;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.highlight-edit-input:focus {
+  border-color: rgba(66, 133, 244, 0.5);
+  background: rgba(255, 255, 255, 1);
+  box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.1);
 }
 
 .highlights-actions {
-  padding: 0.75rem;
-  border-top: 1px solid #e0e0e0;
+  padding: 0.875rem 1rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
   flex-shrink: 0;
+  background: #fafafa;
 }
 
 .btn-format-summary {

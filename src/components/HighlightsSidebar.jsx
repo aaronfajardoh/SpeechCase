@@ -9,6 +9,7 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
   const [hoveredItemId, setHoveredItemId] = useState(null)
   const [tooltipPosition, setTooltipPosition] = useState(null)
   const isHoveringTooltipRef = useRef(false)
+  const hoverTimeoutRef = useRef(null)
   const [editingId, setEditingId] = useState(null)
   const [editingText, setEditingText] = useState('')
   const [draggedId, setDraggedId] = useState(null)
@@ -23,6 +24,16 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
   
   // Use external summary text if provided, otherwise use local state
   const summaryText = externalSummaryText || localSummaryText
+
+  // Cleanup timeout on unmount or when editing starts
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current)
+        hoverTimeoutRef.current = null
+      }
+    }
+  }, [editingId])
 
   // Auto-scroll to bottom when a new highlight is added
   useEffect(() => {
@@ -615,142 +626,152 @@ ${htmlContent}
                       <div className="drop-indicator drop-indicator-newline" />
                     )}
                     
-                    <span
-                      className={`highlight-item ${getFormattingClass(item.color)} ${draggedId === item.id ? 'dragging' : ''} ${dragOverId === item.id ? 'drag-over' : ''} ${item.inline ? 'inline-item' : ''} ${isInlineDrop ? 'drop-preview-inline' : ''}`}
-                      data-color={item.color || 'yellow'}
-                      draggable={editingId !== item.id}
-                      onDragStart={(e) => handleDragStart(e, item)}
-                      onDragOver={(e) => handleDragOver(e, item)}
-                      onDrop={(e) => handleDrop(e, item)}
-                      onDragEnd={handleDragEnd}
+                    {/* Wrapper div for zebra striping */}
+                    <div
+                      className={`highlight-item-wrapper ${draggedId === item.id ? 'dragging' : ''} ${dragOverId === item.id ? 'drag-over' : ''}`}
                       onMouseEnter={(e) => {
                         if (editingId !== item.id) {
+                          // Clear any pending timeout to prevent tooltip from disappearing
+                          if (hoverTimeoutRef.current) {
+                            clearTimeout(hoverTimeoutRef.current)
+                            hoverTimeoutRef.current = null
+                          }
                           setHoveredItemId(item.id)
                           const rect = e.currentTarget.getBoundingClientRect()
                           setTooltipPosition({ x: rect.left + rect.width / 2, y: rect.top })
                         }
                       }}
                       onMouseLeave={() => {
-                        setTimeout(() => {
+                        // Only hide if not hovering over tooltip
+                        hoverTimeoutRef.current = setTimeout(() => {
                           if (!isHoveringTooltipRef.current) {
                             setHoveredItemId(null)
                             setTooltipPosition(null)
                           }
-                        }, 200)
+                          hoverTimeoutRef.current = null
+                        }, 500)
                       }}
                     >
-                      {/* Inline drop indicator before */}
-                      {isInlineDrop && dropPosition.position === 'before' && (
-                        <span className="drop-indicator-inline drop-indicator-inline-before" />
-                      )}
-                      
-                      {editingId === item.id ? (
-                        <input
-                          ref={editInputRef}
-                          type="text"
-                          value={editingText}
-                          onChange={(e) => setEditingText(e.target.value)}
-                          onBlur={() => handleSaveEdit(item.id)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              handleSaveEdit(item.id)
-                            } else if (e.key === 'Escape') {
-                              handleCancelEdit()
-                            }
-                          }}
-                          className="highlight-edit-input"
-                          autoFocus
-                        />
-                      ) : (
-                        <span
-                          className="highlight-item-content"
-                          onDoubleClick={() => handleDoubleClick(item)}
-                        >
-                          {item.color === 'blue' && <span className="bullet-point">•</span>}
-                          {item.text}
-                        </span>
-                      )}
-                      
-                      {/* Inline drop indicator after */}
-                      {isInlineDrop && dropPosition.position === 'after' && (
-                        <span className="drop-indicator-inline drop-indicator-inline-after" />
-                      )}
-                      
-                      {/* Tooltip for sidebar highlights */}
-                      {hoveredItemId === item.id && tooltipPosition && (
-                        <div
-                          className="highlight-tooltip sidebar-tooltip"
-                          style={{
-                            position: 'fixed',
-                            left: tooltipPosition.x + 'px',
-                            top: (tooltipPosition.y - 7.5) + 'px',
-                            transform: 'translate(-50%, -100%)',
-                            zIndex: 1000
-                          }}
-                          onMouseEnter={() => {
-                            isHoveringTooltipRef.current = true
-                            setHoveredItemId(item.id)
-                          }}
-                          onMouseLeave={() => {
-                            isHoveringTooltipRef.current = false
-                            setTimeout(() => {
-                              if (!isHoveringTooltipRef.current) {
-                                setHoveredItemId(null)
-                                setTooltipPosition(null)
+                      <span
+                        className={`highlight-item ${getFormattingClass(item.color)} ${draggedId === item.id ? 'dragging' : ''} ${dragOverId === item.id ? 'drag-over' : ''} ${item.inline ? 'inline-item' : ''} ${isInlineDrop ? 'drop-preview-inline' : ''}`}
+                        data-color={item.color || 'yellow'}
+                        draggable={editingId !== item.id}
+                        onDragStart={(e) => handleDragStart(e, item)}
+                        onDragOver={(e) => handleDragOver(e, item)}
+                        onDrop={(e) => handleDrop(e, item)}
+                        onDragEnd={handleDragEnd}
+                      >
+                        {/* Inline drop indicator before */}
+                        {isInlineDrop && dropPosition.position === 'before' && (
+                          <span className="drop-indicator-inline drop-indicator-inline-before" />
+                        )}
+                        
+                        {editingId === item.id ? (
+                          <input
+                            ref={editInputRef}
+                            type="text"
+                            value={editingText}
+                            onChange={(e) => setEditingText(e.target.value)}
+                            onBlur={() => handleSaveEdit(item.id)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                handleSaveEdit(item.id)
+                              } else if (e.key === 'Escape') {
+                                handleCancelEdit()
                               }
-                            }, 200)
-                          }}
-                        >
-                          <div className="tooltip-color-options">
-                            {['yellow', 'green', 'blue'].map(color => (
-                              <button
-                                key={color}
-                                className={`tooltip-color-btn ${item.color === color ? 'active' : ''}`}
-                                style={{
-                                  backgroundColor: color === 'yellow' ? 'rgba(251, 188, 4, 1)' : 
-                                                   color === 'green' ? 'rgba(52, 168, 83, 1)' : 
-                                                   'rgba(66, 133, 244, 1)'
-                                }}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  if (onColorChange) {
-                                    onColorChange(item.id, color)
-                                  }
+                            }}
+                            className="highlight-edit-input"
+                            autoFocus
+                          />
+                        ) : (
+                          <span
+                            className="highlight-item-content"
+                            onDoubleClick={() => handleDoubleClick(item)}
+                          >
+                            {item.color === 'blue' && <span className="bullet-point">•</span>}
+                            {item.text}
+                          </span>
+                        )}
+                        
+                        {/* Inline drop indicator after */}
+                        {isInlineDrop && dropPosition.position === 'after' && (
+                          <span className="drop-indicator-inline drop-indicator-inline-after" />
+                        )}
+                        
+                        {/* Tooltip for sidebar highlights */}
+                        {hoveredItemId === item.id && tooltipPosition && (
+                          <div
+                            className="highlight-tooltip sidebar-tooltip"
+                            style={{
+                              position: 'fixed',
+                              left: tooltipPosition.x + 'px',
+                              top: (tooltipPosition.y - 0) + 'px',
+                              transform: 'translate(-50%, -100%)',
+                              zIndex: 1000
+                            }}
+                            onMouseEnter={() => {
+                              // Clear any pending timeout when entering tooltip
+                              if (hoverTimeoutRef.current) {
+                                clearTimeout(hoverTimeoutRef.current)
+                                hoverTimeoutRef.current = null
+                              }
+                              isHoveringTooltipRef.current = true
+                              setHoveredItemId(item.id)
+                            }}
+                            onMouseLeave={() => {
+                              isHoveringTooltipRef.current = false
+                              hoverTimeoutRef.current = setTimeout(() => {
+                                if (!isHoveringTooltipRef.current) {
                                   setHoveredItemId(null)
                                   setTooltipPosition(null)
-                                }}
-                                title={color}
-                              />
-                            ))}
-                          </div>
-                          <button
-                            className="tooltip-delete-btn"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              if (onDelete) {
-                                onDelete(item.id)
-                              }
-                              setHoveredItemId(null)
-                              setTooltipPosition(null)
+                                }
+                                hoverTimeoutRef.current = null
+                              }, 500)
                             }}
-                            title="Delete highlight"
                           >
-                          </button>
-                        </div>
-                      )}
-                    </span>
+                            <div className="tooltip-color-options">
+                              {['yellow', 'green', 'blue'].map(color => (
+                                <button
+                                  key={color}
+                                  className={`tooltip-color-btn ${item.color === color ? 'active' : ''}`}
+                                  style={{
+                                    backgroundColor: color === 'yellow' ? 'rgba(251, 188, 4, 1)' : 
+                                                     color === 'green' ? 'rgba(52, 168, 83, 1)' : 
+                                                     'rgba(66, 133, 244, 1)'
+                                  }}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    if (onColorChange) {
+                                      onColorChange(item.id, color)
+                                    }
+                                    setHoveredItemId(null)
+                                    setTooltipPosition(null)
+                                  }}
+                                  title={color}
+                                />
+                              ))}
+                            </div>
+                            <button
+                              className="tooltip-delete-btn"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (onDelete) {
+                                  onDelete(item.id)
+                                }
+                                setHoveredItemId(null)
+                                setTooltipPosition(null)
+                              }}
+                              title="Delete highlight"
+                            >
+                            </button>
+                          </div>
+                        )}
+                      </span>
+                    </div>
                     
                     {/* Drop indicator for new line after */}
                     {isNewLineDrop && dropPosition.position === 'after' && (
                       <div className="drop-indicator drop-indicator-newline" />
-                    )}
-                    
-                    {/* Empty line after each item by default (unless inline) */}
-                    {!item.inline && (
-                      <>
-                        <br />
-                        <br />
-                      </>
                     )}
                   </React.Fragment>
                 )
