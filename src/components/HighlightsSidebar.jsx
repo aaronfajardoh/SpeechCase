@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { IconHighlighter, IconRefresh, IconTrash, IconCopy, IconDownload, IconExpand } from './Icons.jsx'
 import MermaidDiagram from './MermaidDiagram.jsx'
@@ -18,9 +18,28 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
   const [activeTab, setActiveTab] = useState('highlights') // 'highlights' | 'summary'
   const [localSummaryText, setLocalSummaryText] = useState('') // Store the summary locally as fallback
   const editInputRef = useRef(null)
+  const highlightsItemsRef = useRef(null)
+  const prevHighlightItemsLengthRef = useRef(highlightItems.length)
   
   // Use external summary text if provided, otherwise use local state
   const summaryText = externalSummaryText || localSummaryText
+
+  // Auto-scroll to bottom when a new highlight is added
+  useEffect(() => {
+    // Only auto-scroll if the length increased (new highlight added) and we're on the highlights tab
+    if (highlightItems.length > prevHighlightItemsLengthRef.current && highlightsItemsRef.current && activeTab === 'highlights') {
+      // Use requestAnimationFrame to ensure DOM has updated, then scroll
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (highlightsItemsRef.current) {
+            highlightsItemsRef.current.scrollTop = highlightsItemsRef.current.scrollHeight
+          }
+        })
+      })
+    }
+    // Update the ref to track the current length
+    prevHighlightItemsLengthRef.current = highlightItems.length
+  }, [highlightItems.length, activeTab])
 
   // Handle double-click to edit
   const handleDoubleClick = (item) => {
@@ -551,6 +570,7 @@ ${htmlContent}
           {activeTab === 'highlights' && (
             <>
               <div 
+                ref={highlightsItemsRef}
                 className="highlights-items"
                 onDragOver={(e) => {
                   // Allow dropping on empty space
