@@ -10719,7 +10719,7 @@ function App() {
             if (canvas) {
               const canvasRect = canvas.getBoundingClientRect()
               const tooltipX = rect.left - canvasRect.left + rect.width / 2
-              const tooltipY = rect.top - canvasRect.top - 7.5 // Position above the highlight (25% closer)
+              const tooltipY = rect.top - canvasRect.top - 0 // Position above the highlight (25% closer)
               setShowTooltipFor({ highlightId: highlight.id, x: tooltipX, y: tooltipY, page: highlight.page })
             }
           }
