@@ -8087,6 +8087,19 @@ function App() {
       // Get all spans in the text layer
       const allSpans = Array.from(textLayer.querySelectorAll('span[data-char-index]'))
       
+      // First, find the span that contains the range's endContainer (if it's a text node)
+      // This ensures we always include the span where the selection ends
+      let endContainerSpan = null
+      if (clonedRange.endContainer && clonedRange.endContainer.nodeType === Node.TEXT_NODE) {
+        endContainerSpan = clonedRange.endContainer.parentElement
+        // If it's not in allSpans, try to find a span with matching text content
+        if (endContainerSpan && !allSpans.includes(endContainerSpan)) {
+          // Try to find a span in allSpans that has the same text content
+          const endContainerText = clonedRange.endContainer.textContent
+          endContainerSpan = allSpans.find(s => s.firstChild?.textContent === endContainerText) || null
+        }
+      }
+      
       // Collect all selected spans with their selection info (same logic as calculatePreciseRectangles)
       const selectedSpans = []
       
@@ -8102,9 +8115,28 @@ function App() {
         const startToEnd = clonedRange.compareBoundaryPoints(Range.START_TO_END, spanRange)
         const endToStart = clonedRange.compareBoundaryPoints(Range.END_TO_START, spanRange)
         
-        if (startToEnd < 0 || endToStart > 0) {
-          // No intersection
-          return
+        // Also check if the range's start or end containers are within this span
+        // This handles cases where the range ends at a text node that's the span's firstChild
+        // Check if endContainer is the textNode, or if it's a text node whose parent is this span
+        const rangeStartsInSpan = clonedRange.startContainer === textNode || span.contains(clonedRange.startContainer)
+        const endContainerParent = clonedRange.endContainer?.parentElement
+        const rangeEndsInSpan = clonedRange.endContainer === textNode || 
+                                 span.contains(clonedRange.endContainer) ||
+                                 (clonedRange.endContainer.nodeType === Node.TEXT_NODE && endContainerParent === span)
+        
+        // Include span if:
+        // 1. This span contains the range's endContainer (always include)
+        // 2. Range starts or ends within this span (always include)
+        // 3. OR standard intersection check passes (range overlaps with span)
+        // The boundary point check: startToEnd < 0 means range starts before span ends
+        // and endToStart > 0 means range ends after span starts - both must be true for intersection
+        const isEndContainerSpan = span === endContainerSpan
+        if (!isEndContainerSpan && !rangeStartsInSpan && !rangeEndsInSpan) {
+          // Only use boundary point check if range doesn't start or end in span
+          if (startToEnd < 0 || endToStart > 0) {
+            // No intersection
+            return
+          }
         }
         
         // Determine the selected portion of this span
@@ -8169,11 +8201,13 @@ function App() {
             endOffset,
             columnIndex: columnIndex !== undefined ? parseInt(columnIndex) : null
           })
+          
         }
       })
       
       // Filter spans to only include those in the same column as the selection start
       // This prevents extracting text from other columns in multi-column layouts
+      // BUT: Always include the endContainerSpan even if it's in a different column
       if (selectedSpans.length > 0) {
         // Find the column index of the span where the selection starts
         let startColumnIndex = null
@@ -8195,9 +8229,10 @@ function App() {
         }
         
         // If we have a valid column index, filter to only include spans in that column
+        // BUT always include the endContainerSpan even if it's in a different column
         if (startColumnIndex !== null) {
           const filteredSpans = selectedSpans.filter(spanInfo => 
-            spanInfo.columnIndex === startColumnIndex
+            spanInfo.columnIndex === startColumnIndex || spanInfo.span === endContainerSpan
           )
           
           // Only use filtered spans if we have at least one (to avoid losing all selection)
@@ -8212,8 +8247,42 @@ function App() {
         return range.toString()
       }
       
-      // Sort by charIndex to ensure correct order (for display order, not for extraction)
-      selectedSpans.sort((a, b) => a.charIndex - b.charIndex)
+      // Sort spans by their position in the selection range
+      // Priority: start container span first, end container span last, then by position relative to selection
+      selectedSpans.sort((a, b) => {
+        // Check if spans contain start/end containers
+        const aContainsStart = a.span.contains(clonedRange.startContainer) || a.span.firstChild === clonedRange.startContainer
+        const bContainsStart = b.span.contains(clonedRange.startContainer) || b.span.firstChild === clonedRange.startContainer
+        const aContainsEnd = a.span.contains(clonedRange.endContainer) || a.span.firstChild === clonedRange.endContainer
+        const bContainsEnd = b.span.contains(clonedRange.endContainer) || b.span.firstChild === clonedRange.endContainer
+        
+        // Start container span always comes first
+        if (aContainsStart && !bContainsStart) return -1
+        if (!aContainsStart && bContainsStart) return 1
+        
+        // End container span always comes last
+        if (aContainsEnd && !bContainsEnd) return 1
+        if (!aContainsEnd && bContainsEnd) return -1
+        
+        // For other spans, compare their position relative to the selection range
+        // Create ranges for each span
+        const aRange = document.createRange()
+        aRange.selectNodeContents(a.span)
+        const bRange = document.createRange()
+        bRange.selectNodeContents(b.span)
+        
+        // Compare where each span starts relative to the selection range start
+        const aStartToSelectionStart = clonedRange.compareBoundaryPoints(Range.START_TO_START, aRange)
+        const bStartToSelectionStart = clonedRange.compareBoundaryPoints(Range.START_TO_START, bRange)
+        
+        // If both are after the selection start, sort by their position
+        if (aStartToSelectionStart <= 0 && bStartToSelectionStart <= 0) {
+          return aRange.compareBoundaryPoints(Range.START_TO_START, bRange)
+        }
+        
+        // Otherwise, sort by position relative to selection start
+        return aStartToSelectionStart - bStartToSelectionStart
+      })
       
       // Extract text directly from the filtered spans' textContent
       // This is more reliable than using charIndex to index into extractedText,
@@ -8305,7 +8374,7 @@ function App() {
       if (!selectedText) {
         return ''
       }
-
+      
       // Check if selection starts/ends in the middle of a word by examining the DOM
       const startContainer = range.startContainer
       const startOffset = range.startOffset
