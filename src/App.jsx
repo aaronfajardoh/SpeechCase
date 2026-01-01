@@ -174,6 +174,7 @@ function App() {
   const lastProgrammaticScrollTimeRef = useRef(0) // Track when we last scrolled programmatically
   const pendingScrollTimeoutRef = useRef(null) // Track pending scroll timeout to cancel if needed
   const scrollPositionBeforeZoomRef = useRef(null) // Store scroll position before zoom to restore after re-render
+  const scrollPositionBeforeFullViewRef = useRef(null) // Store scroll position before opening full view to restore after returning
 
   // Detect mobile device
   useEffect(() => {
@@ -1017,44 +1018,104 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sidebarView, isSidebarCollapsed])
 
+  // Scroll position for timeline is now saved in the setIsTimelineExpanded handler
+
   // Re-render PDF pages when returning from expanded timeline view
   // Canvas content is lost when hidden, so we need to re-render when visible again
   useEffect(() => {
     if (!isTimelineExpanded && pdfDoc && totalPages > 0 && pageData.length > 0) {
       // Wait for DOM to be ready and PDF viewer to be visible
-      const timeoutId = setTimeout(() => {
-        renderPages()
+      const timeoutId = setTimeout(async () => {
+        await renderPages()
       }, 200)
       return () => clearTimeout(timeoutId)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTimelineExpanded])
 
+  // Restore scroll position after pages are fully rendered (for timeline)
+  // Use useLayoutEffect to restore synchronously before browser paints
+  useLayoutEffect(() => {
+    if (!isTimelineExpanded && scrollPositionBeforeFullViewRef.current && renderedPages.length === pageData.length && pageData.length > 0) {
+      // Use requestAnimationFrame to ensure DOM is ready
+      requestAnimationFrame(() => {
+        restoreScrollPositionFromFullView()
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTimelineExpanded, renderedPages.length, pageData.length])
+
+  // Scroll position for summary is now saved in the onExpandSummary handler
+
   // Re-render PDF pages when returning from expanded summary view
   // Canvas content is lost when hidden, so we need to re-render when visible again
   useEffect(() => {
     if (!isSummaryExpanded && pdfDoc && totalPages > 0 && pageData.length > 0) {
       // Wait for DOM to be ready and PDF viewer to be visible
-      const timeoutId = setTimeout(() => {
-        renderPages()
+      const timeoutId = setTimeout(async () => {
+        await renderPages()
       }, 200)
       return () => clearTimeout(timeoutId)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSummaryExpanded])
 
+  // Restore scroll position after pages are fully rendered (for summary)
+  // Use useLayoutEffect to restore synchronously before browser paints
+  useLayoutEffect(() => {
+    if (!isSummaryExpanded && scrollPositionBeforeFullViewRef.current && renderedPages.length === pageData.length && pageData.length > 0) {
+      // Use requestAnimationFrame to ensure DOM is ready
+      requestAnimationFrame(() => {
+        restoreScrollPositionFromFullView()
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSummaryExpanded, renderedPages.length, pageData.length])
+
+  // Scroll position for highlights is now saved in the onExpandHighlights handler
+
   // Re-render PDF pages when returning from expanded highlights view
   // Canvas content is lost when hidden, so we need to re-render when visible again
   useEffect(() => {
     if (!isHighlightsExpanded && pdfDoc && totalPages > 0 && pageData.length > 0) {
       // Wait for DOM to be ready and PDF viewer to be visible
-      const timeoutId = setTimeout(() => {
-        renderPages()
+      const timeoutId = setTimeout(async () => {
+        await renderPages()
       }, 200)
       return () => clearTimeout(timeoutId)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHighlightsExpanded])
+
+  // Restore scroll position after pages are fully rendered (for highlights)
+  // Use useLayoutEffect to restore synchronously before browser paints
+  useLayoutEffect(() => {
+    if (!isHighlightsExpanded && scrollPositionBeforeFullViewRef.current && renderedPages.length === pageData.length && pageData.length > 0) {
+      // Use requestAnimationFrame to ensure DOM is ready
+      requestAnimationFrame(() => {
+        restoreScrollPositionFromFullView()
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHighlightsExpanded, renderedPages.length, pageData.length])
+
+  // Additional fallback: Try to restore scroll position when PDF viewer becomes visible
+  // This handles cases where renderedPages condition might not trigger
+  useEffect(() => {
+    if (!isHighlightsExpanded && !isSummaryExpanded && !isTimelineExpanded && scrollPositionBeforeFullViewRef.current && pdfDoc) {
+      const pdfViewer = document.querySelector('.pdf-viewer-container')
+      if (pdfViewer && pdfViewer.offsetParent !== null) {
+        // PDF viewer is visible, try to restore
+        const timeoutId = setTimeout(() => {
+          if (scrollPositionBeforeFullViewRef.current) {
+            restoreScrollPositionFromFullView()
+          }
+        }, 100)
+        return () => clearTimeout(timeoutId)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHighlightsExpanded, isSummaryExpanded, isTimelineExpanded, pdfDoc])
 
   // Auto-scroll sidebar to keep current page visible
   useEffect(() => {
@@ -1119,7 +1180,7 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageData.length])
 
-  // Fine-tune scroll position after all pages are fully rendered
+  // Fine-tune scroll position after all pages are fully rendered (for zoom)
   // This ensures accuracy using actual DOM measurements
   useEffect(() => {
     if (scrollPositionBeforeZoomRef.current && pageData.length > 0 && renderedPages.length === pageData.length) {
@@ -7581,6 +7642,60 @@ function App() {
     }
   }
 
+  // Restore scroll position after returning from full view components
+  const restoreScrollPositionFromFullView = () => {
+    const scrollPos = scrollPositionBeforeFullViewRef.current
+    if (!scrollPos) return
+
+    const pdfViewer = document.querySelector('.pdf-viewer-container')
+    if (!pdfViewer) return
+
+    // If we have the exact scrollTop saved, use it directly (most accurate)
+    if (scrollPos.exactScrollTop !== undefined && scrollPos.exactScrollTop !== null) {
+      // Set scroll position immediately (no smooth scrolling)
+      pdfViewer.scrollTop = scrollPos.exactScrollTop
+      scrollPositionBeforeFullViewRef.current = null
+      return
+    }
+
+    // Fallback: calculate from page and relative position
+    const pageElement = document.getElementById(`page-${scrollPos.pageNum}`)
+    if (!pageElement) {
+      // Page element doesn't exist yet, try again later
+      setTimeout(() => {
+        restoreScrollPositionFromFullView()
+      }, 50)
+      return
+    }
+
+    // Get page dimensions - use getBoundingClientRect for accurate measurements
+    const pageRect = pageElement.getBoundingClientRect()
+    const containerRect = pdfViewer.getBoundingClientRect()
+    
+    // Calculate page position relative to container
+    const pageTop = pageRect.top - containerRect.top + pdfViewer.scrollTop
+    const pageHeight = pageRect.height
+
+    // If page height is 0 or invalid, it's not laid out yet - skip for now
+    if (pageHeight <= 0) {
+      // Retry after a short delay
+      setTimeout(() => {
+        restoreScrollPositionFromFullView()
+      }, 50)
+      return
+    }
+
+    // Calculate target scroll position based on relative position
+    // Use the exact relative position to restore to the same view
+    const targetScrollTop = pageTop + (scrollPos.relativePosition * pageHeight) - (pdfViewer.clientHeight / 2)
+
+    // Set scroll position immediately (no smooth scrolling to avoid visible animation)
+    pdfViewer.scrollTop = targetScrollTop
+
+    // Clear the saved position after restoring
+    scrollPositionBeforeFullViewRef.current = null
+  }
+
   const handleReset = () => {
     handleStop()
     clearStartMarker()
@@ -9770,6 +9885,62 @@ function App() {
       if (rafId) cancelAnimationFrame(rafId)
     }
   }, [isSidebarCollapsed, sidebarWidth, highlights])
+
+  // Re-render highlights when returning from full view components
+  // This ensures highlights are correctly positioned after pages are re-rendered
+  // We use a ref to track previous state to detect when we return from full view
+  const prevFullViewStateRef = useRef({ timeline: false, summary: false, highlights: false })
+  useEffect(() => {
+    if (highlights.length === 0) return
+    
+    // Check if we just returned from a full view (state changed from true to false)
+    const wasInFullView = prevFullViewStateRef.current.timeline || 
+                         prevFullViewStateRef.current.summary || 
+                         prevFullViewStateRef.current.highlights
+    const isInFullView = isTimelineExpanded || isSummaryExpanded || isHighlightsExpanded
+    const justReturnedFromFullView = wasInFullView && !isInFullView && pdfDoc
+    
+    // Update previous state
+    prevFullViewStateRef.current = {
+      timeline: isTimelineExpanded,
+      summary: isSummaryExpanded,
+      highlights: isHighlightsExpanded
+    }
+    
+    if (justReturnedFromFullView) {
+      let rafId = null
+      let timeoutId = null
+
+      const reRenderHighlights = () => {
+        // Re-render all highlights to account for new canvas dimensions
+        highlights.forEach(highlight => {
+          const highlightLayer = highlightLayerRefs.current[highlight.page]
+          const canvas = canvasRefs.current[highlight.page]
+          if (highlightLayer && canvas) {
+            renderHighlight(highlight, highlightLayer)
+          }
+        })
+      }
+
+      // Wait for pages to be fully rendered and scroll position to be restored
+      timeoutId = setTimeout(() => {
+        // Re-render immediately
+        reRenderHighlights()
+        
+        // Also schedule a re-render on next frame in case layout hasn't fully updated yet
+        rafId = requestAnimationFrame(() => {
+          reRenderHighlights()
+          rafId = null
+        })
+      }, 400) // Delay to allow pages to render and scroll position to be restored
+
+      return () => {
+        if (timeoutId) clearTimeout(timeoutId)
+        if (rafId) cancelAnimationFrame(rafId)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTimelineExpanded, isSummaryExpanded, isHighlightsExpanded, pdfDoc, highlights])
 
   // Re-render TTS reading highlights (blue/green) when viewport, zoom, or layout changes
   // This ensures reading highlights maintain their position on text during all viewport changes
@@ -12232,7 +12403,22 @@ function App() {
                     generateTimeline={generateTimeline}
                     timeline={timeline}
                     isTimelineExpanded={isTimelineExpanded}
-                    setIsTimelineExpanded={setIsTimelineExpanded}
+                    setIsTimelineExpanded={(expanded) => {
+                      // Save exact scroll position before opening full view
+                      if (expanded) {
+                        const pdfViewer = document.querySelector('.pdf-viewer-container')
+                        if (pdfViewer) {
+                          const scrollPos = getCurrentScrollPosition()
+                          if (scrollPos) {
+                            scrollPositionBeforeFullViewRef.current = {
+                              ...scrollPos,
+                              exactScrollTop: pdfViewer.scrollTop // Save exact scroll position
+                            }
+                          }
+                        }
+                      }
+                      setIsTimelineExpanded(expanded)
+                    }}
                     isSidebarCollapsed={isSidebarCollapsed}
                   />
                 )}
@@ -12249,10 +12435,32 @@ function App() {
                     pdfFileName={pdfFile?.name}
                     summaryText={summaryText}
                     onExpandSummary={() => {
+                      // Save exact scroll position before opening full view
+                      const pdfViewer = document.querySelector('.pdf-viewer-container')
+                      if (pdfViewer) {
+                        const scrollPos = getCurrentScrollPosition()
+                        if (scrollPos) {
+                          scrollPositionBeforeFullViewRef.current = {
+                            ...scrollPos,
+                            exactScrollTop: pdfViewer.scrollTop // Save exact scroll position
+                          }
+                        }
+                      }
                       setIsSummaryExpanded(true)
                       setIsSidebarCollapsed(true)
                     }}
                     onExpandHighlights={() => {
+                      // Save exact scroll position before opening full view
+                      const pdfViewer = document.querySelector('.pdf-viewer-container')
+                      if (pdfViewer) {
+                        const scrollPos = getCurrentScrollPosition()
+                        if (scrollPos) {
+                          scrollPositionBeforeFullViewRef.current = {
+                            ...scrollPos,
+                            exactScrollTop: pdfViewer.scrollTop // Save exact scroll position
+                          }
+                        }
+                      }
                       setIsHighlightsExpanded(true)
                       setIsSidebarCollapsed(true)
                     }}
