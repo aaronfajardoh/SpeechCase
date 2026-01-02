@@ -7904,6 +7904,12 @@ function App() {
           }
         }
         
+        // #region agent log
+        const spanTextContent = textNode.textContent
+        const isSpaceSpan = !/\S/.test(spanTextContent)
+        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:7907',message:'extractTextFromRange: adding span to selectedSpans',data:{spanText:spanTextContent,isSpaceSpan,startOffset,endOffset,hasCharIndex:!!span.dataset.charIndex},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
+        // #endregion
+        
         selectedSpans.push({
           span,
           textNode,
@@ -7943,10 +7949,21 @@ function App() {
       }
       
       // If we have a valid column index, filter to only include spans in that column
+      // Also include spans with null columnIndex to avoid losing spans that don't have the attribute set
       if (startColumnIndex !== null) {
+        // #region agent log
+        const beforeFilter = selectedSpans.map(s => ({text:s.span.firstChild?.textContent||'',colIdx:s.columnIndex}))
+        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:7951',message:'extractTextFromRange: before column filter',data:{startColumnIndex,beforeFilterCount:selectedSpans.length,beforeFilter},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H'})}).catch(()=>{});
+        // #endregion
+        
         const filteredSpans = selectedSpans.filter(spanInfo => 
-          spanInfo.columnIndex === startColumnIndex
+          spanInfo.columnIndex === startColumnIndex || spanInfo.columnIndex === null
         )
+        
+        // #region agent log
+        const afterFilter = filteredSpans.map(s => ({text:s.span.firstChild?.textContent||'',colIdx:s.columnIndex}))
+        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:7957',message:'extractTextFromRange: after column filter',data:{startColumnIndex,afterFilterCount:filteredSpans.length,afterFilter},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H'})}).catch(()=>{});
+        // #endregion
         
         // Only use filtered spans if we have at least one (to avoid losing all selection)
         if (filteredSpans.length > 0) {
@@ -8218,8 +8235,9 @@ function App() {
       // This ensures column filtering works correctly when range is expanded for word boundaries
       const columnFilterStartContainer = originalRangeStartContainer || clonedRange.startContainer
       
-      // Get all spans in the text layer
-      const allSpans = Array.from(textLayer.querySelectorAll('span[data-char-index]'))
+      // Get all spans in the text layer (not just those with data-char-index)
+      // Some spans may not have charIndex but are still part of the selection
+      const allSpans = Array.from(textLayer.querySelectorAll('span'))
       
       // First, find the span that contains the range's endContainer (if it's a text node)
       // This ensures we always include the span where the selection ends
@@ -8386,10 +8404,13 @@ function App() {
         }
         
         // If we have a valid column index, filter to only include spans in that column
+        // Also include spans with null columnIndex to avoid losing spans that don't have the attribute set
         // BUT always include the endContainerSpan even if it's in a different column
         if (startColumnIndex !== null) {
           const filteredSpans = selectedSpans.filter(spanInfo => 
-            spanInfo.columnIndex === startColumnIndex || spanInfo.span === endContainerSpan
+            spanInfo.columnIndex === startColumnIndex || 
+            spanInfo.columnIndex === null || 
+            spanInfo.span === endContainerSpan
           )
           
           // Only use filtered spans if we have at least one (to avoid losing all selection)
@@ -8449,6 +8470,10 @@ function App() {
       
       let extractedTextParts = []
       
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8450',message:'extractTextFromRange: starting extraction',data:{selectedSpansCount:selectedSpans.length,selectedSpans:selectedSpans.map((s,i)=>({index:i,text:s.span.firstChild?.textContent||'',startOffset:s.startOffset,endOffset:s.endOffset,isSpace:!/\S/.test(s.span.firstChild?.textContent||''),hasCharIndex:!!s.span.dataset.charIndex,columnIndex:s.columnIndex})),rangeText:range.toString().trim()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      
       // Get Y positions for all spans to detect line breaks
       const spanPositions = selectedSpans.map((spanInfo, index) => {
         const rect = spanInfo.span.getBoundingClientRect()
@@ -8481,6 +8506,10 @@ function App() {
           textToAdd = spanText
         }
         
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8470',message:'extractTextFromRange: processing span',data:{index,spanText,startOffset:spanInfo.startOffset,endOffset:spanInfo.endOffset,textToAdd,textToAddLength:textToAdd.length,isSpace:!/\S/.test(spanText)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        
         if (textToAdd.length > 0) {
           extractedTextParts.push(textToAdd)
           
@@ -8491,17 +8520,54 @@ function App() {
             const nextPos = spanPositions[index + 1]
             // If Y positions differ significantly (more than 1px tolerance), they're on different lines
             const isDifferentLine = Math.abs(currentPos.top - nextPos.top) > 1
+            
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8490',message:'extractTextFromRange: checking line break',data:{index,currentTop:currentPos.top,nextTop:nextPos.top,topDiff:Math.abs(currentPos.top-nextPos.top),isDifferentLine,currentText:spanText,nextText:selectedSpans[index+1]?.span.firstChild?.textContent||''},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+            // #endregion
+            
             if (isDifferentLine) {
               // Mark that we need a space after this part
               extractedTextParts.push(' ')
+            } else {
+              // #region agent log
+              // Check if we need a space between spans on same line
+              const currentSpanText = spanText
+              const nextSpanText = selectedSpans[index + 1]?.span.firstChild?.textContent || ''
+              const currentEndsWithSpace = /\s$/.test(textToAdd)
+              const nextStartsWithSpace = /^\s/.test(nextSpanText)
+              const needsSpace = !currentEndsWithSpace && !nextStartsWithSpace && !!/\S/.test(currentSpanText) && !!/\S/.test(nextSpanText)
+              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8498',message:'extractTextFromRange: same line spacing check',data:{index,currentText:textToAdd,nextText:nextSpanText,currentEndsWithSpace,nextStartsWithSpace,needsSpace},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+              // #endregion
+              
+              // Add space between consecutive word spans on same line if no space span exists
+              // BUT: Be conservative - only add space if it's clearly between separate words
+              // Don't add space if both spans are very short (<=2 chars) as they might be parts of the same word
+              // This prevents splitting words like "más" (m, á, s) or "monolíticas" (monol, íticas)
+              if (needsSpace) {
+                const currentIsShort = textToAdd.length <= 2
+                const nextIsShort = nextSpanText.length <= 2
+                // Only add space if BOTH spans are longer than 2 chars (likely complete words)
+                // This is conservative but prevents splitting accented words
+                if (!currentIsShort && !nextIsShort) {
+                  extractedTextParts.push(' ')
+                }
+              }
             }
           }
         }
       })
       
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8502',message:'extractTextFromRange: before join',data:{extractedTextParts,extractedTextPartsCount:extractedTextParts.length,partsPreview:extractedTextParts.map((p,i)=>({index:i,text:p,length:p.length}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
+      
       // Join the text parts (spans are already in correct order)
       // Spaces between lines have already been added above
       const extracted = extractedTextParts.join('')
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:8504',message:'extractTextFromRange: after join',data:{extracted,extractedLength:extracted.length,rangeText:range.toString().trim()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+      // #endregion
       
       if (extracted && extracted.length > 0) {
         // Check if extracted text is significantly shorter than range text
@@ -8511,6 +8577,9 @@ function App() {
           // If extracted text is less than 70% of range text, use range text as fallback
           // This handles cases where DOM boundaries don't match the actual selection
           if (extracted.length < rangeText.length * 0.7) {
+            // The rangeText might have concatenated words, but we can't reliably fix it
+            // Return rangeText as-is - the user can edit it if needed
+            // The real fix should ensure all spans are included in extracted
             return rangeText
           }
         }
