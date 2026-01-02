@@ -8195,8 +8195,24 @@ function App() {
         return range.toString()
       }
       
+      // Get the native selection to check what's actually selected
+      // This is more reliable than using the range's DOM boundaries
+      const nativeSelection = window.getSelection()
+      let actualSelectedRange = null
+      if (nativeSelection && nativeSelection.rangeCount > 0) {
+        actualSelectedRange = nativeSelection.getRangeAt(0)
+      }
+      
       // Clone the range to avoid modifying the original
       const clonedRange = range.cloneRange()
+      
+      // For intersection checks, use the original range (before any expansion)
+      // The expanded range may have incorrect boundaries that don't match the DOM structure
+      // But for getting the actual selected text, use the actual selected range if available
+      const rangeToUse = clonedRange
+      
+      // Get the actual selected text - this is what the user actually selected
+      const actualSelectedText = rangeToUse.toString()
       
       // Use original range start container for column filtering if provided
       // This ensures column filtering works correctly when range is expanded for word boundaries
@@ -8207,13 +8223,14 @@ function App() {
       
       // First, find the span that contains the range's endContainer (if it's a text node)
       // This ensures we always include the span where the selection ends
+      // Use the rangeToUse which may have more accurate boundaries
       let endContainerSpan = null
-      if (clonedRange.endContainer && clonedRange.endContainer.nodeType === Node.TEXT_NODE) {
-        endContainerSpan = clonedRange.endContainer.parentElement
+      if (rangeToUse.endContainer && rangeToUse.endContainer.nodeType === Node.TEXT_NODE) {
+        endContainerSpan = rangeToUse.endContainer.parentElement
         // If it's not in allSpans, try to find a span with matching text content
         if (endContainerSpan && !allSpans.includes(endContainerSpan)) {
           // Try to find a span in allSpans that has the same text content
-          const endContainerText = clonedRange.endContainer.textContent
+          const endContainerText = rangeToUse.endContainer.textContent
           endContainerSpan = allSpans.find(s => s.firstChild?.textContent === endContainerText) || null
         }
       }
@@ -8230,27 +8247,46 @@ function App() {
         spanRange.selectNodeContents(span)
         
         // Check if selection intersects with this span (same logic as calculatePreciseRectangles)
-        const startToEnd = clonedRange.compareBoundaryPoints(Range.START_TO_END, spanRange)
-        const endToStart = clonedRange.compareBoundaryPoints(Range.END_TO_START, spanRange)
+        // Use rangeToUse which may have more accurate boundaries
+        const startToEnd = rangeToUse.compareBoundaryPoints(Range.START_TO_END, spanRange)
+        const endToStart = rangeToUse.compareBoundaryPoints(Range.END_TO_START, spanRange)
         
         // Also check if the range's start or end containers are within this span
         // This handles cases where the range ends at a text node that's the span's firstChild
         // Check if endContainer is the textNode, or if it's a text node whose parent is this span
-        const rangeStartsInSpan = clonedRange.startContainer === textNode || span.contains(clonedRange.startContainer)
-        const endContainerParent = clonedRange.endContainer?.parentElement
-        const rangeEndsInSpan = clonedRange.endContainer === textNode || 
-                                 span.contains(clonedRange.endContainer) ||
-                                 (clonedRange.endContainer.nodeType === Node.TEXT_NODE && endContainerParent === span)
+        const rangeStartsInSpan = rangeToUse.startContainer === textNode || span.contains(rangeToUse.startContainer)
+        const endContainerParent = rangeToUse.endContainer?.parentElement
+        const rangeEndsInSpan = rangeToUse.endContainer === textNode || 
+                                 span.contains(rangeToUse.endContainer) ||
+                                 (rangeToUse.endContainer.nodeType === Node.TEXT_NODE && endContainerParent === span)
+        
+        // Also check if the span is actually selected by the native selection
+        // This is a fallback for when DOM boundaries don't match the actual selection
+        let isSelectedByNative = false
+        if (actualSelectedRange && span) {
+          // Check if the span intersects with the actual selected range using intersectsNode
+          // This is more reliable than boundary point comparisons
+          try {
+            isSelectedByNative = actualSelectedRange.intersectsNode(span)
+          } catch (e) {
+            // Fallback: check if the span's range intersects with the actual selected range
+            const nativeStartToSpanEnd = actualSelectedRange.compareBoundaryPoints(Range.START_TO_END, spanRange)
+            const nativeEndToSpanStart = actualSelectedRange.compareBoundaryPoints(Range.END_TO_START, spanRange)
+            // Intersection: native start < span end AND native end > span start
+            isSelectedByNative = nativeStartToSpanEnd < 0 && nativeEndToSpanStart > 0
+          }
+        }
         
         // Include span if:
         // 1. This span contains the range's endContainer (always include)
         // 2. Range starts or ends within this span (always include)
-        // 3. OR standard intersection check passes (range overlaps with span)
-        // The boundary point check: startToEnd < 0 means range starts before span ends
-        // and endToStart > 0 means range ends after span starts - both must be true for intersection
+        // 3. Span is selected by native selection (fallback when DOM boundaries don't match)
+        // 4. OR standard intersection check passes (range overlaps with span)
         const isEndContainerSpan = span === endContainerSpan
-        if (!isEndContainerSpan && !rangeStartsInSpan && !rangeEndsInSpan) {
-          // Only use boundary point check if range doesn't start or end in span
+        
+        if (!isEndContainerSpan && !rangeStartsInSpan && !rangeEndsInSpan && !isSelectedByNative) {
+          // Only use boundary point check if range doesn't start or end in span and not selected by native
+          // Use the same logic as calculatePreciseRectangles for consistency
           if (startToEnd < 0 || endToStart > 0) {
             // No intersection
             return
@@ -8262,39 +8298,40 @@ function App() {
         let endOffset = textNode.textContent.length
         
         // Check if selection starts in this span's text node
-        if (clonedRange.startContainer === textNode) {
-          startOffset = clonedRange.startOffset
-        } else if (span.contains(clonedRange.startContainer)) {
+        // Use rangeToUse which may have more accurate boundaries
+        if (rangeToUse.startContainer === textNode) {
+          startOffset = rangeToUse.startOffset
+        } else if (span.contains(rangeToUse.startContainer)) {
           // Selection starts within this span
-          if (clonedRange.startContainer.nodeType === Node.TEXT_NODE) {
-            startOffset = clonedRange.startOffset
+          if (rangeToUse.startContainer.nodeType === Node.TEXT_NODE) {
+            startOffset = rangeToUse.startOffset
           } else {
-            const startToStart = clonedRange.compareBoundaryPoints(Range.START_TO_START, spanRange)
+            const startToStart = rangeToUse.compareBoundaryPoints(Range.START_TO_START, spanRange)
             if (startToStart <= 0) {
               startOffset = 0
             }
           }
         } else {
-          const startToStart = clonedRange.compareBoundaryPoints(Range.START_TO_START, spanRange)
+          const startToStart = rangeToUse.compareBoundaryPoints(Range.START_TO_START, spanRange)
           if (startToStart < 0) {
             startOffset = 0
           }
         }
         
         // Check if selection ends in this span's text node
-        if (clonedRange.endContainer === textNode) {
-          endOffset = clonedRange.endOffset
-        } else if (span.contains(clonedRange.endContainer)) {
-          if (clonedRange.endContainer.nodeType === Node.TEXT_NODE) {
-            endOffset = clonedRange.endOffset
+        if (rangeToUse.endContainer === textNode) {
+          endOffset = rangeToUse.endOffset
+        } else if (span.contains(rangeToUse.endContainer)) {
+          if (rangeToUse.endContainer.nodeType === Node.TEXT_NODE) {
+            endOffset = rangeToUse.endOffset
           } else {
-            const endToEnd = clonedRange.compareBoundaryPoints(Range.END_TO_END, spanRange)
+            const endToEnd = rangeToUse.compareBoundaryPoints(Range.END_TO_END, spanRange)
             if (endToEnd >= 0) {
               endOffset = textNode.textContent.length
             }
           }
         } else {
-          const endToEnd = clonedRange.compareBoundaryPoints(Range.END_TO_END, spanRange)
+          const endToEnd = rangeToUse.compareBoundaryPoints(Range.END_TO_END, spanRange)
           if (endToEnd > 0) {
             endOffset = textNode.textContent.length
           }
@@ -8331,9 +8368,11 @@ function App() {
         let startColumnIndex = null
         
         // Find the span that contains the start of the selection (use original start container for column filtering)
+        // Use rangeToUse for more accurate start container
+        const startContainerForColumn = columnFilterStartContainer || rangeToUse.startContainer
         for (const spanInfo of selectedSpans) {
-          if (spanInfo.span.contains(columnFilterStartContainer) || 
-              spanInfo.span.firstChild === columnFilterStartContainer) {
+          if (spanInfo.span.contains(startContainerForColumn) || 
+              spanInfo.span.firstChild === startContainerForColumn) {
             if (spanInfo.columnIndex !== null) {
               startColumnIndex = spanInfo.columnIndex
               break
@@ -8465,10 +8504,27 @@ function App() {
       const extracted = extractedTextParts.join('')
       
       if (extracted && extracted.length > 0) {
+        // Check if extracted text is significantly shorter than range text
+        // This indicates the intersection logic missed some spans
+        const rangeText = range.toString().trim()
+        if (rangeText && rangeText.length > 0) {
+          // If extracted text is less than 70% of range text, use range text as fallback
+          // This handles cases where DOM boundaries don't match the actual selection
+          if (extracted.length < rangeText.length * 0.7) {
+            return rangeText
+          }
+        }
         return extracted
       }
       
-      // Fallback to standard toString
+      // Fallback: if intersection logic failed but the range has text, use it directly
+      // This handles cases where DOM boundaries don't match the actual selection
+      const rangeText = range.toString().trim()
+      if (rangeText && rangeText.length > 0) {
+        return rangeText
+      }
+      
+      // Final fallback to standard toString
       return range.toString()
     }
 
