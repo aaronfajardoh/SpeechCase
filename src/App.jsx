@@ -10685,7 +10685,9 @@ function App() {
       const updated = mergedItems.map(mergedItem => {
         const existing = prev.find(item => item.id === mergedItem.id)
         if (existing) {
-          return { ...existing, ...mergedItem }
+          // Preserve the text from existing item (user's manual edits)
+          // Only update other properties like color and order from mergedItem
+          return { ...mergedItem, text: existing.text }
         }
         return mergedItem
       })
