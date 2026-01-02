@@ -742,16 +742,14 @@ ${htmlContent}
             {activeTab === 'summary' && summaryText && (
               <div className="highlights-summary-content">
                 <div className="highlights-summary-markdown">
-                  {highlightItems && highlightItems.length > 0 && (
-                    <button
-                      className="btn-update-summary-overlay"
-                      onClick={handleUpdateSummary}
-                      disabled={isGeneratingSummary || !highlightItems || highlightItems.length === 0}
-                      title="Update summary with current highlights"
-                    >
-                      <IconRefresh size={14} />
-                    </button>
-                  )}
+                  <button
+                    className="btn-update-summary-overlay"
+                    onClick={handleUpdateSummary}
+                    disabled={isGeneratingSummary || !highlightItems || highlightItems.length === 0}
+                    title="Update summary with current highlights"
+                  >
+                    <IconRefresh size={14} />
+                  </button>
                   <ReactMarkdown
                     components={{
                       code({ node, inline, className, children, ...props }) {
