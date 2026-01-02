@@ -8555,31 +8555,17 @@ function App() {
       const extracted = extractedTextParts.join('')
       
       if (extracted && extracted.length > 0) {
-        // Check if extracted text is significantly shorter than range text
-        // This indicates the intersection logic missed some spans
-        const rangeText = range.toString().trim()
-        if (rangeText && rangeText.length > 0) {
-          // If extracted text is less than 70% of range text, use range text as fallback
-          // This handles cases where DOM boundaries don't match the actual selection
-          if (extracted.length < rangeText.length * 0.7) {
-            // The rangeText might have concatenated words, but we can't reliably fix it
-            // Return rangeText as-is - the user can edit it if needed
-            // The real fix should ensure all spans are included in extracted
-            return rangeText
-          }
-        }
+        // CRITICAL: Always return the extracted text from filtered spans
+        // Do NOT fall back to range.toString() as it includes text from all columns
+        // The extracted text is already filtered by column, so it's the correct result
+        // even if it's shorter than the original range text (which includes other columns)
         return extracted
       }
       
-      // Fallback: if intersection logic failed but the range has text, use it directly
-      // This handles cases where DOM boundaries don't match the actual selection
-      const rangeText = range.toString().trim()
-      if (rangeText && rangeText.length > 0) {
-        return rangeText
-      }
-      
-      // Final fallback to standard toString
-      return range.toString()
+      // If no text was extracted from filtered spans, return empty string
+      // Do NOT fall back to range.toString() as it would include text from other columns
+      // This ensures column filtering is always respected
+      return ''
     }
 
     // Helper function to expand selection to full words
@@ -8636,7 +8622,10 @@ function App() {
             return extracted
           }
         }
-        return selectedText
+        // CRITICAL: Do NOT return selectedText (from nativeSelection or range.toString())
+        // as it includes text from all columns. Return empty if extractTextFromRange failed.
+        // This ensures column filtering is always respected.
+        return ''
       }
       
       // We need to expand word boundaries in the DOM
@@ -8677,30 +8666,19 @@ function App() {
         expandedText = extractTextFromRange(expandedRange, startContainer).trim()
       }
       
-      // If extractTextFromRange didn't work, try native selection API as fallback
+      // If extractTextFromRange didn't work, try one more time with the original range
+      // (not expanded) to ensure we get column-filtered text
       if (!expandedText || expandedText.length === 0) {
-        const savedSelection = window.getSelection()
-        const savedRanges = []
-        
-        // Save current selection ranges
-        for (let i = 0; i < savedSelection.rangeCount; i++) {
-          savedRanges.push(savedSelection.getRangeAt(i).cloneRange())
+        // Try extracting from the original range (before expansion) with column filtering
+        if (extractedText) {
+          expandedText = extractTextFromRange(range, startContainer).trim()
         }
-        
-        // Set selection to expanded range and get text
-        savedSelection.removeAllRanges()
-        savedSelection.addRange(expandedRange)
-        expandedText = savedSelection.toString().trim()
-        
-        // Restore original selection
-        savedSelection.removeAllRanges()
-        savedRanges.forEach(r => savedSelection.addRange(r))
       }
       
-      // Final fallback to range.toString()
-      if (!expandedText || expandedText.length === 0) {
-        expandedText = expandedRange.toString().trim()
-      }
+      // CRITICAL: Do NOT fall back to nativeSelection.toString() or expandedRange.toString()
+      // as these include text from all columns and bypass column filtering
+      // If extractTextFromRange returns empty, it means no text was found in the selected column
+      // Return empty string rather than including text from other columns
       
       // Normalize whitespace (collapse multiple spaces to single space, but preserve spaces between words)
       expandedText = expandedText.replace(/\s+/g, ' ').trim()
