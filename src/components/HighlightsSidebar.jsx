@@ -9,6 +9,7 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
   const [hoveredItemId, setHoveredItemId] = useState(null)
   const [tooltipPosition, setTooltipPosition] = useState(null)
   const isHoveringTooltipRef = useRef(false)
+  const isHoveringWrapperRef = useRef(false)
   const hoverTimeoutRef = useRef(null)
   const [editingId, setEditingId] = useState(null)
   const [editingText, setEditingText] = useState('')
@@ -639,15 +640,42 @@ ${htmlContent}
                             clearTimeout(hoverTimeoutRef.current)
                             hoverTimeoutRef.current = null
                           }
+                          isHoveringWrapperRef.current = true
                           setHoveredItemId(item.id)
                           const rect = e.currentTarget.getBoundingClientRect()
                           setTooltipPosition({ x: rect.left + rect.width / 2, y: rect.top })
                         }
                       }}
-                      onMouseLeave={() => {
-                        // Only hide if not hovering over tooltip
+                      onMouseMove={(e) => {
+                        if (editingId !== item.id && hoveredItemId === item.id) {
+                          // Keep tooltip visible while mouse is moving over wrapper
+                          if (hoverTimeoutRef.current) {
+                            clearTimeout(hoverTimeoutRef.current)
+                            hoverTimeoutRef.current = null
+                          }
+                          isHoveringWrapperRef.current = true
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        // Check if we're moving to a child element (the item) or the tooltip
+                        const relatedTarget = e.relatedTarget
+                        if (relatedTarget) {
+                          // If moving to a child element within the wrapper, don't hide
+                          if (e.currentTarget.contains(relatedTarget)) {
+                            isHoveringWrapperRef.current = true
+                            return
+                          }
+                          // If moving to the tooltip, don't hide
+                          if (relatedTarget.closest('.highlight-tooltip')) {
+                            isHoveringWrapperRef.current = true
+                            return
+                          }
+                        }
+                        // Mouse is truly leaving the wrapper area
+                        isHoveringWrapperRef.current = false
+                        // Only hide if not hovering over tooltip - use a longer delay to allow movement to tooltip
                         hoverTimeoutRef.current = setTimeout(() => {
-                          if (!isHoveringTooltipRef.current) {
+                          if (!isHoveringTooltipRef.current && !isHoveringWrapperRef.current) {
                             setHoveredItemId(null)
                             setTooltipPosition(null)
                           }
@@ -710,7 +738,8 @@ ${htmlContent}
                               left: tooltipPosition.x + 'px',
                               top: (tooltipPosition.y - 0) + 'px',
                               transform: 'translate(-50%, -100%)',
-                              zIndex: 1000
+                              zIndex: 1000,
+                              pointerEvents: 'auto'
                             }}
                             onMouseEnter={() => {
                               // Clear any pending timeout when entering tooltip
@@ -719,12 +748,34 @@ ${htmlContent}
                                 hoverTimeoutRef.current = null
                               }
                               isHoveringTooltipRef.current = true
+                              isHoveringWrapperRef.current = true
                               setHoveredItemId(item.id)
                             }}
-                            onMouseLeave={() => {
+                            onMouseMove={() => {
+                              // Keep tooltip visible while mouse is moving over it
+                              if (hoverTimeoutRef.current) {
+                                clearTimeout(hoverTimeoutRef.current)
+                                hoverTimeoutRef.current = null
+                              }
+                              isHoveringTooltipRef.current = true
+                              isHoveringWrapperRef.current = true
+                            }}
+                            onMouseLeave={(e) => {
+                              // Check if we're moving back to the wrapper/item
+                              const relatedTarget = e.relatedTarget
+                              if (relatedTarget) {
+                                const wrapper = relatedTarget.closest('.highlight-item-wrapper')
+                                if (wrapper) {
+                                  // Mouse is moving back to wrapper/item, keep tooltip visible
+                                  isHoveringTooltipRef.current = false
+                                  isHoveringWrapperRef.current = true
+                                  return
+                                }
+                              }
+                              // Mouse is truly leaving the tooltip
                               isHoveringTooltipRef.current = false
                               hoverTimeoutRef.current = setTimeout(() => {
-                                if (!isHoveringTooltipRef.current) {
+                                if (!isHoveringTooltipRef.current && !isHoveringWrapperRef.current) {
                                   setHoveredItemId(null)
                                   setTooltipPosition(null)
                                 }

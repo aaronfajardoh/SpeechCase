@@ -1033,12 +1033,12 @@ function App() {
         // Restore scroll position after pages are re-rendered
         if (scrollPositionBeforeFullViewRef.current) {
           // Wait for renderedPages to update and DOM to settle after rendering
-          // Use a longer delay to ensure all pages are rendered
+          // Reduced delay for faster restoration (2x faster)
           setTimeout(() => {
             restoreScrollPositionFromFullView()
-          }, 150)
+          }, 75)
         }
-      }, 200)
+      }, 100)
       return () => clearTimeout(timeoutId)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1060,12 +1060,12 @@ function App() {
         // Restore scroll position after pages are re-rendered
         if (scrollPositionBeforeFullViewRef.current) {
           // Wait for renderedPages to update and DOM to settle after rendering
-          // Use a longer delay to ensure all pages are rendered
+          // Reduced delay for faster restoration (2x faster)
           setTimeout(() => {
             restoreScrollPositionFromFullView()
-          }, 150)
+          }, 75)
         }
-      }, 200)
+      }, 100)
       return () => clearTimeout(timeoutId)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1087,12 +1087,12 @@ function App() {
         // Restore scroll position after pages are re-rendered
         if (scrollPositionBeforeFullViewRef.current) {
           // Wait for renderedPages to update and DOM to settle after rendering
-          // Use a longer delay to ensure all pages are rendered
+          // Reduced delay for faster restoration (2x faster)
           setTimeout(() => {
             restoreScrollPositionFromFullView()
-          }, 150)
+          }, 75)
         }
-      }, 200)
+      }, 100)
       return () => clearTimeout(timeoutId)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7657,7 +7657,7 @@ function App() {
       // Update page counter after restoring scroll position
       // Use multiple retries with increasing delays to handle cases where DOM isn't ready
       const attemptRestore = (attempt = 1, maxAttempts = 5) => {
-        const delay = attempt * 100 // 100ms, 200ms, 300ms, etc.
+        const delay = attempt * 50 // 50ms, 100ms, 150ms, etc. (2x faster)
         setTimeout(() => {
           // Verify scroll position is still correct (might have been reset)
           if (Math.abs(pdfViewer.scrollTop - scrollPos.exactScrollTop) > 10) {
@@ -7707,7 +7707,7 @@ function App() {
       // Page element doesn't exist yet, try again later
       setTimeout(() => {
         restoreScrollPositionFromFullView()
-      }, 50)
+      }, 25)
       return
     }
 
@@ -7736,7 +7736,7 @@ function App() {
     pdfViewer.scrollTop = targetScrollTop
 
     // Update page counter after restoring scroll position
-    // Use a longer delay to ensure DOM has fully updated and scroll position is stable
+    // Reduced delay for faster restoration (2x faster)
     setTimeout(() => {
       // Verify scroll position is still correct (might have been reset)
       if (Math.abs(pdfViewer.scrollTop - targetScrollTop) > 10) {
@@ -7759,7 +7759,7 @@ function App() {
       if (scrollRestored) {
         scrollPositionBeforeFullViewRef.current = null
       }
-    }, 100)
+    }, 50)
   }
 
   const handleReset = () => {
