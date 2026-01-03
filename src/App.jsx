@@ -3094,7 +3094,10 @@ function App() {
     // Then split by columns (X position gaps) within each Y group
     const itemsByY = new Map()
     const lineTolerance = 5 * scaleY // Scale tolerance with display scale
-    const columnGapThreshold = (viewport.width * scaleX) * 0.025 // 12% of page width indicates a column gap
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3095',message:'Column detection start',data:{pageNum,allItemsCount:allItems.length,lineTolerance,scaleX,scaleY,viewportWidth:viewport.width},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D,E'})}).catch(()=>{});
+    // #endregion
     
     // Step 1: Group by Y coordinate
     allItems.forEach(itemData => {
@@ -3113,6 +3116,10 @@ function App() {
       itemsByY.get(assignedY).push(itemData)
     })
     
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3120',message:'After Y grouping',data:{pageNum,linesCount:itemsByY.size,lineTolerance},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
+    
     // Step 2: Split each Y group by columns (X position gaps)
     // First pass: detect potential gaps on each line and record them
     const lineGapData = [] // Array of { y, items, gaps } where gaps is array of { gapX, gapEndX }
@@ -3123,6 +3130,13 @@ function App() {
       // Sort items by X position
       yItems.sort((a, b) => a.baseX - b.baseX)
       
+      // Calculate line-specific font size metrics for threshold calculation
+      // This accounts for different font sizes within the same line (e.g., different columns)
+      const lineFontSizes = yItems.map(item => item.fontSize)
+      const lineMedianFontSize = lineFontSizes.length > 0
+        ? lineFontSizes.sort((a, b) => a - b)[Math.floor(lineFontSizes.length / 2)]
+        : 12 // fallback
+      
       // Detect potential gaps on this line
       const gaps = []
       for (let i = 1; i < yItems.length; i++) {
@@ -3131,61 +3145,229 @@ function App() {
         const prevItemEndX = prevItem.baseX + prevItem.itemWidth
         const gap = currentItem.baseX - prevItemEndX
         
-        if (gap > columnGapThreshold) {
+        // Calculate gap threshold based on font sizes of items around the gap
+        // CRITICAL: If font sizes differ significantly, this is a strong signal of different columns
+        // Use the font size of the item on the RIGHT (currentItem) for threshold when sizes differ
+        // This prevents large-font left columns from incorrectly grouping with small-font right columns
+        const prevFontSize = prevItem.fontSize
+        const currentFontSize = currentItem.fontSize
+        const fontSizeDiff = Math.abs(prevFontSize - currentFontSize)
+        const fontSizeRatio = Math.max(prevFontSize, currentFontSize) / Math.min(prevFontSize, currentFontSize)
+        
+        // If font sizes differ significantly (>30% or >3px), use the RIGHT column's font size for threshold
+        // This ensures we detect column boundaries even when the left column has much larger font
+        const isSignificantFontDiff = fontSizeRatio > 1.3 || fontSizeDiff > 3
+        
+        let thresholdBase
+        if (isSignificantFontDiff) {
+          // Use the RIGHT column's font size (currentItem) for threshold when sizes differ significantly
+          // This makes the threshold more sensitive to gaps when columns have different font sizes
+          thresholdBase = Math.max(lineMedianFontSize, currentFontSize)
+        } else {
+          // Font sizes are similar - use the maximum as before
+          const maxFontSizeAroundGap = Math.max(prevFontSize, currentFontSize)
+          thresholdBase = Math.max(lineMedianFontSize, maxFontSizeAroundGap)
+        }
+        
+        const columnGapThreshold = thresholdBase * 0.5
+        
+        // If font sizes differ significantly, also lower the threshold to be more sensitive
+        // This helps detect column boundaries even with smaller gaps
+        const adjustedThreshold = isSignificantFontDiff 
+          ? columnGapThreshold * 0.7  // 30% lower threshold when font sizes differ
+          : columnGapThreshold
+        
+        // #region agent log
+        if (pageNum === 4 || pageNum === 5 || pageNum === 8) {
+          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3140',message:'Gap detection',data:{pageNum,y,itemIndex:i,prevItemText:prevItem.trimmedStr.substring(0,20),currentItemText:currentItem.trimmedStr.substring(0,20),gap,columnGapThreshold:adjustedThreshold,thresholdBase,lineMedianFontSize,prevFontSize,currentFontSize,fontSizeDiff,fontSizeRatio,isSignificantFontDiff,prevItemEndX,currentItemBaseX:currentItem.baseX,passes:gap>adjustedThreshold},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,D'})}).catch(()=>{});
+        }
+        // #endregion
+        
+        if (gap > adjustedThreshold) {
           // Record this gap position (use the X position where the gap starts)
-          gaps.push({ gapX: prevItemEndX, gapEndX: currentItem.baseX, gapSize: gap })
+          // Also store font size difference info for more lenient validation when sizes differ
+          gaps.push({ 
+            gapX: prevItemEndX, 
+            gapEndX: currentItem.baseX, 
+            gapSize: gap,
+            isSignificantFontDiff,
+            prevFontSize,
+            currentFontSize
+          })
         }
       }
       
-      lineGapData.push({ y, items: yItems, gaps })
+      // #region agent log
+      if (pageNum === 4 || pageNum === 5 || pageNum === 8) {
+        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3154',message:'Line gap summary',data:{pageNum,y,itemsCount:yItems.length,gapsCount:gaps.length,lineMedianFontSize,gaps:gaps.map(g=>({gapX:g.gapX,gapSize:g.gapSize})),itemXPositions:yItems.map(it=>({x:it.baseX,text:it.trimmedStr.substring(0,15)}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'})}).catch(()=>{});
+      }
+      // #endregion
+      
+      lineGapData.push({ y, items: yItems, gaps, lineMedianFontSize })
     })
     
     // Second pass: Find gaps that appear consistently across 3+ consecutive lines
     // A gap is considered consistent if it appears at a similar X position across lines
+    // This ensures column boundaries are only validated when they persist across multiple lines
     const validatedGapBoundaries = [] // Array of { minX, maxX } representing validated column boundaries
-    const gapTolerance = 50 // X positions within 50px are considered the same gap
     
     // Track consecutive lines with similar gap patterns
+    // A column boundary is only validated if it appears in at least 3 consecutive lines
     for (let i = 0; i < lineGapData.length; i++) {
       const currentLine = lineGapData[i]
       
       // For each gap on the current line, check if it appears in 3+ consecutive lines
+      // CRITICAL: If font sizes differ significantly, require only 2+ consecutive lines instead of 3+
       currentLine.gaps.forEach(gap => {
         let consecutiveCount = 1
         let minGapX = gap.gapX
         let maxGapX = gap.gapEndX
+        const linesWithGap = [i] // Track which lines have this gap
+        // Track the average gap position to prevent boundary drift
+        let avgGapX = gap.gapX
+        let gapCount = 1
+        // Check if this gap has significant font size difference (more lenient validation)
+        const hasSignificantFontDiff = gap.isSignificantFontDiff || false
+        const requiredConsecutiveLines = hasSignificantFontDiff ? 2 : 3
+        // For gaps with font size differences, track average END position (more stable than start)
+        let avgGapEndX = gap.gapEndX
         
         // Check forward to see how many consecutive lines have a similar gap
         for (let j = i + 1; j < lineGapData.length; j++) {
           const nextLine = lineGapData[j]
           let foundSimilarGap = false
           
+          // Calculate font-size-aware tolerance based on the font sizes of the lines being compared
+          // Use the larger of the two line's median font sizes
+          const toleranceBase = Math.max(currentLine.lineMedianFontSize || 12, nextLine.lineMedianFontSize || 12)
+          const gapTolerance = toleranceBase * 0.3 // 30% of font size for tolerance
+          
           for (const nextGap of nextLine.gaps) {
-            // Check if this gap is at a similar X position (within tolerance)
-            if (Math.abs(nextGap.gapX - gap.gapX) < gapTolerance || 
-                Math.abs(nextGap.gapEndX - gap.gapEndX) < gapTolerance ||
-                (nextGap.gapX >= gap.gapX - gapTolerance && nextGap.gapX <= gap.gapX + gapTolerance)) {
+            // Check if this gap is at a similar X position (within font-size-aware tolerance)
+            // CRITICAL: Check against the AVERAGE gap position of all matching gaps so far
+            // This prevents boundaries from expanding too wide by keeping the reference point stable
+            const xDiff = Math.abs(nextGap.gapX - avgGapX)
+            const nextGapCenter = (nextGap.gapX + nextGap.gapEndX) / 2
+            const currentGapCenter = (minGapX + maxGapX) / 2
+            const centerDiff = Math.abs(nextGapCenter - currentGapCenter)
+            
+            // For gaps with significant font size differences, use wider tolerance
+            // This accounts for varying gap positions when columns have different font sizes
+            const effectiveTolerance = (hasSignificantFontDiff && nextGap.isSignificantFontDiff) 
+              ? gapTolerance * 2.0  // Double tolerance when both gaps have font size differences
+              : gapTolerance
+            
+            // CRITICAL: When font sizes differ significantly, also check if gaps END at similar positions
+            // This catches cases where gaps have different start positions but same end position
+            // (indicating they all lead to the same column boundary)
+            let endPositionMatch = false
+            if (hasSignificantFontDiff && nextGap.isSignificantFontDiff) {
+              const endXDiff = Math.abs(nextGap.gapEndX - avgGapEndX)
+              // If gaps end at roughly the same position (within tolerance), they're the same boundary
+              // Use a wider tolerance for end positions since they should be more consistent
+              const endTolerance = gapTolerance * 3.0
+              endPositionMatch = endXDiff < endTolerance
+            }
+            
+            // Gap matches if it's within tolerance of the average gap position OR ends at similar position
+            if (xDiff < effectiveTolerance || centerDiff < effectiveTolerance || endPositionMatch) {
               consecutiveCount++
-              minGapX = Math.min(minGapX, nextGap.gapX, nextGap.gapEndX)
-              maxGapX = Math.max(maxGapX, nextGap.gapX, nextGap.gapEndX)
+              gapCount++
+              // Update average gap position (running average)
+              avgGapX = (avgGapX * (gapCount - 1) + nextGap.gapX) / gapCount
+              // Also update average end position for font-size-different gaps
+              if (hasSignificantFontDiff && nextGap.isSignificantFontDiff) {
+                avgGapEndX = (avgGapEndX * (gapCount - 1) + nextGap.gapEndX) / gapCount
+              }
+              // Only expand boundary if the gap is within a reasonable range
+              // Use a tighter expansion tolerance to prevent excessive widening
+              const expansionTolerance = gapTolerance * 2
+              if (nextGap.gapX >= avgGapX - expansionTolerance && nextGap.gapX <= avgGapX + expansionTolerance) {
+                minGapX = Math.min(minGapX, nextGap.gapX)
+                maxGapX = Math.max(maxGapX, nextGap.gapEndX)
+              }
+              linesWithGap.push(j)
               foundSimilarGap = true
+              
+              // #region agent log
+              if ((pageNum === 4 || pageNum === 5 || pageNum === 8) && consecutiveCount <= 5) {
+                fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3204',message:'Gap match found',data:{pageNum,lineI:i,lineJ:j,gapX:gap.gapX,nextGapX:nextGap.gapX,xDiff,centerDiff,gapTolerance,consecutiveCount,avgGapX,minGapX,maxGapX,foundSimilarGap},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})}).catch(()=>{});
+              }
+              // #endregion
+              
               break
             }
           }
           
           if (!foundSimilarGap) {
-            break // Gap pattern broken, stop checking
+            break // Gap pattern broken, stop checking consecutive lines
           }
         }
         
-        // Only add gap as column boundary if it appears in 3+ consecutive lines
-        if (consecutiveCount >= 3) {
+        // #region agent log
+        if (pageNum === 4 || pageNum === 5 || pageNum === 8) {
+          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3203',message:'Gap validation result',data:{pageNum,lineI:i,gapX:gap.gapX,gapSize:gap.gapSize,consecutiveCount,requiredConsecutiveLines,validated:consecutiveCount>=requiredConsecutiveLines,hasSignificantFontDiff,linesWithGap,minGapX,maxGapX},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        }
+        // #endregion
+        
+        // CRITICAL: For gaps with significant font size differences, use alternative validation
+        // Instead of requiring consecutive lines, validate if:
+        // 1. The gap is large enough (relative to the smaller font size)
+        // 2. There are other gaps with font size differences ending at similar positions
+        let shouldValidate = false
+        if (hasSignificantFontDiff && consecutiveCount < requiredConsecutiveLines) {
+          // Check if gap is large enough relative to the smaller font size
+          const smallerFontSize = Math.min(gap.prevFontSize || 12, gap.currentFontSize || 12)
+          const gapSizeThreshold = smallerFontSize * 2.0 // Gap should be at least 2x the smaller font size
+          
+          if (gap.gapSize >= gapSizeThreshold) {
+            // Also check if there are other gaps with font size differences ending at similar positions
+            // Look for gaps in nearby lines that end at similar X positions
+            let similarEndPositionCount = 1 // Count this gap
+            const endPositionTolerance = smallerFontSize * 1.5
+            
+            for (let k = 0; k < lineGapData.length; k++) {
+              if (k === i) continue // Skip current line
+              const otherLine = lineGapData[k]
+              for (const otherGap of otherLine.gaps) {
+                if (otherGap.isSignificantFontDiff) {
+                  const endXDiff = Math.abs(otherGap.gapEndX - gap.gapEndX)
+                  if (endXDiff < endPositionTolerance) {
+                    similarEndPositionCount++
+                  }
+                }
+              }
+            }
+            
+            // Validate if we found 2+ gaps with font size differences ending at similar positions
+            // OR if the gap is very large (3x smaller font size)
+            const isVeryLargeGap = gap.gapSize >= smallerFontSize * 3.0
+            shouldValidate = similarEndPositionCount >= 2 || isVeryLargeGap
+            
+            // #region agent log
+            if (pageNum === 4 || pageNum === 5 || pageNum === 8) {
+              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3280',message:'Font-diff gap alternative validation',data:{pageNum,lineI:i,gapX:gap.gapX,gapSize:gap.gapSize,gapEndX:gap.gapEndX,smallerFontSize,gapSizeThreshold,similarEndPositionCount,isVeryLargeGap,shouldValidate},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+            }
+            // #endregion
+          }
+        }
+        
+        // Only add gap as column boundary if it appears in required consecutive lines
+        // OR if it passes alternative validation for font-size-different gaps
+        // Use 2+ lines for gaps with significant font size differences, 3+ otherwise
+        if (consecutiveCount >= requiredConsecutiveLines || shouldValidate) {
+          // Calculate font-size-aware tolerance for merging boundaries
+          // Use the median font size from the lines that have this gap
+          const gapLinesFontSizes = linesWithGap.map(idx => lineGapData[idx].lineMedianFontSize || 12)
+          const gapLinesMedianFont = gapLinesFontSizes.sort((a, b) => a - b)[Math.floor(gapLinesFontSizes.length / 2)]
+          const mergeTolerance = gapLinesMedianFont * 0.3
+          
           // Check if this gap boundary already exists (merge if close)
           let merged = false
           for (const boundary of validatedGapBoundaries) {
-            if ((minGapX >= boundary.minX - gapTolerance && minGapX <= boundary.maxX + gapTolerance) ||
-                (maxGapX >= boundary.minX - gapTolerance && maxGapX <= boundary.maxX + gapTolerance) ||
-                (boundary.minX >= minGapX - gapTolerance && boundary.minX <= maxGapX + gapTolerance)) {
+            if ((minGapX >= boundary.minX - mergeTolerance && minGapX <= boundary.maxX + mergeTolerance) ||
+                (maxGapX >= boundary.minX - mergeTolerance && maxGapX <= boundary.maxX + mergeTolerance) ||
+                (boundary.minX >= minGapX - mergeTolerance && boundary.minX <= maxGapX + mergeTolerance)) {
               // Merge boundaries
               boundary.minX = Math.min(boundary.minX, minGapX)
               boundary.maxX = Math.max(boundary.maxX, maxGapX)
@@ -3204,14 +3386,23 @@ function App() {
     // Sort validated boundaries by X position
     validatedGapBoundaries.sort((a, b) => a.minX - b.minX)
     
+    // #region agent log
+    if (pageNum === 4 || pageNum === 5 || pageNum === 8) {
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3233',message:'Validated boundaries summary',data:{pageNum,validatedCount:validatedGapBoundaries.length,boundaries:validatedGapBoundaries.map(b=>({minX:b.minX,maxX:b.maxX,width:b.maxX-b.minX}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    }
+    // #endregion
+    
     // Third pass: Split items by validated column boundaries only
     const itemsByLine = new Map()
     const allColumnXPositions = [] // Collect X positions of all detected columns
     
-    lineGapData.forEach(({ y, items }) => {
+    lineGapData.forEach(({ y, items, lineMedianFontSize }) => {
       // Split items by validated gap boundaries
       const columns = []
       let currentColumn = [items[0]]
+      
+      // Calculate font-size-aware tolerance for this line
+      const lineTolerance = (lineMedianFontSize || 12) * 0.3
       
       for (let i = 1; i < items.length; i++) {
         const prevItem = items[i - 1]
@@ -3223,12 +3414,36 @@ function App() {
         // Check if this gap matches any validated boundary
         let isColumnBoundary = false
         for (const boundary of validatedGapBoundaries) {
-          // Check if gap overlaps with validated boundary
-          if ((gapStartX >= boundary.minX - gapTolerance && gapStartX <= boundary.maxX + gapTolerance) ||
-              (gapEndX >= boundary.minX - gapTolerance && gapEndX <= boundary.maxX + gapTolerance) ||
-              (gapStartX <= boundary.minX && gapEndX >= boundary.maxX)) {
+          // Check if gap overlaps with validated boundary (using font-size-aware tolerance)
+          // A gap matches if:
+          // 1. The gap start is within the boundary range (with tolerance)
+          // 2. The gap end is within the boundary range (with tolerance)
+          // 3. The gap completely spans the boundary
+          // 4. The gap center is within the boundary range (for better matching of gaps that are close but not exact)
+          const gapCenter = (gapStartX + gapEndX) / 2
+          const boundaryCenter = (boundary.minX + boundary.maxX) / 2
+          
+          const startInBoundary = (gapStartX >= boundary.minX - lineTolerance && gapStartX <= boundary.maxX + lineTolerance)
+          const endInBoundary = (gapEndX >= boundary.minX - lineTolerance && gapEndX <= boundary.maxX + lineTolerance)
+          const spansBoundary = (gapStartX <= boundary.minX && gapEndX >= boundary.maxX)
+          const centerInBoundary = (gapCenter >= boundary.minX - lineTolerance && gapCenter <= boundary.maxX + lineTolerance)
+          
+          if (startInBoundary || endInBoundary || spansBoundary || centerInBoundary) {
             isColumnBoundary = true
+            
+            // #region agent log
+            if ((pageNum === 4 || pageNum === 5 || pageNum === 8) && columns.length <= 2) {
+              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3320',message:'Boundary match success',data:{pageNum,y,gapStartX,gapEndX,gapCenter,boundaryMinX:boundary.minX,boundaryMaxX:boundary.maxX,boundaryCenter,lineTolerance,startInBoundary,endInBoundary,spansBoundary,centerInBoundary},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})}).catch(()=>{});
+            }
+            // #endregion
+            
             break
+          } else {
+            // #region agent log
+            if ((pageNum === 4 || pageNum === 5 || pageNum === 8) && i <= 6 && gapEndX - gapStartX > 20) {
+              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3335',message:'Boundary match failed',data:{pageNum,y,gapStartX,gapEndX,gapCenter,boundaryMinX:boundary.minX,boundaryMaxX:boundary.maxX,boundaryCenter,lineTolerance,prevItemText:prevItem.trimmedStr.substring(0,15),currentItemText:currentItem.trimmedStr.substring(0,15),gapSize:gapEndX-gapStartX},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})}).catch(()=>{});
+            }
+            // #endregion
           }
         }
         
@@ -3236,12 +3451,24 @@ function App() {
           // Validated column boundary - start a new column
           columns.push(currentColumn)
           currentColumn = [currentItem]
+          
+          // #region agent log
+          if ((pageNum === 4 || pageNum === 5 || pageNum === 8) && columns.length <= 3) {
+            fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3266',message:'Column split detected',data:{pageNum,y,columnIndex:columns.length,gapStartX,gapEndX,prevItemText:prevItem.trimmedStr.substring(0,15),currentItemText:currentItem.trimmedStr.substring(0,15),prevItemX:prevItem.baseX,currentItemX:currentItem.baseX},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+          }
+          // #endregion
         } else {
           // Not a validated boundary - same column
           currentColumn.push(currentItem)
         }
       }
       columns.push(currentColumn) // Don't forget the last column
+      
+      // #region agent log
+      if ((pageNum === 4 || pageNum === 5 || pageNum === 8) && columns.length > 1) {
+        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3274',message:'Line column split result',data:{pageNum,y,columnsCount:columns.length,itemsPerColumn:columns.map(c=>c.length),columnXPositions:columns.map(c=>c[0]?.baseX)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      }
+      // #endregion
       
       // Store columns temporarily and collect their X positions
       columns.forEach((columnItems) => {
@@ -3503,6 +3730,18 @@ function App() {
             
             // Look at a few lines ahead to find the maximum line width
             // IMPORTANT: Only consider lines in the same column
+            // CRITICAL: Also constrain maxLineWidth to the column's right boundary
+            let columnRightBoundary = Infinity // No boundary by default
+            
+            // Find the column's right boundary from validated gap boundaries
+            // The right boundary is the minX of the next validated boundary after this column's start
+            for (const boundary of validatedGapBoundaries) {
+              // If this boundary starts after the line start, it's the right boundary for this column
+              if (boundary.minX > lineStartX + 10) { // Add small tolerance
+                columnRightBoundary = Math.min(columnRightBoundary, boundary.minX)
+              }
+            }
+            
             for (let i = lineIndex; i < Math.min(lineIndex + 10, sortedLines.length); i++) {
               const [checkLineKey, checkLineItems] = sortedLines[i]
               const [checkY, checkCol] = checkLineKey.split('_').map(Number)
@@ -3516,9 +3755,25 @@ function App() {
                 // Only consider lines that start at roughly the same X (same left margin)
                 if (Math.abs(checkLeftmost.baseX - lineStartX) < 10) {
                   const checkLineWidth = (checkRightmost.baseX + checkRightmost.itemWidth) - checkLeftmost.baseX
-                  maxLineWidth = Math.max(maxLineWidth, checkLineWidth)
+                  // Constrain to column boundary if available
+                  const constrainedWidth = columnRightBoundary < Infinity 
+                    ? Math.min(checkLineWidth, columnRightBoundary - lineStartX)
+                    : checkLineWidth
+                  maxLineWidth = Math.max(maxLineWidth, constrainedWidth)
                 }
               }
+            }
+            
+            // Also constrain maxLineWidth to column boundary
+            if (columnRightBoundary < Infinity) {
+              const originalMaxLineWidth = maxLineWidth
+              maxLineWidth = Math.min(maxLineWidth, columnRightBoundary - lineStartX)
+              
+              // #region agent log
+              if ((pageNum === 4 || pageNum === 5 || pageNum === 8) && originalMaxLineWidth !== maxLineWidth) {
+                fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3655',message:'Line width constrained by column boundary',data:{pageNum,y:currentY,column:currentCol,lineStartX,columnRightBoundary,originalMaxLineWidth,maxLineWidth,constrained:true},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})}).catch(()=>{});
+              }
+              // #endregion
             }
             
             // Determine if this line is justified by checking:
@@ -3590,6 +3845,40 @@ function App() {
       }
       
       const lineWidth = lineEndX - lineStartX
+      
+      // #region agent log
+      // Final constraint: ensure lineWidth doesn't exceed column boundary
+      if ((pageNum === 4 || pageNum === 5 || pageNum === 8) && lineIndex < 20) {
+        let finalColumnRightBoundary = Infinity
+        for (const boundary of validatedGapBoundaries) {
+          if (boundary.minX > lineStartX + 10) {
+            finalColumnRightBoundary = Math.min(finalColumnRightBoundary, boundary.minX)
+          }
+        }
+        const originalLineWidth = lineWidth
+        const constrainedLineWidth = finalColumnRightBoundary < Infinity 
+          ? Math.min(lineWidth, finalColumnRightBoundary - lineStartX)
+          : lineWidth
+        
+        if (originalLineWidth !== constrainedLineWidth) {
+          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3718',message:'Final line width constraint',data:{pageNum,y:currentY,column:currentCol,lineStartX,lineEndX,originalLineWidth,constrainedLineWidth,finalColumnRightBoundary},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})}).catch(()=>{});
+        }
+      }
+      // #endregion
+      
+      // Apply final constraint to lineEndX if needed to respect column boundaries
+      let finalColumnRightBoundary = Infinity
+      for (const boundary of validatedGapBoundaries) {
+        if (boundary.minX > lineStartX + 10) {
+          finalColumnRightBoundary = Math.min(finalColumnRightBoundary, boundary.minX)
+        }
+      }
+      if (finalColumnRightBoundary < Infinity && lineEndX > finalColumnRightBoundary) {
+        lineEndX = finalColumnRightBoundary
+      }
+      
+      // Calculate final line width after column boundary constraint
+      const finalLineWidth = lineEndX - lineStartX
       
       // Log line width calculation for debugging
       if (lineIndex < 5) { // Log first 5 lines
@@ -3747,7 +4036,10 @@ function App() {
       const wordTokens = lineWords.filter(w => /\w/.test(w.word))
       const wordCount = wordTokens.length
       const spaceCount = wordCount > 1 ? wordCount - 1 : 0
-      const extraWidth = lineWidth - naturalWidth
+      // CRITICAL: Use finalLineWidth (constrained by column boundary) instead of lineWidth
+      // This prevents lines from extending beyond their column boundaries
+      const effectiveLineWidth = typeof finalLineWidth !== 'undefined' ? finalLineWidth : lineWidth
+      const extraWidth = effectiveLineWidth - naturalWidth
       const spacingPerGap = spaceCount > 0 ? extraWidth / spaceCount : 0
       
       // Create container for the entire line
@@ -13213,5 +13505,6 @@ function App() {
 }
 
 export default App
+
 
 
