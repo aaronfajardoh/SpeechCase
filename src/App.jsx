@@ -470,7 +470,7 @@ function App() {
         clearTimeout(updatePageTimeout)
       }
     }
-  }, [pdfDoc, totalPages])
+  }, [pdfDoc, totalPages, isHighlightsExpanded, isSummaryExpanded, isTimelineExpanded])
 
   // Detect manual scrolling and disable auto-scroll when user scrolls away
   useEffect(() => {
@@ -7886,6 +7886,25 @@ function App() {
           // Only clear saved position if restoration was successful
           if (scrollRestored) {
             scrollPositionBeforeFullViewRef.current = null
+            
+            // Ensure scroll listener remains active by triggering multiple scroll events
+            // This ensures the page counter listener picks up the change and continues to work
+            // Use requestAnimationFrame to ensure DOM is ready
+            requestAnimationFrame(() => {
+              // Trigger scroll event to wake up the listener
+              const scrollEvent = new Event('scroll', { bubbles: true })
+              pdfViewer.dispatchEvent(scrollEvent)
+              
+              // Also manually trigger an update after a short delay to ensure listener is working
+              setTimeout(() => {
+                const scrollPos = getCurrentScrollPosition()
+                if (scrollPos && scrollPos.pageNum !== null) {
+                  setCurrentPage(scrollPos.pageNum)
+                }
+                // Trigger another scroll event to ensure listener is responsive
+                pdfViewer.dispatchEvent(scrollEvent)
+              }, 100)
+            })
           } else if (attempt < maxAttempts) {
             // Try again if we haven't reached max attempts
             attemptRestore(attempt + 1, maxAttempts)
@@ -7956,6 +7975,25 @@ function App() {
       // Only clear saved position if restoration was successful
       if (scrollRestored) {
         scrollPositionBeforeFullViewRef.current = null
+        
+        // Ensure scroll listener remains active by triggering multiple scroll events
+        // This ensures the page counter listener picks up the change and continues to work
+        // Use requestAnimationFrame to ensure DOM is ready
+        requestAnimationFrame(() => {
+          // Trigger scroll event to wake up the listener
+          const scrollEvent = new Event('scroll', { bubbles: true })
+          pdfViewer.dispatchEvent(scrollEvent)
+          
+          // Also manually trigger an update after a short delay to ensure listener is working
+          setTimeout(() => {
+            const scrollPos = getCurrentScrollPosition()
+            if (scrollPos && scrollPos.pageNum !== null) {
+              setCurrentPage(scrollPos.pageNum)
+            }
+            // Trigger another scroll event to ensure listener is responsive
+            pdfViewer.dispatchEvent(scrollEvent)
+          }, 100)
+        })
       }
     }, 50)
   }
