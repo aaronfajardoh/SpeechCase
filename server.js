@@ -8,6 +8,7 @@ import { chunkText, addMetadataTags } from './services/chunking.js';
 import { initializeOpenAI, initializeDeepSeek, generateEmbedding, generateEmbeddingsBatch } from './services/embeddings.js';
 import { vectorStore } from './services/vectorStore.js';
 import { generateEventIcon, generateEventIconsBatch } from './services/iconGenerator.js';
+import { getCharacterImagesBatch } from './services/imageService.js';
 import OpenAI from 'openai';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1318,7 +1319,7 @@ app.post('/api/ai/timeline-icons', async (req, res) => {
 });
 
 /**
- * Extract characters: Identify characters and search for images
+ * Extract characters: Identify characters, detect org chart format, extract relationships, and get images
  * POST /api/ai/characters
  * Body: { documentId: string }
  */
@@ -1346,84 +1347,163 @@ app.post('/api/ai/characters', async (req, res) => {
       chunk.tags && chunk.tags.includes('has_characters')
     );
 
+    // Get first page chunks to identify authors
+    const firstPageChunks = allChunks.filter(chunk => 
+      chunk.tags && chunk.tags.includes('is_beginning')
+    );
+    const firstPageText = firstPageChunks.map(chunk => chunk.text).join('\n\n');
+
     // Combine character-related chunks
     const context = characterChunks.length > 0
       ? characterChunks.slice(0, 20).map(chunk => chunk.text).join('\n\n')
       : allChunks.slice(0, 15).map(chunk => chunk.text).join('\n\n');
 
-    // Use OpenAI to extract characters
-    const completion = await openaiClient.chat.completions.create({
+    // Step 1: Extract characters with relationships and determine if org chart is appropriate
+    const extractionCompletion = await openaiClient.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         {
           role: 'system',
-          content: 'You are a helpful assistant that extracts character information from stories. Analyze the provided text and identify all characters mentioned. Return a JSON object with a "characters" array. Each character should have: name, description (brief), and optionally role or importance.'
+          content: `You are a helpful assistant that extracts character information from business cases, stories, and organizational narratives. 
+
+Analyze the provided text and:
+1. Identify all characters (people, protagonists, key figures) mentioned
+2. Determine if this appears to be about an organization with hierarchical relationships (org chart format)
+3. Extract reporting relationships if applicable (who reports to whom)
+4. Identify characters that belong outside the org chart (e.g., external stakeholders, customers, partners)
+
+IMPORTANT: Exclude authors, document creators, or people who wrote the case study. Authors typically:
+- Appear on the first page in standalone format (not embedded in prose)
+- Are mentioned in author bylines, credits, or attribution sections
+- Are not part of the narrative or story being told
+- Only include authors if they are explicitly protagonists in the story (very rare)
+
+Return a JSON object with:
+- "isOrgChart": boolean - true if this appears to be an organizational case study
+- "characters": array of character objects, each with:
+  - "name": string (required)
+  - "description": string (brief description)
+  - "role": string (job title, position, or role in the story)
+  - "importance": "high" | "medium" | "low"
+  - "reportsTo": string | null (name of person they report to, if applicable)
+  - "department": string | null (department or division, if applicable)
+  - "inOrgChart": boolean (true if this character should be in the org chart, false if they're external)
+  - "imageSearchQuery": string (search query optimized for finding headshot/portrait images)
+
+For org chart detection, consider:
+- Multiple people with job titles (CEO, VP, Manager, etc.)
+- Reporting relationships mentioned
+- Organizational structure discussions
+- Business case studies about companies
+
+Characters can be outside the org chart if they are:
+- External stakeholders (customers, suppliers, regulators)
+- Historical figures
+- Fictional characters in narrative stories
+- People mentioned but not part of the organization structure`
         },
         {
           role: 'user',
-          content: `Extract all characters from this story:\n\n${context}\n\nReturn a JSON object with a "characters" array. Each character should have: name, description, and role (if mentioned).`
+          content: `Extract all characters and their relationships from this text:\n\n${context}\n\nReturn a JSON object with "isOrgChart" and "characters" array.`
         }
       ],
       temperature: 0.3,
       response_format: { type: 'json_object' }
     });
 
-    let characters;
+    let extractionResult;
     try {
-      const responseText = completion.choices[0].message.content;
-      const parsed = JSON.parse(responseText);
-      characters = parsed.characters || parsed;
-      if (!Array.isArray(characters)) {
-        characters = [characters];
-      }
+      const responseText = extractionCompletion.choices[0].message.content;
+      extractionResult = JSON.parse(responseText);
     } catch (parseError) {
-      throw new Error('Failed to parse characters response');
+      throw new Error('Failed to parse characters extraction response');
     }
 
-    // For each character, generate a search query and use OpenAI to find image URLs
-    // Note: OpenAI doesn't directly provide image search, but we can use DALL-E or
-    // provide search queries that the frontend can use with an image search API
-    const charactersWithSearch = await Promise.all(
-      characters.map(async (character) => {
-        try {
-          // Generate a search query for the character
-          const searchCompletion = await openaiClient.chat.completions.create({
-            model: 'gpt-4o-mini',
-            messages: [
-              {
-                role: 'system',
-                content: 'Generate a search query to find images of a character. Return only the search query text, nothing else.'
-              },
-              {
-                role: 'user',
-                content: `Character: ${character.name}. ${character.description || ''}. Generate a search query to find images of this character.`
-              }
-            ],
-            temperature: 0.5,
-            max_tokens: 50
+    const isOrgChart = extractionResult.isOrgChart || false;
+    let characters = extractionResult.characters || [];
+    if (!Array.isArray(characters)) {
+      characters = [characters];
+    }
+
+    // Step 2: Post-process to filter out authors from first page
+    if (firstPageText && firstPageText.length > 0) {
+      // Use AI to identify author names from first page
+      try {
+        const authorIdentificationCompletion = await openaiClient.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content: `You are a helpful assistant that identifies author names from document first pages. 
+              
+Analyze the first page text and identify names that are likely authors, document creators, or case study writers. These typically:
+- Appear standalone (not embedded in prose)
+- Are in author bylines, credits, or attribution sections
+- May be preceded by words like "Author", "By", "Written by", "Case by", "Prepared by"
+- Are not part of the narrative content
+
+Return a JSON object with:
+- "authorNames": array of strings (full names of identified authors, empty array if none found)
+
+Only return names that you are confident are authors, not characters in the story.`
+            },
+            {
+              role: 'user',
+              content: `Identify author names from this first page text:\n\n${firstPageText.substring(0, 2000)}\n\nReturn a JSON object with "authorNames" array.`
+            }
+          ],
+          temperature: 0.2,
+          response_format: { type: 'json_object' }
+        });
+
+        const authorResult = JSON.parse(authorIdentificationCompletion.choices[0].message.content);
+        const authorNames = authorResult.authorNames || [];
+        
+        if (authorNames.length > 0) {
+          // Filter out characters whose names match author names (case-insensitive, partial match)
+          const normalizedAuthorNames = authorNames.map(name => name.toLowerCase().trim());
+          characters = characters.filter(character => {
+            const characterName = character.name ? character.name.toLowerCase().trim() : '';
+            // Check if character name matches any author name (exact or if author name is contained in character name)
+            const isAuthor = normalizedAuthorNames.some(authorName => {
+              return characterName === authorName || 
+                     characterName.includes(authorName) || 
+                     authorName.includes(characterName);
+            });
+            return !isAuthor;
           });
-
-          const searchQuery = searchCompletion.choices[0].message.content.trim();
-
-          return {
-            ...character,
-            imageSearchQuery: searchQuery,
-            // Note: Actual image URLs would need to be fetched using an image search API
-            // (e.g., Google Custom Search, Unsplash API, etc.) on the frontend
-          };
-        } catch (error) {
-          console.error(`Error generating search query for ${character.name}:`, error);
-          return {
-            ...character,
-            imageSearchQuery: character.name,
-          };
         }
-      })
-    );
+      } catch (authorError) {
+        // If author identification fails, continue without filtering
+        console.warn('Author identification failed, continuing without author filtering:', authorError);
+      }
+    }
 
+    // Step 3: Get images for characters
+    const googleSearchApiKey = process.env.GOOGLE_SEARCH_API_KEY;
+    const googleSearchEngineId = process.env.GOOGLE_SEARCH_ENGINE_ID;
+    const googleAiKey = process.env.GOOGLE_AI_KEY;
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'server.js:1417',message:'Environment variables check',data:{hasGoogleSearchApiKey:!!googleSearchApiKey,hasGoogleSearchEngineId:!!googleSearchEngineId,hasGoogleAiKey:!!googleAiKey,googleSearchApiKeyLength:googleSearchApiKey?.length||0,googleSearchEngineIdLength:googleSearchEngineId?.length||0,googleSearchEngineId:googleSearchEngineId?.substring(0,20)||null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    
+    const charactersWithImages = await getCharacterImagesBatch(characters, {
+      googleSearchApiKey,
+      googleSearchEngineId,
+      googleAiKey
+    });
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'server.js:1428',message:'After image fetching',data:{charactersCount:charactersWithImages.length,firstCharHasImage:charactersWithImages[0]?.hasImage,firstCharImageSource:charactersWithImages[0]?.imageSource,firstCharImageUrl:charactersWithImages[0]?.imageUrl?.substring(0,80)||null,charsWithImages:charactersWithImages.filter(c=>c.hasImage).length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+
+    // Step 4: Structure response
     res.json({
-      characters: charactersWithSearch,
-      characterCount: charactersWithSearch.length,
+      success: true,
+      characters: charactersWithImages,
+      characterCount: charactersWithImages.length,
+      isOrgChart: isOrgChart,
       documentId
     });
   } catch (error) {

@@ -40,6 +40,7 @@ import ProportionalTimeline from './components/ProportionalTimeline.jsx'
 import PagesSidebar from './components/PagesSidebar.jsx'
 import TimelineSidebar from './components/TimelineSidebar.jsx'
 import CharactersSidebar from './components/CharactersSidebar.jsx'
+import CharactersFullView from './components/CharactersFullView.jsx'
 import ChatSidebar from './components/ChatSidebar.jsx'
 import HighlightsSidebar from './components/HighlightsSidebar.jsx'
 import SummaryFullView from './components/SummaryFullView.jsx'
@@ -124,6 +125,10 @@ function App() {
   const [summaryText, setSummaryText] = useState('') // Store summary text for full view
   const [selectedEvent, setSelectedEvent] = useState(null) // Selected event for details tooltip
   const [timelineIcons, setTimelineIcons] = useState({}) // Icons for timeline events
+  const [characters, setCharacters] = useState(null) // Characters data
+  const [isCharactersLoading, setIsCharactersLoading] = useState(false) // Characters loading state
+  const [charactersError, setCharactersError] = useState(null) // Characters error message
+  const [isCharactersExpanded, setIsCharactersExpanded] = useState(false) // Characters expanded in main view
   const fileInputRef = useRef(null)
   const utteranceRef = useRef(null)
   const synthRef = useRef(null)
@@ -6214,6 +6219,77 @@ function App() {
       setTimelineIcons({})
     } finally {
       setIsTimelineLoading(false)
+    }
+  }
+
+  // Generate characters from PDF
+  const generateCharacters = async (retryCount = 0) => {
+    if (!documentId) {
+      setCharactersError('No document loaded. Please upload a PDF first.')
+      return
+    }
+
+    // If PDF is still processing, wait a bit and retry
+    if (isPDFProcessing && retryCount < 10) {
+      setTimeout(() => {
+        generateCharacters(retryCount + 1)
+      }, 500) // Wait 500ms and retry
+      return
+    }
+
+    if (isPDFProcessing) {
+      setCharactersError('PDF is still being processed. Please wait a moment and try again.')
+      return
+    }
+
+    setIsCharactersLoading(true)
+    setCharactersError(null)
+
+    try {
+      const response = await fetch('/api/ai/characters', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          documentId: documentId
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        // If document not found and we haven't retried much, wait and retry
+        if (errorData.error && errorData.error.includes('not found') && retryCount < 5) {
+          setTimeout(() => {
+            generateCharacters(retryCount + 1)
+          }, 1000) // Wait 1 second and retry
+          return
+        }
+        throw new Error(errorData.error || 'Failed to extract characters')
+      }
+
+      const data = await response.json()
+      
+      // Check if we have characters data (even if success field is missing)
+      if (data.characters && Array.isArray(data.characters) && data.characters.length > 0) {
+        setCharacters(data)
+        return
+      }
+      
+      if (!data.success) {
+        console.log('Characters extraction failed:', data)
+        setCharactersError(data.message || 'Could not extract characters from this document.')
+        setCharacters(null)
+        return
+      }
+
+      setCharacters(data)
+    } catch (error) {
+      console.error('Error extracting characters:', error)
+      setCharactersError(error.message || 'Failed to extract characters')
+      setCharacters(null)
+    } finally {
+      setIsCharactersLoading(false)
     }
   }
 
@@ -12968,7 +13044,34 @@ function App() {
                     isSidebarCollapsed={isSidebarCollapsed}
                   />
                 )}
-                {sidebarView === 'characters' && <CharactersSidebar />}
+                {sidebarView === 'characters' && (
+                  <CharactersSidebar
+                    isPDFProcessing={isPDFProcessing}
+                    isCharactersLoading={isCharactersLoading}
+                    charactersError={charactersError}
+                    documentId={documentId}
+                    generateCharacters={generateCharacters}
+                    characters={characters}
+                    isCharactersExpanded={isCharactersExpanded}
+                    setIsCharactersExpanded={(expanded) => {
+                      // Save exact scroll position before opening full view
+                      if (expanded) {
+                        const pdfViewer = document.querySelector('.pdf-viewer-container')
+                        if (pdfViewer) {
+                          const scrollPos = getCurrentScrollPosition()
+                          if (scrollPos) {
+                            scrollPositionBeforeFullViewRef.current = {
+                              ...scrollPos,
+                              exactScrollTop: pdfViewer.scrollTop // Save exact scroll position
+                            }
+                          }
+                        }
+                      }
+                      setIsCharactersExpanded(expanded)
+                    }}
+                    isSidebarCollapsed={isSidebarCollapsed}
+                  />
+                )}
                 {sidebarView === 'chat' && <ChatSidebar />}
                 {sidebarView === 'highlights' && (
                   <HighlightsSidebar
@@ -13062,6 +13165,14 @@ function App() {
             }}
             onSummaryGenerated={(text) => {
               setSummaryText(text)
+            }}
+          />
+        ) : isCharactersExpanded && characters && characters.characters && characters.characters.length > 0 ? (
+          <CharactersFullView
+            characters={characters}
+            onMinimize={() => {
+              setIsCharactersExpanded(false)
+              setIsSidebarCollapsed(false)
             }}
           />
         ) : isTimelineExpanded && timeline && timeline.length > 0 ? (
