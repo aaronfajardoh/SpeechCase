@@ -3049,6 +3049,7 @@
   align-items: center;
   gap: 1.5rem;
   padding: 2rem;
+  position: relative; /* For global connection overlay */
   /* Ensure content is tall enough to scroll - use min-height with calc to account for padding */
   min-height: calc(100% + 1px);
   /* Allow scrolling to work */

@@ -81,9 +81,10 @@ function App() {
   const [hoveredHighlightId, setHoveredHighlightId] = useState(null) // Track which highlight is being hovered
   const [connectingFrom, setConnectingFrom] = useState(null) // Track connection start: { highlightId, dot: 'left' | 'right' }
   const connectionLayerRefs = useRef({}) // Store connection layer refs by page number
+  const globalConnectionLayerRef = useRef(null) // Single overlay for cross-page connections
   const hoveredHighlightIdRef = useRef(null) // Ref for hover state to avoid closure issues
   const isHoveringTooltipRef = useRef(false) // Track if mouse is over tooltip
-  const [mousePosition, setMousePosition] = useState(null) // Track mouse position for temporary connection line: { x, y, page }
+  const [mousePosition, setMousePosition] = useState(null) // Track mouse position for temporary connection line: { x, y, page, clientX, clientY }
   const [showTooltipFor, setShowTooltipFor] = useState(null) // Track which highlight shows tooltip: { highlightId, x, y, page? }
   const tooltipLayerRefs = useRef({}) // Store tooltip layer refs by page number
   const [isSelecting, setIsSelecting] = useState(false)
@@ -10220,19 +10221,47 @@ function App() {
         }
       }
 
-      if (pageNum !== null) {
-        const canvas = canvasRefs.current[pageNum]
-        if (canvas) {
-          const rect = canvas.getBoundingClientRect()
-          const x = e.clientX - rect.left
-          const y = e.clientY - rect.top
-          setMousePosition({ x, y, page: pageNum })
+      // Always track mouse position for global overlay, even if not over a canvas
+      const pdfContainer = document.querySelector('.pdf-pages-container')
+      if (pdfContainer) {
+        const containerRect = pdfContainer.getBoundingClientRect()
+        const globalX = e.clientX - containerRect.left
+        const globalY = e.clientY - containerRect.top
+        
+        if (pageNum !== null) {
+          const canvas = canvasRefs.current[pageNum]
+          if (canvas) {
+            const rect = canvas.getBoundingClientRect()
+            const x = e.clientX - rect.left
+            const y = e.clientY - rect.top
+            setMousePosition({ 
+              x, 
+              y, 
+              page: pageNum,
+              clientX: e.clientX,
+              clientY: e.clientY,
+              globalX,
+              globalY
+            })
+          } else {
+            setMousePosition({ 
+              page: null,
+              clientX: e.clientX,
+              clientY: e.clientY,
+              globalX,
+              globalY
+            })
+          }
         } else {
-          setMousePosition(null)
+          // Mouse is not over any canvas, but still track global position
+          setMousePosition({ 
+            page: null,
+            clientX: e.clientX,
+            clientY: e.clientY,
+            globalX,
+            globalY
+          })
         }
-      } else {
-        // Mouse is not over any canvas, clear position
-        setMousePosition(null)
       }
     }
 
@@ -10274,67 +10303,101 @@ function App() {
         layer.innerHTML = ''
       }
     })
+    
+    // Clear global connection overlay
+    if (globalConnectionLayerRef.current) {
+      globalConnectionLayerRef.current.innerHTML = ''
+    }
 
     // Render temporary connection line if connecting (follows mouse)
-    // Only show if mouse is over a canvas/page
-    if (connectingFrom && mousePosition && mousePosition.page) {
+    // Use global overlay for continuous line across page boundaries
+    if (connectingFrom) {
       const fromHighlight = highlights.find(h => h.id === connectingFrom.highlightId)
-      if (fromHighlight && fromHighlight.page === mousePosition.page) {
-        const connectionLayer = connectionLayerRefs.current[fromHighlight.page]
-        const canvas = canvasRefs.current[fromHighlight.page]
-        if (connectionLayer && canvas) {
-          const canvasRect = canvas.getBoundingClientRect()
-          const canvasWidth = canvas.width
-          const canvasHeight = canvas.height
-          const displayedWidth = canvasRect.width
-          const displayedHeight = canvasRect.height
-          
-          const displayScaleX = displayedWidth / canvasWidth
-          const displayScaleY = displayedHeight / canvasHeight
-          const scaleRatio = (pageScale / (fromHighlight.scale || pageScale)) * displayScaleX
-          const scaleRatioY = (pageScale / (fromHighlight.scale || pageScale)) * displayScaleY
-
-          const highlightRects = fromHighlight.rects || [{
-            x: fromHighlight.x || 0,
-            y: fromHighlight.y || 0,
-            width: fromHighlight.width || 0,
-            height: fromHighlight.height || 0
-          }]
-
-          const fromRect = connectingFrom.dot === 'left' ? highlightRects[0] : highlightRects[highlightRects.length - 1]
-          const fromX = connectingFrom.dot === 'left' 
-            ? fromRect.x * scaleRatio
-            : (fromRect.x + fromRect.width) * scaleRatio
-          const fromY = (fromRect.y + fromRect.height / 2) * scaleRatioY
-
-          // Use mouse position for the "to" point
-          const toX = mousePosition.x
-          const toY = mousePosition.y
-
-          // Create SVG for temporary line
-          const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-          svg.style.position = 'absolute'
-          svg.style.left = '0'
-          svg.style.top = '0'
-          svg.setAttribute('width', displayedWidth)
-          svg.setAttribute('height', displayedHeight)
-          svg.style.pointerEvents = 'none'
-          svg.style.zIndex = '1'
-
-          const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-          const midX = (fromX + toX) / 2
-          const pathData = `M ${fromX} ${fromY} Q ${midX} ${fromY} ${midX} ${(fromY + toY) / 2} T ${toX} ${toY}`
-          path.setAttribute('d', pathData)
-          path.setAttribute('stroke', getDotColor(fromHighlight.color || 'yellow'))
-          path.setAttribute('stroke-width', '2')
-          path.setAttribute('fill', 'none')
-          path.setAttribute('stroke-dasharray', '5,5')
-          path.style.opacity = '0.6'
-
-          svg.appendChild(path)
-          connectionLayer.appendChild(svg)
-        }
+      if (!fromHighlight) {
+        // If connecting, don't show existing connections, only the temporary line
+        return
       }
+
+      const globalLayer = globalConnectionLayerRef.current
+      const pdfContainer = document.querySelector('.pdf-pages-container')
+      if (!globalLayer || !pdfContainer) {
+        return
+      }
+
+      const fromPage = fromHighlight.page
+      const fromCanvas = canvasRefs.current[fromPage]
+      if (!fromCanvas) {
+        return
+      }
+
+      const containerRect = pdfContainer.getBoundingClientRect()
+      const fromCanvasRect = fromCanvas.getBoundingClientRect()
+      const fromCanvasWidth = fromCanvas.width
+      const fromCanvasHeight = fromCanvas.height
+      const fromDisplayedWidth = fromCanvasRect.width
+      const fromDisplayedHeight = fromCanvasRect.height
+      
+      const fromDisplayScaleX = fromDisplayedWidth / fromCanvasWidth
+      const fromDisplayScaleY = fromDisplayedHeight / fromCanvasHeight
+      const fromScaleRatio = (pageScale / (fromHighlight.scale || pageScale)) * fromDisplayScaleX
+      const fromScaleRatioY = (pageScale / (fromHighlight.scale || pageScale)) * fromDisplayScaleY
+
+      const highlightRects = fromHighlight.rects || [{
+        x: fromHighlight.x || 0,
+        y: fromHighlight.y || 0,
+        width: fromHighlight.width || 0,
+        height: fromHighlight.height || 0
+      }]
+
+      const fromRect = connectingFrom.dot === 'left' ? highlightRects[0] : highlightRects[highlightRects.length - 1]
+      const fromXLocal = connectingFrom.dot === 'left' 
+        ? fromRect.x * fromScaleRatio
+        : (fromRect.x + fromRect.width) * fromScaleRatio
+      const fromYLocal = (fromRect.y + fromRect.height / 2) * fromScaleRatioY
+      
+      // Convert to global coordinates (relative to pdf-pages-container)
+      const fromXGlobal = fromCanvasRect.left - containerRect.left + fromXLocal
+      const fromYGlobal = fromCanvasRect.top - containerRect.top + fromYLocal
+
+      // Determine target point in global coordinates
+      let toXGlobal, toYGlobal
+      if (mousePosition && mousePosition.globalX !== undefined && mousePosition.globalY !== undefined) {
+        // Use global mouse position for smooth continuous line
+        toXGlobal = mousePosition.globalX
+        toYGlobal = mousePosition.globalY
+      } else {
+        // No mouse position yet: use dot position as initial target to avoid straight line
+        toXGlobal = fromXGlobal
+        toYGlobal = fromYGlobal
+      }
+
+      // Create SVG for global overlay
+      const containerWidth = containerRect.width
+      const containerHeight = containerRect.height
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      svg.style.position = 'absolute'
+      svg.style.left = '0'
+      svg.style.top = '0'
+      svg.style.width = '100%'
+      svg.style.height = '100%'
+      svg.style.pointerEvents = 'none'
+      svg.style.zIndex = '100'
+      svg.setAttribute('viewBox', `0 0 ${containerWidth} ${containerHeight}`)
+      svg.setAttribute('preserveAspectRatio', 'none')
+
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      const midX = (fromXGlobal + toXGlobal) / 2
+      const pathData = `M ${fromXGlobal} ${fromYGlobal} Q ${midX} ${fromYGlobal} ${midX} ${(fromYGlobal + toYGlobal) / 2} T ${toXGlobal} ${toYGlobal}`
+      path.setAttribute('d', pathData)
+      path.setAttribute('stroke', getDotColor(fromHighlight.color || 'yellow'))
+      path.setAttribute('stroke-width', '2')
+      path.setAttribute('fill', 'none')
+      path.setAttribute('stroke-dasharray', '5,5')
+      path.style.opacity = '0.6'
+
+      svg.appendChild(path)
+      globalLayer.appendChild(svg)
+
       // If connecting, don't show existing connections, only the temporary line
       return
     }
@@ -10744,24 +10807,70 @@ function App() {
     
     // Update highlightItems
     setHighlightItems(prev => {
+      // Create a map of merged item IDs to track which highlights are merged
+      const mergedIdsMap = new Map()
+      mergedItems.forEach(mergedItem => {
+        if (mergedItem.isMerged && mergedItem.mergedIds) {
+          mergedItem.mergedIds.forEach(id => {
+            mergedIdsMap.set(id, mergedItem.id)
+          })
+        }
+      })
+      
       // Update existing items with new text/color, add new ones
       const updated = mergedItems.map(mergedItem => {
-        const existing = prev.find(item => item.id === mergedItem.id)
-        if (existing) {
-          // Preserve the text from existing item (user's manual edits)
-          // Only update other properties like color and order from mergedItem
-          return { ...mergedItem, text: existing.text }
+        // For merged items, check if any of the merged highlight IDs have existing items
+        if (mergedItem.isMerged && mergedItem.mergedIds) {
+          // Find existing items for any of the merged IDs
+          const existingItems = prev.filter(item => 
+            mergedItem.mergedIds.includes(item.id)
+          )
+          
+          if (existingItems.length > 0) {
+            // If there are existing items, preserve text from the first one (user's manual edits)
+            // But if the merged text is different (new connection), use merged text
+            const existingText = existingItems[0].text
+            const mergedText = mergedItem.text
+            
+            // Use merged text if it's different from existing (new connection was made)
+            // Otherwise preserve user's edits
+            const finalText = (mergedText !== existingText && mergedText.trim() !== '') 
+              ? mergedText 
+              : existingText
+            
+            return { ...mergedItem, text: finalText }
+          }
+        } else {
+          // For non-merged items, preserve existing text if available
+          const existing = prev.find(item => item.id === mergedItem.id)
+          if (existing) {
+            return { ...mergedItem, text: existing.text }
+          }
         }
         return mergedItem
       })
       
-      // Remove items that no longer exist
+      // Remove items that no longer exist as separate items (they're now merged)
       const highlightIds = new Set(highlights.map(h => h.id))
+      const mergedItemIds = new Set(mergedItems.map(item => item.id))
+      
       return updated.filter(item => {
         if (item.isMerged && item.mergedIds) {
+          // Keep merged items if any of their merged IDs exist in highlights
           return item.mergedIds.some(id => highlightIds.has(id))
         }
-        return highlightIds.has(item.id)
+        // For non-merged items, check if the ID exists in highlights
+        // and is not part of a merged group (i.e., its ID matches the merged item's ID)
+        if (highlightIds.has(item.id)) {
+          // If this highlight is part of a merged group, only keep it if it's the merged item itself
+          if (mergedIdsMap.has(item.id)) {
+            const mergedItemId = mergedIdsMap.get(item.id)
+            return mergedItemId === item.id && mergedItemIds.has(item.id)
+          }
+          // Not part of a merged group, keep it
+          return true
+        }
+        return false
       })
     })
   }, [highlights, mergeConnectedHighlights])
@@ -12750,6 +12859,20 @@ function App() {
           })()}
 
           <div className="pdf-pages-container">
+            {/* Global connection overlay for cross-page connections */}
+            <div
+              ref={globalConnectionLayerRef}
+              className="global-connection-layer"
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                pointerEvents: 'none',
+                zIndex: 100
+              }}
+            />
             {isLoading && pageData.length === 0 && (
               <div className="loading-pages">
                 <div className="spinner"></div>
