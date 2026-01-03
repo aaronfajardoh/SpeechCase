@@ -11159,18 +11159,26 @@ function App() {
 
   // Undo/redo functions for highlights
   const handleUndoHighlight = useCallback(() => {
-    setHighlightHistory(hist => {
-      // Always read from ref to get the most current value
-      const currentIdx = historyIndexRef.current
-      if (currentIdx > 0) {
-        const newIndex = currentIdx - 1
-        historyIndexRef.current = newIndex
-        setHistoryIndex(newIndex)
-        const newHighlights = hist[newIndex] || []
-        setHighlights([...newHighlights])
-      }
-      return hist
-    })
+    // Get the current history and index from refs (most up-to-date values)
+    const currentHistory = highlightHistoryRef.current
+    const currentIdx = historyIndexRef.current
+    
+    if (currentIdx <= 0 || !currentHistory || currentHistory.length === 0) {
+      return
+    }
+    
+    const newIndex = currentIdx - 1
+    const newHighlights = currentHistory[newIndex] || []
+    
+    // Update ref first
+    historyIndexRef.current = newIndex
+    
+    // Update both states directly - React will batch these
+    // This avoids the issue of nested setState callbacks causing multiple invocations
+    setHistoryIndex(newIndex)
+    setHighlights([...newHighlights])
+    
+    // History ref is already up-to-date (we're reading from it, not modifying it)
   }, [])
 
   const handleRedoHighlight = useCallback(() => {
@@ -12718,7 +12726,7 @@ function App() {
               <button
                 onClick={handleUndoHighlight}
                 className="btn-toolbar-undo-redo"
-                disabled={historyIndexRef.current <= 0}
+                disabled={historyIndex <= 0}
                 title="Undo (Ctrl+Z)"
               >
                 <IconUndo size={14} />
@@ -12726,7 +12734,7 @@ function App() {
               <button
                 onClick={handleRedoHighlight}
                 className="btn-toolbar-undo-redo"
-                disabled={historyIndexRef.current >= highlightHistoryRef.current.length - 1}
+                disabled={historyIndex >= highlightHistory.length - 1}
                 title="Redo (Ctrl+Shift+Z)"
               >
                 <IconRedo size={14} />
