@@ -11052,44 +11052,79 @@ function App() {
         }
       })
       
+      // Find the maximum order value from existing items to assign to new items
+      const maxExistingOrder = prev.length > 0 
+        ? Math.max(...prev.map(item => item.order ?? 0), -1)
+        : -1
+      
+      // Track new items to assign sequential order values
+      let newItemCounter = 0
+      
       // Update existing items with new text/color, add new ones
       const updated = mergedItems.map(mergedItem => {
         // First, check if the merged item's ID itself exists in previous items
         // (This handles the case where the merged item uses the first highlight's ID)
         const existingByMergedId = prev.find(item => item.id === mergedItem.id)
         if (existingByMergedId) {
-          // Always preserve text from existing item (user's manual edits)
-          return { ...mergedItem, text: existingByMergedId.text }
+          // For merged items, we need to append text from other merged highlights
+          if (mergedItem.isMerged && mergedItem.mergedIds) {
+            // Find all existing items for the merged IDs, preserving order based on mergedIds
+            const existingItems = mergedItem.mergedIds
+              .map(id => prev.find(item => item.id === id))
+              .filter(Boolean)
+            // If we have multiple existing items, merge their text
+            if (existingItems.length > 1) {
+              // Combine text from all existing items in the order they appear in mergedIds
+              // This ensures the first highlight's text comes first, then the second, etc.
+              const combinedText = existingItems.map(item => item.text).filter(Boolean).join(' ')
+              return { ...mergedItem, text: combinedText, order: existingByMergedId.order ?? mergedItem.order }
+            }
+          }
+          // Always preserve text and order from existing item (user's manual edits and custom order)
+          return { ...mergedItem, text: existingByMergedId.text, order: existingByMergedId.order ?? mergedItem.order }
         }
         
         // For merged items, check if any of the merged highlight IDs have existing items
         if (mergedItem.isMerged && mergedItem.mergedIds) {
-          // Find existing items for any of the merged IDs
-          const existingItems = prev.filter(item => 
-            mergedItem.mergedIds.includes(item.id)
-          )
+          // Find existing items for any of the merged IDs, preserving order based on mergedIds
+          const existingItems = mergedItem.mergedIds
+            .map(id => prev.find(item => item.id === id))
+            .filter(Boolean)
           
           if (existingItems.length > 0) {
-            // Always preserve text from existing items (user's manual edits)
-            // User edits should never be overwritten by automatic merging
+            // If we have multiple existing items, merge their text in the order of mergedIds
+            if (existingItems.length > 1) {
+              // Combine text from all existing items in the order they appear in mergedIds
+              // This ensures the first highlight's text comes first, then the second, etc.
+              const combinedText = existingItems.map(item => item.text).filter(Boolean).join(' ')
+              // Use the order from the first item (the one with the merged item's ID)
+              const firstItem = existingItems.find(item => item.id === mergedItem.id) || existingItems[0]
+              const existingOrder = firstItem.order ?? mergedItem.order
+              return { ...mergedItem, text: combinedText, order: existingOrder }
+            }
+            // Single existing item - preserve its text and order
             const existingText = existingItems[0].text
-            return { ...mergedItem, text: existingText }
+            const existingOrder = existingItems[0].order ?? mergedItem.order
+            return { ...mergedItem, text: existingText, order: existingOrder }
           }
         } else {
-          // For non-merged items, preserve existing text if available
+          // For non-merged items, preserve existing text and order if available
           const existing = prev.find(item => item.id === mergedItem.id)
           if (existing) {
-            return { ...mergedItem, text: existing.text }
+            return { ...mergedItem, text: existing.text, order: existing.order ?? mergedItem.order }
           }
         }
-        return mergedItem
+        // For new items, assign order after all existing items (increment for each new item)
+        const newOrder = maxExistingOrder + 1 + newItemCounter
+        newItemCounter++
+        return { ...mergedItem, order: newOrder }
       })
       
       // Remove items that no longer exist as separate items (they're now merged)
       const highlightIds = new Set(highlights.map(h => h.id))
       const mergedItemIds = new Set(mergedItems.map(item => item.id))
       
-      return updated.filter(item => {
+      const filtered = updated.filter(item => {
         if (item.isMerged && item.mergedIds) {
           // Keep merged items if any of their merged IDs exist in highlights
           return item.mergedIds.some(id => highlightIds.has(id))
@@ -11107,15 +11142,18 @@ function App() {
         }
         return false
       })
+      
+      // Sort by order to maintain user's custom order
+      return filtered.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
     })
   }, [highlights, mergeConnectedHighlights])
 
   // Helper function to get highlight color
   const getHighlightColor = (color) => {
     const colors = {
-      yellow: 'rgba(251, 188, 4, 0.3)', // Reduced opacity for better appearance
-      green: 'rgba(52, 168, 83, 0.3)', // Reduced opacity for better appearance
-      blue: 'rgba(66, 133, 244, 0.3)' // Reduced opacity for better appearance
+      yellow: 'rgba(251, 188, 4, 0.21)', // Reduced opacity for better appearance
+      green: 'rgba(52, 168, 83, 0.21)', // Reduced opacity for better appearance
+      blue: 'rgba(66, 133, 244, 0.21)' // Reduced opacity for better appearance
     }
     return colors[color] || colors.yellow
   }
@@ -12220,24 +12258,24 @@ function App() {
             // Get highlight color based on highlight.color
             const highlightColor = highlight.color || 'yellow'
             let pdfColor
-            let pdfOpacity = 0.3 // Default opacity for highlights
+            let pdfOpacity = 0.24 // Default opacity for highlights
             
             switch (highlightColor) {
               case 'yellow':
                 pdfColor = rgb(0.984, 0.737, 0.016) // rgba(251, 188, 4) normalized
-                pdfOpacity = 0.3
+                pdfOpacity = 0.24
                 break
               case 'green':
                 pdfColor = rgb(0.204, 0.659, 0.325) // rgba(52, 168, 83) normalized
-                pdfOpacity = 0.3
+                pdfOpacity = 0.24
                 break
               case 'blue':
                 pdfColor = rgb(0.259, 0.522, 0.957) // rgba(66, 133, 244) normalized
-                pdfOpacity = 0.3
+                pdfOpacity = 0.24
                 break
               default:
                 pdfColor = rgb(0.984, 0.737, 0.016) // Default to yellow
-                pdfOpacity = 0.3
+                pdfOpacity = 0.24
             }
             
             // Draw each rectangle separately
