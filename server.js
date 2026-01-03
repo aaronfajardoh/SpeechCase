@@ -1425,7 +1425,13 @@ Characters can be outside the org chart if they are:
       characters = [characters];
     }
 
-    // Step 2: Post-process to filter out authors from first page
+    // Step 2: Post-process to filter out authors from first page AND all chunks
+    // Search all chunks for author attribution patterns
+    const allChunksText = allChunks.map(chunk => chunk.text).join('\n\n');
+    const hasAuthorAttributionPattern = /prepared this case|based on public sources|interviews with|written by|case by|prepared by/i.test(allChunksText);
+    
+    let authorNames = []; // Track authors identified from first page
+    
     if (firstPageText && firstPageText.length > 0) {
       // Use AI to identify author names from first page
       try {
@@ -1449,7 +1455,7 @@ Only return names that you are confident are authors, not characters in the stor
             },
             {
               role: 'user',
-              content: `Identify author names from this first page text:\n\n${firstPageText.substring(0, 2000)}\n\nReturn a JSON object with "authorNames" array.`
+              content: `Identify author names from this first page text. Also search for attribution patterns like "prepared this case", "based on public sources", "interviews with", "written by", "case by", "prepared by". Only return names that are authors/writers, NOT people who were interviewed (those are protagonists):\n\n${firstPageText.substring(0, 2000)}\n\nReturn a JSON object with "authorNames" array.`
             }
           ],
           temperature: 0.2,
@@ -1457,7 +1463,7 @@ Only return names that you are confident are authors, not characters in the stor
         });
 
         const authorResult = JSON.parse(authorIdentificationCompletion.choices[0].message.content);
-        const authorNames = authorResult.authorNames || [];
+        authorNames = authorResult.authorNames || [];
         
         if (authorNames.length > 0) {
           // Filter out characters whose names match author names (case-insensitive, partial match)
@@ -1479,24 +1485,82 @@ Only return names that you are confident are authors, not characters in the stor
       }
     }
 
+    // Step 2b: Also search ALL chunks for author attribution patterns (not just first page)
+    // This catches footers that appear on multiple pages
+    if (hasAuthorAttributionPattern) {
+      try {
+        // Find chunks containing author attribution patterns
+        const attributionChunks = allChunks.filter(chunk => {
+          const chunkText = chunk.text.toLowerCase();
+          return /prepared this case|based on public sources|interviews with|written by|case by|prepared by/i.test(chunkText);
+        });
+        
+        if (attributionChunks.length > 0) {
+          const attributionText = attributionChunks.map(chunk => chunk.text).join('\n\n');
+          const attributionCompletion = await openaiClient.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content: `You are a helpful assistant that identifies author names from document attribution text. 
+                
+Analyze the attribution text and identify names that are likely authors, document creators, or case study writers. These typically:
+- Appear in phrases like "prepared this case", "based on public sources", "written by", "case by", "prepared by"
+- Are the people who CREATED the document, not people mentioned in it
+- Are NOT people who were interviewed (those are protagonists in the story)
+
+IMPORTANT: If you see text like "prepared this case based on public sources and interviews with X and Y", then:
+- The people BEFORE "interviews with" are AUTHORS (exclude from characters)
+- The people AFTER "interviews with" are PROTAGONISTS (keep in characters)
+
+Return a JSON object with:
+- "authorNames": array of strings (full names of identified authors, empty array if none found)
+
+Only return names that you are confident are authors, not characters in the story.`
+              },
+              {
+                role: 'user',
+                content: `Identify author names from this attribution text:\n\n${attributionText.substring(0, 2000)}\n\nReturn a JSON object with "authorNames" array.`
+              }
+            ],
+            temperature: 0.2,
+            response_format: { type: 'json_object' }
+          });
+
+          const attributionResult = JSON.parse(attributionCompletion.choices[0].message.content);
+          const attributionAuthorNames = attributionResult.authorNames || [];
+          
+          if (attributionAuthorNames.length > 0) {
+            // Merge with previously identified authors and filter
+            const allAuthorNames = [...new Set([...(authorNames || []), ...attributionAuthorNames])];
+            const normalizedAuthorNames = allAuthorNames.map(name => name.toLowerCase().trim());
+            characters = characters.filter(character => {
+              const characterName = character.name ? character.name.toLowerCase().trim() : '';
+              const isAuthor = normalizedAuthorNames.some(authorName => {
+                return characterName === authorName || 
+                       characterName.includes(authorName) || 
+                       authorName.includes(characterName);
+              });
+              return !isAuthor;
+            });
+          }
+        }
+      } catch (attributionError) {
+        // If attribution identification fails, continue without filtering
+        console.warn('Attribution-based author identification failed:', attributionError);
+      }
+    }
+
     // Step 3: Get images for characters
     const googleSearchApiKey = process.env.GOOGLE_SEARCH_API_KEY;
     const googleSearchEngineId = process.env.GOOGLE_SEARCH_ENGINE_ID;
     const googleAiKey = process.env.GOOGLE_AI_KEY;
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'server.js:1417',message:'Environment variables check',data:{hasGoogleSearchApiKey:!!googleSearchApiKey,hasGoogleSearchEngineId:!!googleSearchEngineId,hasGoogleAiKey:!!googleAiKey,googleSearchApiKeyLength:googleSearchApiKey?.length||0,googleSearchEngineIdLength:googleSearchEngineId?.length||0,googleSearchEngineId:googleSearchEngineId?.substring(0,20)||null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     
     const charactersWithImages = await getCharacterImagesBatch(characters, {
       googleSearchApiKey,
       googleSearchEngineId,
       googleAiKey
     });
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'server.js:1428',message:'After image fetching',data:{charactersCount:charactersWithImages.length,firstCharHasImage:charactersWithImages[0]?.hasImage,firstCharImageSource:charactersWithImages[0]?.imageSource,firstCharImageUrl:charactersWithImages[0]?.imageUrl?.substring(0,80)||null,charsWithImages:charactersWithImages.filter(c=>c.hasImage).length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
 
     // Step 4: Structure response
     res.json({
