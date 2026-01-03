@@ -475,7 +475,7 @@ function App() {
         clearTimeout(updatePageTimeout)
       }
     }
-  }, [pdfDoc, totalPages, isHighlightsExpanded, isSummaryExpanded, isTimelineExpanded])
+  }, [pdfDoc, totalPages, isHighlightsExpanded, isSummaryExpanded, isTimelineExpanded, isCharactersExpanded])
 
   // Detect manual scrolling and disable auto-scroll when user scrolls away
   useEffect(() => {
@@ -1107,6 +1107,27 @@ function App() {
   // Note: Scroll position restoration for highlights is now handled in the useEffect
   // that calls renderPages(), after pages are re-rendered. This prevents conflicts
   // where useLayoutEffect tries to restore before pages are re-rendered.
+
+  // Re-render PDF pages when returning from expanded characters view
+  // Canvas content is lost when hidden, so we need to re-render when visible again
+  useEffect(() => {
+    if (!isCharactersExpanded && pdfDoc && totalPages > 0 && pageData.length > 0) {
+      // Wait for DOM to be ready and PDF viewer to be visible
+      const timeoutId = setTimeout(async () => {
+        await renderPages()
+        // Restore scroll position after pages are re-rendered
+        if (scrollPositionBeforeFullViewRef.current) {
+          // Wait for renderedPages to update and DOM to settle after rendering
+          // Reduced delay for faster restoration (2x faster)
+          setTimeout(() => {
+            restoreScrollPositionFromFullView()
+          }, 75)
+        }
+      }, 100)
+      return () => clearTimeout(timeoutId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCharactersExpanded])
 
   // Note: The fallback scroll restoration has been removed. Scroll position restoration
   // is now handled in the useEffect hooks that call renderPages(), after pages are
