@@ -2062,6 +2062,159 @@
   margin-top: 0.3rem;
 }
 
+/* Org Chart Styles */
+.org-chart-container {
+  display: flex;
+  justify-content: center;
+  padding: 2rem 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  min-height: 200px;
+  width: 100%;
+}
+
+.org-chart-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  margin: 0 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.org-chart-node-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+}
+
+.org-chart-card {
+  min-width: 180px;
+  max-width: 220px;
+  width: 100%;
+  position: relative;
+  z-index: 2;
+}
+
+/* Connector from parent card down to horizontal line */
+.org-chart-connector {
+  width: 2px;
+  height: 40px;
+  background: rgba(138, 180, 248, 0.4);
+  margin: 0;
+  position: relative;
+  flex-shrink: 0;
+  z-index: 0;
+  align-self: center;
+}
+
+/* Container for children - positioned below connector */
+.org-chart-children {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: center;
+  position: relative;
+  margin-top: 0;
+  padding-top: 0;
+  width: 100%;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* Horizontal line connecting all children */
+.org-chart-children::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: rgba(138, 180, 248, 0.4);
+  z-index: 1;
+}
+
+.org-chart-children > .org-chart-node {
+  position: relative;
+  flex: 0 1 auto;
+  padding-top: 40px;
+}
+
+/* Vertical line from horizontal line down - extends slightly to ensure overlap */
+.org-chart-children > .org-chart-node::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: calc(40px + 1px);
+  background: rgba(138, 180, 248, 0.4);
+  z-index: 0;
+}
+
+.org-chart-children > .org-chart-node .org-chart-node-content {
+  margin-top: 0;
+  position: relative;
+}
+
+.org-chart-children > .org-chart-node .org-chart-card {
+  position: relative;
+}
+
+/* Extend line upward from card border - extends slightly to ensure overlap */
+.org-chart-children > .org-chart-node .org-chart-card::before {
+  content: '';
+  position: absolute;
+  top: calc(-40px - 1px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: calc(40px + 2px);
+  background: rgba(138, 180, 248, 0.4);
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* Horizontal line extensions for first and last child */
+.org-chart-children > .org-chart-node:first-child::after,
+.org-chart-children > .org-chart-node:last-child::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 50%;
+  height: 2px;
+  background: rgba(138, 180, 248, 0.4);
+  z-index: 1;
+}
+
+.org-chart-children > .org-chart-node:first-child::after {
+  left: 50%;
+}
+
+.org-chart-children > .org-chart-node:last-child::after {
+  right: 50%;
+}
+
+.org-chart-children > .org-chart-node:only-child::after {
+  display: none;
+}
+
+.characters-unconnected-section {
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+}
+
+.characters-unconnected-section h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #e8eaed;
+}
+
 /* Summary Full View */
 .summary-full-view {
   flex: 1;

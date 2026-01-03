@@ -1,6 +1,75 @@
 import React, { useState, useMemo } from 'react'
 import { IconUsers, IconChevronLeft } from './Icons.jsx'
-import MermaidDiagram from './MermaidDiagram.jsx'
+
+// Recursive component to render org chart nodes
+const OrgChartNode = ({ character, children, level, onSelect, selectedCharacter, getAvatarColor, getAvatarInitials }) => {
+  const avatarColor = getAvatarColor(character.name)
+  const avatarInitials = getAvatarInitials(character.name)
+  const hasChildren = children && children.length > 0
+  const isSelected = selectedCharacter && selectedCharacter.name === character.name
+
+  return (
+    <div className="org-chart-node">
+      <div className="org-chart-node-content">
+        <div
+          className={`character-card org-chart-card ${isSelected ? 'selected' : ''}`}
+          onClick={() => onSelect(character)}
+        >
+          <div className="character-card-avatar">
+            {character.imageUrl ? (
+              <img
+                src={character.imageUrl}
+                alt={character.name}
+                onError={(e) => {
+                  e.target.style.display = 'none'
+                  e.target.nextSibling.style.display = 'flex'
+                }}
+              />
+            ) : null}
+            <div
+              className="character-card-avatar-placeholder"
+              style={{
+                backgroundColor: avatarColor,
+                display: character.imageUrl ? 'none' : 'flex'
+              }}
+            >
+              {avatarInitials}
+            </div>
+          </div>
+          <div className="character-card-info">
+            <div className="character-card-name">{character.name}</div>
+            {character.role && (
+              <div className="character-card-role">{character.role}</div>
+            )}
+            {character.department && (
+              <div className="character-card-department">{character.department}</div>
+            )}
+            {isSelected && character.description && (
+              <div className="character-card-description">{character.description}</div>
+            )}
+          </div>
+        </div>
+        {hasChildren && <div className="org-chart-connector"></div>}
+      </div>
+      {hasChildren && (
+        <div className="org-chart-children">
+          {children.map((child, index) => (
+            <OrgChartNode
+              key={child.character.name}
+              character={child.character}
+              children={child.children}
+              level={level + 1}
+              onSelect={onSelect}
+              selectedCharacter={selectedCharacter}
+              getAvatarColor={getAvatarColor}
+              getAvatarInitials={getAvatarInitials}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 const CharactersFullView = ({ characters, onMinimize }) => {
   const [selectedCharacter, setSelectedCharacter] = useState(null)
@@ -29,20 +98,17 @@ const CharactersFullView = ({ characters, onMinimize }) => {
     return colors[Math.abs(hash) % colors.length]
   }
 
-  // Build org chart Mermaid diagram
-  const orgChartDiagram = useMemo(() => {
+  // Build org chart tree structure
+  const orgChartTree = useMemo(() => {
     if (!characters || !characters.isOrgChart || !characters.characters) {
-      return null
+      return { tree: null, unconnected: [] }
     }
 
     const orgChartCharacters = characters.characters.filter(c => c.inOrgChart !== false)
     if (orgChartCharacters.length === 0) {
-      return null
+      return { tree: null, unconnected: [] }
     }
 
-    // Build the Mermaid org chart syntax
-    let mermaidCode = 'graph TD\n'
-    
     // Find root (CEO or person with no reportsTo)
     const roots = orgChartCharacters.filter(c => !c.reportsTo || c.reportsTo.trim() === '')
     
@@ -56,50 +122,30 @@ const CharactersFullView = ({ characters, onMinimize }) => {
       root = orgChartCharacters[0]
     }
 
-    // Build relationships
+    // Build tree structure
     const processed = new Set()
-    const queue = root ? [root] : []
-    
-    while (queue.length > 0) {
-      const current = queue.shift()
-      if (processed.has(current.name)) continue
-      processed.add(current.name)
-
-      // Find direct reports
-      const reports = orgChartCharacters.filter(c => 
-        c.reportsTo && c.reportsTo.trim() === current.name.trim()
+    const processNode = (node) => {
+      if (processed.has(node.character.name)) return null
+      processed.add(node.character.name)
+      
+      const directReports = orgChartCharacters.filter(c => 
+        c.reportsTo && c.reportsTo.trim() === node.character.name.trim()
       )
-
-      // Add node for current person
-      const nodeId = current.name.replace(/[^a-zA-Z0-9]/g, '_')
-      const nodeLabel = `${current.name}\\n${current.role || ''}`
-      mermaidCode += `    ${nodeId}["${nodeLabel}"]\n`
-
-      // Add edges to reports
-      reports.forEach(report => {
-        const reportId = report.name.replace(/[^a-zA-Z0-9]/g, '_')
-        mermaidCode += `    ${nodeId} --> ${reportId}\n`
-        if (!processed.has(report.name)) {
-          queue.push(report)
-        }
-      })
+      
+      return {
+        character: node.character,
+        children: directReports
+          .map(report => processNode({ character: report }))
+          .filter(Boolean)
+      }
     }
 
-    // Add any remaining characters that weren't processed
-    orgChartCharacters.forEach(char => {
-      if (!processed.has(char.name)) {
-        const nodeId = char.name.replace(/[^a-zA-Z0-9]/g, '_')
-        const nodeLabel = `${char.name}\\n${char.role || ''}`
-        mermaidCode += `    ${nodeId}["${nodeLabel}"]\n`
-        
-        if (char.reportsTo) {
-          const reportsToId = char.reportsTo.replace(/[^a-zA-Z0-9]/g, '_')
-          mermaidCode += `    ${reportsToId} --> ${nodeId}\n`
-        }
-      }
-    })
+    const tree = root ? processNode({ character: root }) : null
 
-    return mermaidCode
+    // Find unconnected characters (those not in the tree)
+    const unconnected = orgChartCharacters.filter(c => !processed.has(c.name))
+
+    return { tree, unconnected }
   }, [characters])
 
   // Get characters outside org chart
@@ -108,17 +154,22 @@ const CharactersFullView = ({ characters, onMinimize }) => {
     return characters.characters.filter(c => c.inOrgChart === false)
   }, [characters])
 
-  // Get org chart characters
-  const orgChartCharacters = useMemo(() => {
-    if (!characters || !characters.characters) return []
-    return characters.characters.filter(c => c.inOrgChart !== false)
-  }, [characters])
+  // Handle character selection
+  const handleCharacterSelect = (character) => {
+    if (selectedCharacter && selectedCharacter.name === character.name) {
+      setSelectedCharacter(null)
+    } else {
+      setSelectedCharacter(character)
+    }
+  }
 
   if (!characters || !characters.characters || characters.characters.length === 0) {
     return null
   }
 
   const allCharacters = characters.characters
+  const hasOrgChart = characters.isOrgChart && orgChartTree.tree
+  const hasUnconnected = orgChartTree.unconnected && orgChartTree.unconnected.length > 0
 
   return (
     <div className="characters-full-view">
@@ -140,76 +191,144 @@ const CharactersFullView = ({ characters, onMinimize }) => {
 
       <div className="characters-full-view-content">
         {/* Org Chart Section */}
-        {characters.isOrgChart && orgChartDiagram && (
+        {hasOrgChart && (
           <div className="characters-org-chart-section">
             <h3>Organizational Structure</h3>
-            <div className="mermaid-container">
-              <MermaidDiagram chart={orgChartDiagram} fontSize={14} />
+            <div className="org-chart-container">
+              <OrgChartNode
+                character={orgChartTree.tree.character}
+                children={orgChartTree.tree.children}
+                level={0}
+                onSelect={handleCharacterSelect}
+                selectedCharacter={selectedCharacter}
+                getAvatarColor={getAvatarColor}
+                getAvatarInitials={getAvatarInitials}
+              />
             </div>
           </div>
         )}
 
-        {/* Characters Grid */}
-        <div className="characters-grid-section">
-          <h3>{characters.isOrgChart ? 'All Characters' : 'Characters'}</h3>
-          <div className="characters-grid">
-            {allCharacters.map((character, index) => {
-              const avatarColor = getAvatarColor(character.name)
-              const avatarInitials = getAvatarInitials(character.name)
-              const isSelected = selectedCharacter === index
+        {/* Unconnected Characters Section (characters that don't fit in org chart) */}
+        {hasOrgChart && hasUnconnected && (
+          <div className="characters-unconnected-section">
+            <h3>Additional Characters</h3>
+            <div className="characters-grid">
+              {orgChartTree.unconnected.map((character, index) => {
+                const avatarColor = getAvatarColor(character.name)
+                const avatarInitials = getAvatarInitials(character.name)
+                const isSelected = selectedCharacter && selectedCharacter.name === character.name
 
-              return (
-                <div
-                  key={`character-${index}`}
-                  className={`character-card ${isSelected ? 'selected' : ''}`}
-                  onClick={() => setSelectedCharacter(isSelected ? null : index)}
-                >
-                  <div className="character-card-avatar">
-                    {character.imageUrl ? (
-                      <img
-                        src={character.imageUrl}
-                        alt={character.name}
-                        onError={(e) => {
-                          e.target.style.display = 'none'
-                          e.target.nextSibling.style.display = 'flex'
+                return (
+                  <div
+                    key={`unconnected-${index}`}
+                    className={`character-card ${isSelected ? 'selected' : ''}`}
+                    onClick={() => handleCharacterSelect(character)}
+                  >
+                    <div className="character-card-avatar">
+                      {character.imageUrl ? (
+                        <img
+                          src={character.imageUrl}
+                          alt={character.name}
+                          onError={(e) => {
+                            e.target.style.display = 'none'
+                            e.target.nextSibling.style.display = 'flex'
+                          }}
+                        />
+                      ) : null}
+                      <div
+                        className="character-card-avatar-placeholder"
+                        style={{
+                          backgroundColor: avatarColor,
+                          display: character.imageUrl ? 'none' : 'flex'
                         }}
-                      />
-                    ) : null}
-                    <div
-                      className="character-card-avatar-placeholder"
-                      style={{
-                        backgroundColor: avatarColor,
-                        display: character.imageUrl ? 'none' : 'flex'
-                      }}
-                    >
-                      {avatarInitials}
+                      >
+                        {avatarInitials}
+                      </div>
+                    </div>
+                    <div className="character-card-info">
+                      <div className="character-card-name">{character.name}</div>
+                      {character.role && (
+                        <div className="character-card-role">{character.role}</div>
+                      )}
+                      {character.department && (
+                        <div className="character-card-department">{character.department}</div>
+                      )}
+                      {isSelected && character.description && (
+                        <div className="character-card-description">{character.description}</div>
+                      )}
+                      {isSelected && character.reportsTo && (
+                        <div className="character-card-reports-to">
+                          <strong>Reports to:</strong> {character.reportsTo}
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div className="character-card-info">
-                    <div className="character-card-name">{character.name}</div>
-                    {character.role && (
-                      <div className="character-card-role">{character.role}</div>
-                    )}
-                    {character.department && (
-                      <div className="character-card-department">{character.department}</div>
-                    )}
-                    {isSelected && character.description && (
-                      <div className="character-card-description">{character.description}</div>
-                    )}
-                    {isSelected && character.reportsTo && (
-                      <div className="character-card-reports-to">
-                        <strong>Reports to:</strong> {character.reportsTo}
-                      </div>
-                    )}
-                    {character.inOrgChart === false && (
-                      <div className="character-card-external-badge">External</div>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
+                )
+              })}
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Characters Grid (for non-org chart view) */}
+        {!hasOrgChart && (
+          <div className="characters-grid-section">
+            <h3>Characters</h3>
+            <div className="characters-grid">
+              {allCharacters.map((character, index) => {
+                const avatarColor = getAvatarColor(character.name)
+                const avatarInitials = getAvatarInitials(character.name)
+                const isSelected = selectedCharacter && selectedCharacter.name === character.name
+
+                return (
+                  <div
+                    key={`character-${index}`}
+                    className={`character-card ${isSelected ? 'selected' : ''}`}
+                    onClick={() => handleCharacterSelect(character)}
+                  >
+                    <div className="character-card-avatar">
+                      {character.imageUrl ? (
+                        <img
+                          src={character.imageUrl}
+                          alt={character.name}
+                          onError={(e) => {
+                            e.target.style.display = 'none'
+                            e.target.nextSibling.style.display = 'flex'
+                          }}
+                        />
+                      ) : null}
+                      <div
+                        className="character-card-avatar-placeholder"
+                        style={{
+                          backgroundColor: avatarColor,
+                          display: character.imageUrl ? 'none' : 'flex'
+                        }}
+                      >
+                        {avatarInitials}
+                      </div>
+                    </div>
+                    <div className="character-card-info">
+                      <div className="character-card-name">{character.name}</div>
+                      {character.role && (
+                        <div className="character-card-role">{character.role}</div>
+                      )}
+                      {character.department && (
+                        <div className="character-card-department">{character.department}</div>
+                      )}
+                      {isSelected && character.description && (
+                        <div className="character-card-description">{character.description}</div>
+                      )}
+                      {isSelected && character.reportsTo && (
+                        <div className="character-card-reports-to">
+                          <strong>Reports to:</strong> {character.reportsTo}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {/* External Characters Section (if org chart and there are external characters) */}
         {characters.isOrgChart && externalCharacters.length > 0 && (
@@ -219,13 +338,13 @@ const CharactersFullView = ({ characters, onMinimize }) => {
               {externalCharacters.map((character, index) => {
                 const avatarColor = getAvatarColor(character.name)
                 const avatarInitials = getAvatarInitials(character.name)
-                const isSelected = selectedCharacter === `external-${index}`
+                const isSelected = selectedCharacter && selectedCharacter.name === character.name
 
                 return (
                   <div
                     key={`external-${index}`}
                     className={`character-card ${isSelected ? 'selected' : ''}`}
-                    onClick={() => setSelectedCharacter(isSelected ? null : `external-${index}`)}
+                    onClick={() => handleCharacterSelect(character)}
                   >
                     <div className="character-card-avatar">
                       {character.imageUrl ? (
