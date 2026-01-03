@@ -3095,10 +3095,6 @@ function App() {
     const itemsByY = new Map()
     const lineTolerance = 5 * scaleY // Scale tolerance with display scale
     
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3095',message:'Column detection start',data:{pageNum,allItemsCount:allItems.length,lineTolerance,scaleX,scaleY,viewportWidth:viewport.width},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D,E'})}).catch(()=>{});
-    // #endregion
-    
     // Step 1: Group by Y coordinate
     allItems.forEach(itemData => {
       let assignedY = null
@@ -3115,10 +3111,6 @@ function App() {
       }
       itemsByY.get(assignedY).push(itemData)
     })
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3120',message:'After Y grouping',data:{pageNum,linesCount:itemsByY.size,lineTolerance},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     
     // Step 2: Split each Y group by columns (X position gaps)
     // First pass: detect potential gaps on each line and record them
@@ -3177,12 +3169,6 @@ function App() {
           ? columnGapThreshold * 0.7  // 30% lower threshold when font sizes differ
           : columnGapThreshold
         
-        // #region agent log
-        if (pageNum === 4 || pageNum === 5 || pageNum === 8) {
-          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3140',message:'Gap detection',data:{pageNum,y,itemIndex:i,prevItemText:prevItem.trimmedStr.substring(0,20),currentItemText:currentItem.trimmedStr.substring(0,20),gap,columnGapThreshold:adjustedThreshold,thresholdBase,lineMedianFontSize,prevFontSize,currentFontSize,fontSizeDiff,fontSizeRatio,isSignificantFontDiff,prevItemEndX,currentItemBaseX:currentItem.baseX,passes:gap>adjustedThreshold},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,D'})}).catch(()=>{});
-        }
-        // #endregion
-        
         if (gap > adjustedThreshold) {
           // Record this gap position (use the X position where the gap starts)
           // Also store font size difference info for more lenient validation when sizes differ
@@ -3196,12 +3182,6 @@ function App() {
           })
         }
       }
-      
-      // #region agent log
-      if (pageNum === 4 || pageNum === 5 || pageNum === 8) {
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3154',message:'Line gap summary',data:{pageNum,y,itemsCount:yItems.length,gapsCount:gaps.length,lineMedianFontSize,gaps:gaps.map(g=>({gapX:g.gapX,gapSize:g.gapSize})),itemXPositions:yItems.map(it=>({x:it.baseX,text:it.trimmedStr.substring(0,15)}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C'})}).catch(()=>{});
-      }
-      // #endregion
       
       lineGapData.push({ y, items: yItems, gaps, lineMedianFontSize })
     })
@@ -3289,12 +3269,6 @@ function App() {
               linesWithGap.push(j)
               foundSimilarGap = true
               
-              // #region agent log
-              if ((pageNum === 4 || pageNum === 5 || pageNum === 8) && consecutiveCount <= 5) {
-                fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3204',message:'Gap match found',data:{pageNum,lineI:i,lineJ:j,gapX:gap.gapX,nextGapX:nextGap.gapX,xDiff,centerDiff,gapTolerance,consecutiveCount,avgGapX,minGapX,maxGapX,foundSimilarGap},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})}).catch(()=>{});
-              }
-              // #endregion
-              
               break
             }
           }
@@ -3303,12 +3277,6 @@ function App() {
             break // Gap pattern broken, stop checking consecutive lines
           }
         }
-        
-        // #region agent log
-        if (pageNum === 4 || pageNum === 5 || pageNum === 8) {
-          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3203',message:'Gap validation result',data:{pageNum,lineI:i,gapX:gap.gapX,gapSize:gap.gapSize,consecutiveCount,requiredConsecutiveLines,validated:consecutiveCount>=requiredConsecutiveLines,hasSignificantFontDiff,linesWithGap,minGapX,maxGapX},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-        }
-        // #endregion
         
         // CRITICAL: For gaps with significant font size differences, use alternative validation
         // Instead of requiring consecutive lines, validate if:
@@ -3343,12 +3311,6 @@ function App() {
             // OR if the gap is very large (3x smaller font size)
             const isVeryLargeGap = gap.gapSize >= smallerFontSize * 3.0
             shouldValidate = similarEndPositionCount >= 2 || isVeryLargeGap
-            
-            // #region agent log
-            if (pageNum === 4 || pageNum === 5 || pageNum === 8) {
-              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3280',message:'Font-diff gap alternative validation',data:{pageNum,lineI:i,gapX:gap.gapX,gapSize:gap.gapSize,gapEndX:gap.gapEndX,smallerFontSize,gapSizeThreshold,similarEndPositionCount,isVeryLargeGap,shouldValidate},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-            }
-            // #endregion
           }
         }
         
@@ -3385,12 +3347,6 @@ function App() {
     
     // Sort validated boundaries by X position
     validatedGapBoundaries.sort((a, b) => a.minX - b.minX)
-    
-    // #region agent log
-    if (pageNum === 4 || pageNum === 5 || pageNum === 8) {
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3233',message:'Validated boundaries summary',data:{pageNum,validatedCount:validatedGapBoundaries.length,boundaries:validatedGapBoundaries.map(b=>({minX:b.minX,maxX:b.maxX,width:b.maxX-b.minX}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-    }
-    // #endregion
     
     // Third pass: Split items by validated column boundaries only
     const itemsByLine = new Map()
@@ -3430,20 +3386,7 @@ function App() {
           
           if (startInBoundary || endInBoundary || spansBoundary || centerInBoundary) {
             isColumnBoundary = true
-            
-            // #region agent log
-            if ((pageNum === 4 || pageNum === 5 || pageNum === 8) && columns.length <= 2) {
-              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3320',message:'Boundary match success',data:{pageNum,y,gapStartX,gapEndX,gapCenter,boundaryMinX:boundary.minX,boundaryMaxX:boundary.maxX,boundaryCenter,lineTolerance,startInBoundary,endInBoundary,spansBoundary,centerInBoundary},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})}).catch(()=>{});
-            }
-            // #endregion
-            
             break
-          } else {
-            // #region agent log
-            if ((pageNum === 4 || pageNum === 5 || pageNum === 8) && i <= 6 && gapEndX - gapStartX > 20) {
-              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3335',message:'Boundary match failed',data:{pageNum,y,gapStartX,gapEndX,gapCenter,boundaryMinX:boundary.minX,boundaryMaxX:boundary.maxX,boundaryCenter,lineTolerance,prevItemText:prevItem.trimmedStr.substring(0,15),currentItemText:currentItem.trimmedStr.substring(0,15),gapSize:gapEndX-gapStartX},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})}).catch(()=>{});
-            }
-            // #endregion
           }
         }
         
@@ -3451,24 +3394,12 @@ function App() {
           // Validated column boundary - start a new column
           columns.push(currentColumn)
           currentColumn = [currentItem]
-          
-          // #region agent log
-          if ((pageNum === 4 || pageNum === 5 || pageNum === 8) && columns.length <= 3) {
-            fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3266',message:'Column split detected',data:{pageNum,y,columnIndex:columns.length,gapStartX,gapEndX,prevItemText:prevItem.trimmedStr.substring(0,15),currentItemText:currentItem.trimmedStr.substring(0,15),prevItemX:prevItem.baseX,currentItemX:currentItem.baseX},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-          }
-          // #endregion
         } else {
           // Not a validated boundary - same column
           currentColumn.push(currentItem)
         }
       }
       columns.push(currentColumn) // Don't forget the last column
-      
-      // #region agent log
-      if ((pageNum === 4 || pageNum === 5 || pageNum === 8) && columns.length > 1) {
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3274',message:'Line column split result',data:{pageNum,y,columnsCount:columns.length,itemsPerColumn:columns.map(c=>c.length),columnXPositions:columns.map(c=>c[0]?.baseX)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-      }
-      // #endregion
       
       // Store columns temporarily and collect their X positions
       columns.forEach((columnItems) => {
@@ -3768,12 +3699,6 @@ function App() {
             if (columnRightBoundary < Infinity) {
               const originalMaxLineWidth = maxLineWidth
               maxLineWidth = Math.min(maxLineWidth, columnRightBoundary - lineStartX)
-              
-              // #region agent log
-              if ((pageNum === 4 || pageNum === 5 || pageNum === 8) && originalMaxLineWidth !== maxLineWidth) {
-                fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3655',message:'Line width constrained by column boundary',data:{pageNum,y:currentY,column:currentCol,lineStartX,columnRightBoundary,originalMaxLineWidth,maxLineWidth,constrained:true},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})}).catch(()=>{});
-              }
-              // #endregion
             }
             
             // Determine if this line is justified by checking:
@@ -3845,26 +3770,6 @@ function App() {
       }
       
       const lineWidth = lineEndX - lineStartX
-      
-      // #region agent log
-      // Final constraint: ensure lineWidth doesn't exceed column boundary
-      if ((pageNum === 4 || pageNum === 5 || pageNum === 8) && lineIndex < 20) {
-        let finalColumnRightBoundary = Infinity
-        for (const boundary of validatedGapBoundaries) {
-          if (boundary.minX > lineStartX + 10) {
-            finalColumnRightBoundary = Math.min(finalColumnRightBoundary, boundary.minX)
-          }
-        }
-        const originalLineWidth = lineWidth
-        const constrainedLineWidth = finalColumnRightBoundary < Infinity 
-          ? Math.min(lineWidth, finalColumnRightBoundary - lineStartX)
-          : lineWidth
-        
-        if (originalLineWidth !== constrainedLineWidth) {
-          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:3718',message:'Final line width constraint',data:{pageNum,y:currentY,column:currentCol,lineStartX,lineEndX,originalLineWidth,constrainedLineWidth,finalColumnRightBoundary},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})}).catch(()=>{});
-        }
-      }
-      // #endregion
       
       // Apply final constraint to lineEndX if needed to respect column boundaries
       let finalColumnRightBoundary = Infinity
