@@ -11054,6 +11054,14 @@ function App() {
       
       // Update existing items with new text/color, add new ones
       const updated = mergedItems.map(mergedItem => {
+        // First, check if the merged item's ID itself exists in previous items
+        // (This handles the case where the merged item uses the first highlight's ID)
+        const existingByMergedId = prev.find(item => item.id === mergedItem.id)
+        if (existingByMergedId) {
+          // Always preserve text from existing item (user's manual edits)
+          return { ...mergedItem, text: existingByMergedId.text }
+        }
+        
         // For merged items, check if any of the merged highlight IDs have existing items
         if (mergedItem.isMerged && mergedItem.mergedIds) {
           // Find existing items for any of the merged IDs
@@ -11062,18 +11070,10 @@ function App() {
           )
           
           if (existingItems.length > 0) {
-            // If there are existing items, preserve text from the first one (user's manual edits)
-            // But if the merged text is different (new connection), use merged text
+            // Always preserve text from existing items (user's manual edits)
+            // User edits should never be overwritten by automatic merging
             const existingText = existingItems[0].text
-            const mergedText = mergedItem.text
-            
-            // Use merged text if it's different from existing (new connection was made)
-            // Otherwise preserve user's edits
-            const finalText = (mergedText !== existingText && mergedText.trim() !== '') 
-              ? mergedText 
-              : existingText
-            
-            return { ...mergedItem, text: finalText }
+            return { ...mergedItem, text: existingText }
           }
         } else {
           // For non-merged items, preserve existing text if available
