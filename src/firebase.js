@@ -25,11 +25,14 @@ if (typeof window !== 'undefined') {
   analytics = getAnalytics(app);
 }
 
+// Import Auth and Firestore
+import { getAuth } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
+
+// Initialize Auth and Firestore
+export const auth = getAuth(app);
+export const db = getFirestore(app);
+
 // Export the app and analytics for use throughout your app
 export { app, analytics };
-
-// You can also export other Firebase services here as you add them:
-// export { getAuth } from "firebase/auth";
-// export { getFirestore } from "firebase/firestore";
-// export { getStorage } from "firebase/storage";
 
