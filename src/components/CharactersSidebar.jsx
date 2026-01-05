@@ -92,7 +92,6 @@ const CharactersSidebar = ({
           <div className="characters-header">
             <div className="characters-header-left">
               <h3>Characters</h3>
-              <span className="characters-count">{characterList.length}</span>
             </div>
             <button
               className="btn-expand-characters"

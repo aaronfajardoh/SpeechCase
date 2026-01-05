@@ -7097,6 +7097,14 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sidebarView, documentId, isPDFProcessing])
 
+  // Generate characters when characters tab is opened
+  useEffect(() => {
+    if (sidebarView === 'characters' && documentId && !characters && !isCharactersLoading && !charactersError && !isPDFProcessing) {
+      generateCharacters()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarView, documentId, isPDFProcessing])
+
   // Auto-minimize controls when timeline is expanded
   useEffect(() => {
     if (isTimelineExpanded && !isControlsPanelMinimized) {
