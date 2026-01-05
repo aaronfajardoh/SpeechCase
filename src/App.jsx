@@ -12834,7 +12834,7 @@ function App() {
         <div className="toolbar-left">
           <div className="toolbar-logo">
             <img src="/logo.png" alt="SpeechCase" className="logo-small" />
-            <span className="toolbar-title">SpeechCase</span>
+            <span className="toolbar-title">Casedive</span>
           </div>
           <div className="toolbar-file-info">
             <IconDocument size={16} />
