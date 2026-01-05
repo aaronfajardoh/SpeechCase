@@ -7,7 +7,7 @@ import {
   GoogleAuthProvider,
   signInWithPopup
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 
 // Create the Auth Context
@@ -27,25 +27,23 @@ export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Helper function to create or update user document in Firestore
+  // Helper function to create user document in Firestore
   const createUserDocument = async (user) => {
     if (!user) return;
 
-    const userRef = doc(db, 'users', user.uid);
-    const userSnap = await getDoc(userRef);
-
-    // Only create document if it doesn't exist
-    if (!userSnap.exists()) {
-      try {
-        await setDoc(userRef, {
-          uid: user.uid,
-          email: user.email,
-          createdAt: serverTimestamp(),
-          photoURL: user.photoURL || null
-        });
-      } catch (error) {
-        console.error('Error creating user document:', error);
-      }
+    try {
+      const userRef = doc(db, 'users', user.uid);
+      await setDoc(userRef, {
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName || null,
+        photoURL: user.photoURL || null,
+        createdAt: serverTimestamp(),
+        lastLoginAt: serverTimestamp()
+      });
+    } catch (error) {
+      console.error('Error creating user document:', error);
+      // Don't block the login/signup process if document creation fails
     }
   };
 
@@ -53,8 +51,24 @@ export const AuthProvider = ({ children }) => {
   const signup = async (email, password) => {
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      // Create user document after successful signup
-      await createUserDocument(userCredential.user);
+      const user = userCredential.user;
+
+      // Always create user document for new signups
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        await setDoc(userRef, {
+          uid: user.uid,
+          email: user.email,
+          displayName: user.displayName || null,
+          photoURL: user.photoURL || 'https://via.placeholder.com/150', // Placeholder image URL if null
+          createdAt: serverTimestamp(),
+          lastLoginAt: serverTimestamp()
+        });
+      } catch (error) {
+        console.error('Error creating user document:', error);
+        // Don't block the signup process if document creation fails
+      }
+
       return userCredential;
     } catch (error) {
       console.error('Error signing up:', error);
@@ -78,8 +92,39 @@ export const AuthProvider = ({ children }) => {
     try {
       const provider = new GoogleAuthProvider();
       const userCredential = await signInWithPopup(auth, provider);
-      // Create user document if it doesn't exist
-      await createUserDocument(userCredential.user);
+      const user = userCredential.user;
+
+      // Check if user document exists
+      const userRef = doc(db, 'users', user.uid);
+      const userSnap = await getDoc(userRef);
+
+      if (!userSnap.exists()) {
+        // Document doesn't exist - create it
+        try {
+          await setDoc(userRef, {
+            uid: user.uid,
+            email: user.email,
+            displayName: user.displayName || null,
+            photoURL: user.photoURL || null,
+            createdAt: serverTimestamp(),
+            lastLoginAt: serverTimestamp()
+          });
+        } catch (error) {
+          console.error('Error creating user document:', error);
+          // Don't block the login process if document creation fails
+        }
+      } else {
+        // Document exists - update lastLoginAt
+        try {
+          await updateDoc(userRef, {
+            lastLoginAt: serverTimestamp()
+          });
+        } catch (error) {
+          console.error('Error updating user document:', error);
+          // Don't block the login process if document update fails
+        }
+      }
+
       return userCredential;
     } catch (error) {
       console.error('Error logging in with Google:', error);
