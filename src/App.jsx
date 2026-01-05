@@ -45,6 +45,7 @@ import ChatSidebar from './components/ChatSidebar.jsx'
 import HighlightsSidebar from './components/HighlightsSidebar.jsx'
 import SummaryFullView from './components/SummaryFullView.jsx'
 import HighlightsFullView from './components/HighlightsFullView.jsx'
+import LandingPage from './pages/LandingPage.jsx'
 
 // Set up PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`
@@ -12768,62 +12769,9 @@ function App() {
     }
   }
 
-  // Render upload mode (when no PDF is loaded)
+  // Render landing page (when no PDF is loaded)
   if (!pdfDoc) {
-    return (
-      <div className="app app-upload">
-        <div className="container container-upload">
-          <header className="header">
-            <div className="header-logo">
-              <img src="/logo.png" alt="SpeechCase" className="logo" />
-            </div>
-            <h1>SpeechCase</h1>
-            <p>Upload a PDF and listen to it with text-to-speech</p>
-          </header>
-
-          <div className="upload-section">
-            <div className="upload-area">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf"
-                onChange={handleFileChange}
-                id="pdf-upload"
-                className="file-input"
-              />
-              <label htmlFor="pdf-upload" className="upload-label">
-                <div className="upload-placeholder">
-                  <IconUpload size={48} className="upload-icon" />
-                  <span>Click to upload PDF</span>
-                </div>
-              </label>
-            </div>
-
-            {isLoading && (
-              <div className="loading">
-                <div className="spinner"></div>
-                <p>Loading PDF...</p>
-              </div>
-            )}
-
-            {error && (
-              <div className="error-message">
-                {error}
-              </div>
-            )}
-          </div>
-
-          <footer className="footer">
-            <p>
-              Powered by <strong>Web Speech Technology</strong> — Beta Version
-            </p>
-            <p className="browser-note">
-              Works best in Google Chrome
-            </p>
-          </footer>
-        </div>
-      </div>
-    )
+    return <LandingPage />
   }
 
   // Render PDF reader mode (when PDF is loaded)
