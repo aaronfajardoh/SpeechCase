@@ -283,6 +283,13 @@ function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state, currentUser])
 
+  // Redirect to dashboard if no PDF is loaded and not processing one
+  useEffect(() => {
+    if (!pdfDoc && !isLoading && !location.state?.file && !location.state?.documentId) {
+      navigate('/dashboard', { replace: true })
+    }
+  }, [pdfDoc, isLoading, location.state, navigate])
+
   // Sidebar resize handlers
   const handleResizeStart = useCallback((e) => {
     if (isSidebarCollapsed) return
@@ -12862,59 +12869,50 @@ function Home() {
     }
   }
 
-  // Render upload mode (when no PDF is loaded)
+  // Render loading state or redirect to dashboard (when no PDF is loaded)
   if (!pdfDoc) {
-    return (
-      <div className="app app-upload">
-        <div className="container container-upload">
-          <header className="header">
-            <div className="header-logo">
-              <img src="/logo.png" alt="SpeechCase" className="logo" />
-            </div>
-            <h1>SpeechCase</h1>
-            <p>Upload a PDF and listen to it with text-to-speech</p>
-          </header>
+    // Check if we're loading a PDF from dashboard (file or documentId in state) or currently loading
+    const hasFileInState = location.state?.file
+    const hasDocumentInState = location.state?.documentId
+    const isProcessingPDF = isLoading || hasFileInState || hasDocumentInState
 
-          <div className="upload-section">
-            <div className="upload-area">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf"
-                onChange={handleFileChange}
-                id="pdf-upload"
-                className="file-input"
-              />
-              <label htmlFor="pdf-upload" className="upload-label">
-                <div className="upload-placeholder">
-                  <IconUpload size={48} className="upload-icon" />
-                  <span>Click to upload PDF</span>
-                </div>
-              </label>
-            </div>
+    // If we're processing a PDF, show loading state
+    if (isProcessingPDF) {
+      return (
+        <div className="app app-upload">
+          <div className="container container-upload">
+            <header className="header">
+              <div className="header-logo">
+                <img src="/logo.png" alt="SpeechCase" className="logo" />
+              </div>
+              <h1>SpeechCase</h1>
+            </header>
 
-            {isLoading && (
+            <div className="upload-section">
               <div className="loading">
                 <div className="spinner"></div>
                 <p>Loading PDF...</p>
               </div>
-            )}
 
-            {error && (
-              <div className="error-message">
-                {error}
-              </div>
-            )}
+              {error && (
+                <div className="error-message">
+                  {error}
+                </div>
+              )}
+            </div>
           </div>
+        </div>
+      )
+    }
 
-          <footer className="footer">
-            <p>
-              Powered by <strong>Web Speech Technology</strong> — Beta Version
-            </p>
-            <p className="browser-note">
-              Works best in Google Chrome
-            </p>
-          </footer>
+    // If no PDF and not processing, show loading state (redirect will happen via useEffect)
+    return (
+      <div className="app app-upload">
+        <div className="container container-upload">
+          <div className="loading">
+            <div className="spinner"></div>
+            <p>Redirecting to dashboard...</p>
+          </div>
         </div>
       </div>
     )
