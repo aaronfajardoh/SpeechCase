@@ -756,7 +756,7 @@ exports.sendSupportEmail = onCall(
           subject: "SpeechCase Support Request",
           text: `Support Request from: ${email}\n\nMessage:\n${message}`,
           html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <div style="font-family: 'SF Pro Text', 'Helvetica Neue', sans-serif; max-width: 600px; margin: 0 auto;">
               <h2 style="color: #1d1d1f;">Support Request</h2>
               <p><strong>From:</strong> ${email}</p>
               <div style="margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px;">

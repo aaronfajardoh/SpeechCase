@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, useParams } from 'react-router-dom'
 import * as pdfjsLib from 'pdfjs-dist'
 import { PDFDocument, rgb } from 'pdf-lib'
 import { httpsCallable } from 'firebase/functions'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
-import { doc, getDoc } from 'firebase/firestore'
+import { doc, getDoc, onSnapshot, collection, query, orderBy } from 'firebase/firestore'
 import { functions, storage, db } from '../firebase'
 import { useAuth } from '../contexts/AuthContext'
 import '../App.css'
@@ -66,6 +66,8 @@ function Home() {
   const { currentUser } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const params = useParams()
+  const documentIdFromUrl = params.documentId // Get documentId from URL params
   const [pdfFile, setPdfFile] = useState(null)
   const [pdfDoc, setPdfDoc] = useState(null)
   const [extractedText, setExtractedText] = useState('')
@@ -202,37 +204,35 @@ function Home() {
     return () => window.removeEventListener('resize', checkMobile)
   }, [])
 
-  // Load document from Storage if navigated from Dashboard
+  // Load document from URL params or location state
   useEffect(() => {
-    const loadDocumentFromStorage = async () => {
-      if (!location.state || !currentUser || pdfDoc) {
-        return // Don't load if PDF is already loaded
+    const loadDocument = async () => {
+      // Priority: URL params > location state
+      const docId = documentIdFromUrl || location.state?.documentId
+      
+      if (!currentUser) {
+        return // Wait for auth
       }
       
-      const { documentId, storageUrl, file } = location.state
+      // If we already have this document loaded, don't reload
+      if (pdfDoc && documentId === docId) {
+        return
+      }
       
-      // If a file is provided directly (from upload), use it
-      if (file) {
-        // Prevent duplicate processing (React Strict Mode causes double renders)
-        // Use a unique key based on file properties to identify the same file
+      // Handle file upload from location state (new upload)
+      if (location.state?.file && !docId) {
+        const file = location.state.file
         const fileKey = `${file.name}-${file.size}-${file.lastModified}`
         
-        // Check if we're already processing this exact file
         if (processingFileRef.current === fileKey) {
           return
         }
         
-        // Set the ref IMMEDIATELY (synchronously) to prevent race condition
         processingFileRef.current = fileKey
-        
         const event = { target: { files: [file] } }
         await handleFileChange(event)
-        
-        // Clear state to prevent re-loading
         navigate(location.pathname, { replace: true, state: null })
         
-        // Clear processing ref after processing completes
-        // Use a longer delay to ensure handleFileChange completes
         setTimeout(() => {
           if (processingFileRef.current === fileKey) {
             processingFileRef.current = null
@@ -241,54 +241,139 @@ function Home() {
         return
       }
       
-      // If storageUrl is provided, load PDF from Storage
-      if (storageUrl && documentId) {
+      // Load existing document from Firestore
+      if (docId) {
         try {
           setIsLoading(true)
           setError('')
           
-          // Fetch PDF from Storage
-          const response = await fetch(storageUrl)
-          const arrayBuffer = await response.arrayBuffer()
-          const blob = new Blob([arrayBuffer], { type: 'application/pdf' })
-          const fileName = documentId.split('-').slice(0, -1).join('-') || 'document.pdf'
-          const file = new File([blob], fileName, { type: 'application/pdf' })
-          
-          // Get document metadata from Firestore
-          const docRef = doc(db, 'users', currentUser.uid, 'documents', documentId)
+          const docRef = doc(db, 'users', currentUser.uid, 'documents', docId)
           const docSnap = await getDoc(docRef)
           
-          if (docSnap.exists()) {
-            setDocumentId(documentId)
+          if (!docSnap.exists()) {
+            setError('Document not found')
+            setIsLoading(false)
+            return
+          }
+          
+          const docData = docSnap.data()
+          setDocumentId(docId)
+          
+          // Load timeline if it exists
+          if (docData.timeline && Array.isArray(docData.timeline)) {
+            setTimeline(docData.timeline)
+          }
+          
+          // Load summary if it exists
+          if (docData.summary) {
+            setSummaryText(docData.summary)
+          }
+          
+          // Load PDF from Storage
+          if (docData.storageUrl) {
+            const response = await fetch(docData.storageUrl)
+            const arrayBuffer = await response.arrayBuffer()
+            const blob = new Blob([arrayBuffer], { type: 'application/pdf' })
+            const fileName = docData.fileName || `${docId}.pdf`
+            const file = new File([blob], fileName, { type: 'application/pdf' })
             
             // Process the file like a normal upload, passing the existing documentId
             const event = { target: { files: [file] } }
-            await handleFileChange(event, documentId)
+            await handleFileChange(event, docId)
           } else {
-            setError('Document not found')
+            setError('PDF file not found in storage')
             setIsLoading(false)
           }
           
-          // Clear state to prevent re-loading
-          navigate(location.pathname, { replace: true, state: null })
+          // Clear location state to prevent re-loading
+          if (location.state) {
+            navigate(location.pathname, { replace: true, state: null })
+          }
         } catch (err) {
-          console.error('Error loading document from Storage:', err)
+          console.error('Error loading document:', err)
           setError('Error loading document: ' + err.message)
           setIsLoading(false)
         }
       }
     }
     
-    loadDocumentFromStorage()
+    loadDocument()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.state, currentUser])
+  }, [documentIdFromUrl, currentUser, location.state])
 
+  // Set up real-time listeners for document data (timeline, summary, characters)
+  useEffect(() => {
+    if (!documentId || !currentUser) {
+      return
+    }
+    
+    const docRef = doc(db, 'users', currentUser.uid, 'documents', documentId)
+    
+    // Listen for document updates (timeline, summary)
+    const unsubscribeDoc = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data()
+        
+        // Update timeline if it exists and is different
+        if (data.timeline && Array.isArray(data.timeline)) {
+          setTimeline(data.timeline)
+        }
+        
+        // Update summary if it exists and is different
+        if (data.summary && data.summary !== summaryText) {
+          setSummaryText(data.summary)
+        }
+      }
+    }, (error) => {
+      console.error('Error listening to document updates:', error)
+    })
+    
+    // Listen for characters subcollection
+    const charactersRef = collection(db, 'users', currentUser.uid, 'documents', documentId, 'characters')
+    const charactersQuery = query(charactersRef, orderBy('characterIndex', 'asc'))
+    
+    const unsubscribeCharacters = onSnapshot(charactersQuery, (snapshot) => {
+      const charactersList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }))
+      
+      if (charactersList.length > 0) {
+        // Get metadata from main document
+        getDoc(docRef).then((docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data()
+            setCharacters({
+              characters: charactersList,
+              isOrgChart: data.isOrgChart || false,
+              characterCount: charactersList.length
+            })
+          }
+        }).catch((err) => {
+          console.error('Error fetching character metadata:', err)
+        })
+      } else {
+        // No characters yet
+        setCharacters(null)
+      }
+    }, (error) => {
+      console.error('Error listening to characters:', error)
+    })
+    
+    return () => {
+      unsubscribeDoc()
+      unsubscribeCharacters()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentId, currentUser])
+  
   // Redirect to dashboard if no PDF is loaded and not processing one
   useEffect(() => {
-    if (!pdfDoc && !isLoading && !location.state?.file && !location.state?.documentId) {
+    // Only redirect if we're not on a document route and have no file/state
+    if (!pdfDoc && !isLoading && !location.state?.file && !documentIdFromUrl && !location.state?.documentId) {
       navigate('/dashboard', { replace: true })
     }
-  }, [pdfDoc, isLoading, location.state, navigate])
+  }, [pdfDoc, isLoading, location.state, navigate, documentIdFromUrl])
 
   // Sidebar resize handlers
   const handleResizeStart = useCallback((e) => {
@@ -6236,6 +6321,7 @@ function Home() {
           }
         
         // Process PDF in background (don't block UI)
+        const isNewDocument = !existingDocumentId && !documentId
         processPDFForAI(finalDocumentId, initialText, {
           fileName: file.name,
           pageCount: pdf.numPages,
@@ -6245,10 +6331,18 @@ function Home() {
           uploadedAt: new Date().toISOString()
         }).then(() => {
           setIsPDFProcessing(false)
+          // Redirect to document route after new upload completes
+          if (isNewDocument && finalDocumentId) {
+            navigate(`/document/${finalDocumentId}`, { replace: true })
+          }
         }).catch(err => {
           console.error('Error processing PDF for AI:', err)
           setIsPDFProcessing(false)
           // Don't show error to user - AI features will just be unavailable
+          // Still redirect even if processing fails
+          if (isNewDocument && finalDocumentId) {
+            navigate(`/document/${finalDocumentId}`, { replace: true })
+          }
         })
       }
       
@@ -6618,7 +6712,7 @@ function Home() {
     }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-family: 'SF Pro Text', 'Helvetica Neue', sans-serif;
       background: #101114;
       color: #e8eaed;
       padding: 2rem;

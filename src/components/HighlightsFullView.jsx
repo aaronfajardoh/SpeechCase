@@ -336,7 +336,7 @@ const HighlightsFullView = ({ highlightItems, setHighlightItems, documentId, hig
   <meta charset="UTF-8">
   <style>
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-family: "SF Pro Text", "Helvetica Neue", sans-serif;
       line-height: 1.6;
       color: #333;
       max-width: 800px;

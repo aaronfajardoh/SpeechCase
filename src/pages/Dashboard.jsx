@@ -197,6 +197,7 @@ function Dashboard() {
     setUploading(true)
     try {
       // Navigate to Home page with file - Home.jsx will handle the upload
+      // After upload, it will redirect to /document/:documentId
       navigate('/app', { state: { file } })
     } catch (error) {
       console.error('Error uploading file:', error)
@@ -355,13 +356,8 @@ function Dashboard() {
 
   // Handle card click - navigate to document view
   const handleCardClick = async (docId, storageUrl) => {
-    if (storageUrl) {
-      // Navigate with document info
-      navigate('/app', { state: { documentId: docId, storageUrl: storageUrl } })
-    } else {
-      // If no storage URL, just navigate with docId
-      navigate('/app', { state: { documentId: docId } })
-    }
+    // Navigate to document route with documentId in URL
+    navigate(`/document/${docId}`)
   }
 
   // Handle support form attachment
