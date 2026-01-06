@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import LandingPage from './pages/LandingPage.jsx';
 import Home from './pages/Home.jsx';
+import Dashboard from './pages/Dashboard.jsx';
 import PrivateRoute from './components/PrivateRoute.jsx';
 import './App.css';
 
@@ -36,9 +37,9 @@ const LandingPageRoute = () => {
     );
   }
 
-  // Redirect to app if already logged in
+  // Redirect to dashboard if already logged in
   if (currentUser) {
-    return <Navigate to="/app" replace />;
+    return <Navigate to="/dashboard" replace />;
   }
 
   // Show landing page if not logged in
@@ -50,6 +51,14 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<LandingPageRoute />} />
+        <Route 
+          path="/dashboard" 
+          element={
+            <PrivateRoute>
+              <Dashboard />
+            </PrivateRoute>
+          } 
+        />
         <Route 
           path="/app" 
           element={

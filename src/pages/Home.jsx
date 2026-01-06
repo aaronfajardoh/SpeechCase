@@ -1,8 +1,12 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import * as pdfjsLib from 'pdfjs-dist'
 import { PDFDocument, rgb } from 'pdf-lib'
 import { httpsCallable } from 'firebase/functions'
-import { functions } from '../firebase'
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
+import { doc, getDoc } from 'firebase/firestore'
+import { functions, storage, db } from '../firebase'
+import { useAuth } from '../contexts/AuthContext'
 import '../App.css'
 
 import {
@@ -59,6 +63,9 @@ let renderPagesPromise = null
 let renderThumbnailsPromise = null
 
 function Home() {
+  const { currentUser } = useAuth()
+  const navigate = useNavigate()
+  const location = useLocation()
   const [pdfFile, setPdfFile] = useState(null)
   const [pdfDoc, setPdfDoc] = useState(null)
   const [extractedText, setExtractedText] = useState('')
@@ -193,6 +200,64 @@ function Home() {
     window.addEventListener('resize', checkMobile)
     return () => window.removeEventListener('resize', checkMobile)
   }, [])
+
+  // Load document from Storage if navigated from Dashboard
+  useEffect(() => {
+    const loadDocumentFromStorage = async () => {
+      if (!location.state || !currentUser || pdfDoc) return // Don't load if PDF is already loaded
+      
+      const { documentId, storageUrl, file } = location.state
+      
+      // If a file is provided directly (from upload), use it
+      if (file) {
+        const event = { target: { files: [file] } }
+        await handleFileChange(event)
+        // Clear state to prevent re-loading
+        navigate(location.pathname, { replace: true, state: null })
+        return
+      }
+      
+      // If storageUrl is provided, load PDF from Storage
+      if (storageUrl && documentId) {
+        try {
+          setIsLoading(true)
+          setError('')
+          
+          // Fetch PDF from Storage
+          const response = await fetch(storageUrl)
+          const arrayBuffer = await response.arrayBuffer()
+          const blob = new Blob([arrayBuffer], { type: 'application/pdf' })
+          const fileName = documentId.split('-').slice(0, -1).join('-') || 'document.pdf'
+          const file = new File([blob], fileName, { type: 'application/pdf' })
+          
+          // Get document metadata from Firestore
+          const docRef = doc(db, 'users', currentUser.uid, 'documents', documentId)
+          const docSnap = await getDoc(docRef)
+          
+          if (docSnap.exists()) {
+            setDocumentId(documentId)
+            
+            // Process the file like a normal upload
+            const event = { target: { files: [file] } }
+            await handleFileChange(event)
+          } else {
+            setError('Document not found')
+            setIsLoading(false)
+          }
+          
+          // Clear state to prevent re-loading
+          navigate(location.pathname, { replace: true, state: null })
+        } catch (err) {
+          console.error('Error loading document from Storage:', err)
+          setError('Error loading document: ' + err.message)
+          setIsLoading(false)
+        }
+      }
+    }
+    
+    loadDocumentFromStorage()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state, currentUser])
 
   // Sidebar resize handlers
   const handleResizeStart = useCallback((e) => {
@@ -6093,8 +6158,8 @@ function Home() {
         setDetectedLanguage(detected)
       }
 
-      // Process PDF for AI features (chunking and embeddings)
-      if (initialText && initialText.length > 0) {
+      // Upload PDF to Storage and process for AI features
+      if (initialText && initialText.length > 0 && currentUser) {
         const newDocumentId = `${file.name}-${Date.now()}`
         setDocumentId(newDocumentId)
         setTimeline(null) // Clear previous timeline
@@ -6102,11 +6167,26 @@ function Home() {
         setTimelineIcons({}) // Clear previous icons
         setIsPDFProcessing(true)
         
+        // Upload PDF to Storage first
+        let storageUrl = null
+        try {
+          const storageRef = ref(storage, `users/${currentUser.uid}/uploads/${newDocumentId}.pdf`)
+          await uploadBytes(storageRef, file)
+          storageUrl = await getDownloadURL(storageRef)
+          console.log('PDF uploaded to Storage:', storageUrl)
+        } catch (storageError) {
+          console.error('Error uploading PDF to Storage:', storageError)
+          // Continue processing even if storage upload fails
+        }
+        
         // Process PDF in background (don't block UI)
         processPDFForAI(newDocumentId, initialText, {
           fileName: file.name,
           pageCount: pdf.numPages,
-          textLength: initialText.length
+          textLength: initialText.length,
+          storageUrl: storageUrl,
+          fileSize: file.size,
+          uploadedAt: new Date().toISOString()
         }).then(() => {
           setIsPDFProcessing(false)
         }).catch(err => {
@@ -8077,6 +8157,8 @@ function Home() {
     setTotalPages(0)
     setError('')
     setDetectedLanguage(null)
+    // Navigate back to dashboard
+    navigate('/dashboard')
     setStartPosition(0)
     setRenderedPages([])
     setPageData([])

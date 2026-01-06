@@ -620,3 +620,64 @@ exports.generateTts = onCall(async (request) => {
     throw new HttpsError("internal", `Failed to generate TTS: ${error.message}`);
   }
 });
+
+/**
+ * Delete Document: Delete a document and its associated Storage file
+ * @param {Object} data - Request data
+ * @param {string} data.documentId - Document ID to delete
+ * @param {string} data.storageUrl - Optional Storage URL to delete
+ * @param {Object} context - Firebase callable context (includes auth)
+ * @return {Promise<Object>} Success response
+ */
+exports.deleteDocument = onCall(async (request) => {
+  try {
+    const {documentId, storageUrl} = request.data;
+    const uid = request.auth && request.auth.uid;
+
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "User must be authenticated");
+    }
+
+    if (!documentId) {
+      throw new HttpsError("invalid-argument", "documentId is required");
+    }
+
+    logger.info(`Deleting document for user ${uid}, document ${documentId}`);
+
+    // Delete from Firestore (this will also delete chunks via vectorStore)
+    await vectorStore.deleteDocument(uid, documentId);
+
+    // Delete from Storage if URL is provided
+    if (storageUrl) {
+      try {
+        const admin = require("firebase-admin");
+        const bucket = admin.storage().bucket();
+        // Extract the file path from the storage URL
+        // URL format: https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{path}?alt=media
+        const urlMatch = storageUrl.match(/\/o\/(.+?)\?/);
+        if (urlMatch && urlMatch[1]) {
+          const filePath = decodeURIComponent(urlMatch[1]);
+          const file = bucket.file(filePath);
+          await file.delete();
+          logger.info(`Deleted file from Storage: ${filePath}`);
+        }
+      } catch (storageError) {
+        logger.warn("Error deleting file from Storage:", storageError);
+        // Continue even if storage deletion fails
+      }
+    }
+
+    logger.info(`Successfully deleted document ${documentId}`);
+
+    return {
+      success: true,
+      message: "Document deleted successfully",
+    };
+  } catch (error) {
+    logger.error("Error deleting document:", error);
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+    throw new HttpsError("internal", `Failed to delete document: ${error.message}`);
+  }
+});
