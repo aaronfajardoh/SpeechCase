@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
+import { httpsCallable } from 'firebase/functions'
+import { functions } from '../firebase'
 import { IconHighlighter, IconRefresh, IconTrash, IconCopy, IconDownload, IconChevronLeft } from './Icons.jsx'
 import MermaidDiagram from './MermaidDiagram.jsx'
 import { markdownToClipboardHtml, copyHtmlToClipboard } from '../utils/clipboardUtils.js'
@@ -249,23 +251,13 @@ const HighlightsFullView = ({ highlightItems, setHighlightItems, documentId, hig
         .map(item => item.text)
         .join('\n\n')
 
-      const response = await fetch('/api/ai/summary', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          documentId,
-          highlights: combinedText
-        })
+      const generateSummary = httpsCallable(functions, 'generateSummary')
+      const result = await generateSummary({
+        documentId,
+        highlights: combinedText,
       })
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Failed to generate summary')
-      }
-
-      const data = await response.json()
+      const data = result.data
       
       // Store summary locally and switch to summary tab
       setLocalSummaryText(data.summary)
@@ -276,7 +268,9 @@ const HighlightsFullView = ({ highlightItems, setHighlightItems, documentId, hig
       }
     } catch (error) {
       console.error('Error generating summary:', error)
-      alert(`Failed to generate summary: ${error.message}`)
+      // Handle Firebase-specific errors
+      const errorMessage = error.code ? `Firebase error: ${error.message}` : error.message
+      alert(`Failed to generate summary: ${errorMessage}`)
     } finally {
       setIsGeneratingSummary(false)
     }

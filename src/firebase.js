@@ -26,13 +26,15 @@ if (typeof window !== 'undefined') {
   analytics = getAnalytics(app);
 }
 
-// Import Auth and Firestore
+// Import Auth, Firestore, and Functions
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getFunctions } from "firebase/functions";
 
-// Initialize Auth and Firestore
+// Initialize Auth, Firestore, and Functions
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+export const functions = getFunctions(app);
 
 // Export the app and analytics for use throughout your app
 export { app, analytics };

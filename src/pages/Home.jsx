@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import * as pdfjsLib from 'pdfjs-dist'
 import { PDFDocument, rgb } from 'pdf-lib'
+import { httpsCallable } from 'firebase/functions'
+import { functions } from '../firebase'
 import '../App.css'
 
 import {
@@ -1619,21 +1621,10 @@ function Home() {
   const synthesizeGoogleTTS = async (text, rate = 1.0, documentId = null) => {
     try {
       console.log('Calling Google TTS API with text length:', text.length, 'rate:', rate, 'documentId:', documentId)
-      const response = await fetch('/api/tts', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ text, rate, documentId }),
-      })
+      const generateTts = httpsCallable(functions, 'generateTts')
+      const result = await generateTts({ text, voiceId: 'en-US-Standard-C' })
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
-        console.error('Google TTS API error:', response.status, errorData)
-        throw new Error(errorData.error || `Failed to synthesize speech: ${response.status}`)
-      }
-
-      const data = await response.json()
+      const data = result.data
       if (data.audioChunks) {
         console.log('Google TTS API success, received', data.audioChunks.length, 'audio chunks')
       } else {
@@ -1642,6 +1633,10 @@ function Home() {
       return data
     } catch (error) {
       console.error('Google TTS error:', error)
+      // Handle Firebase-specific errors
+      if (error.code) {
+        throw new Error(`Firebase error: ${error.message}`)
+      }
       throw error
     }
   }
@@ -1993,25 +1988,38 @@ function Home() {
         console.log(`First chunk: ${firstChunkText.length} chars, remaining: ${remainingText.length} chars`)
 
         // Get all chunks first (including remaining text chunks)
+        // Client-side chunking: split text into chunks of ~4500 bytes
         let remainingChunks = []
         if (remainingText.length > 0) {
           try {
-            const chunksResponse = await fetch('/api/tts/chunks', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text: remainingText }),
-            })
+            // Simple client-side chunking: split by sentences, respecting byte limit
+            const maxBytes = 4500
+            const chunks = []
+            let currentChunk = ''
             
-            if (chunksResponse.ok) {
-              const { chunks } = await chunksResponse.json()
-              remainingChunks = chunks
-              console.log(`Remaining text split into ${chunks.length} chunks`)
-            } else {
-              console.error('Failed to get remaining chunks, will process as single chunk')
-              remainingChunks = [remainingText] // Fallback: treat remaining as one chunk
+            // Split by sentences first
+            const sentences = remainingText.split(/([.!?]+\s+)/).filter(s => s.trim().length > 0)
+            
+            for (const sentence of sentences) {
+              const sentenceBytes = new TextEncoder().encode(sentence).length
+              const currentChunkBytes = new TextEncoder().encode(currentChunk).length
+              
+              if (currentChunkBytes + sentenceBytes > maxBytes && currentChunk.length > 0) {
+                chunks.push(currentChunk.trim())
+                currentChunk = sentence
+              } else {
+                currentChunk += sentence
+              }
             }
+            
+            if (currentChunk.trim().length > 0) {
+              chunks.push(currentChunk.trim())
+            }
+            
+            remainingChunks = chunks.length > 0 ? chunks : [remainingText]
+            console.log(`Remaining text split into ${remainingChunks.length} chunks`)
           } catch (err) {
-            console.error('Error getting remaining chunks:', err)
+            console.error('Error chunking remaining text:', err)
             remainingChunks = [remainingText] // Fallback: treat remaining as one chunk
           }
         }
@@ -6133,35 +6141,21 @@ function Home() {
   // Process PDF for AI features (chunking and embeddings)
   const processPDFForAI = async (docId, text, metadata) => {
     try {
-      const response = await fetch('/api/ai/process-pdf', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          documentId: docId,
-          text: text,
-          metadata: metadata
-        })
+      const processPdf = httpsCallable(functions, 'processPdf')
+      const result = await processPdf({
+        documentId: docId,
+        text: text,
+        metadata: metadata,
       })
 
-      if (!response.ok) {
-        let errorData;
-        try {
-          errorData = await response.json()
-        } catch (jsonError) {
-          // If response is not valid JSON, create a generic error
-          const statusText = response.statusText || 'Unknown error'
-          throw new Error(`Failed to process PDF: ${response.status} ${statusText}`)
-        }
-        throw new Error(errorData.error || errorData.details || 'Failed to process PDF')
-      }
-
-      const result = await response.json()
-      console.log('PDF processed for AI:', result)
+      console.log('PDF processed for AI:', result.data)
       return result
     } catch (error) {
       console.error('Error processing PDF for AI:', error)
+      // Handle Firebase-specific errors
+      if (error.code) {
+        throw new Error(`Firebase error: ${error.message}`)
+      }
       throw error
     }
   }
@@ -6190,30 +6184,12 @@ function Home() {
     setTimelineError(null)
 
     try {
-      const response = await fetch('/api/ai/timeline', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          documentId: documentId,
-          force: force
-        })
+      const generateTimelineFn = httpsCallable(functions, 'generateTimeline')
+      const result = await generateTimelineFn({
+        documentId: documentId,
       })
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        // If document not found and we haven't retried much, wait and retry
-        if (errorData.error && errorData.error.includes('not found') && retryCount < 5) {
-          setTimeout(() => {
-            generateTimeline(retryCount + 1)
-          }, 1000) // Wait 1 second and retry
-          return
-        }
-        throw new Error(errorData.error || 'Failed to generate timeline')
-      }
-
-      const data = await response.json()
+      const data = result.data
       
       if (!data.success) {
         // Couldn't generate timeline
@@ -6235,7 +6211,9 @@ function Home() {
       }
     } catch (error) {
       console.error('Error generating timeline:', error)
-      setTimelineError(error.message || 'Failed to generate timeline')
+      // Handle Firebase-specific errors
+      const errorMessage = error.code ? `Firebase error: ${error.message}` : (error.message || 'Failed to generate timeline')
+      setTimelineError(errorMessage)
       setTimeline(null)
       setTimelineIcons({})
     } finally {
@@ -6267,29 +6245,12 @@ function Home() {
     setCharactersError(null)
 
     try {
-      const response = await fetch('/api/ai/characters', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          documentId: documentId
-        })
+      const generateCharactersFn = httpsCallable(functions, 'generateCharacters')
+      const result = await generateCharactersFn({
+        documentId: documentId,
       })
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        // If document not found and we haven't retried much, wait and retry
-        if (errorData.error && errorData.error.includes('not found') && retryCount < 5) {
-          setTimeout(() => {
-            generateCharacters(retryCount + 1)
-          }, 1000) // Wait 1 second and retry
-          return
-        }
-        throw new Error(errorData.error || 'Failed to extract characters')
-      }
-
-      const data = await response.json()
+      const data = result.data
       
       // Check if we have characters data (even if success field is missing)
       if (data.characters && Array.isArray(data.characters) && data.characters.length > 0) {
@@ -6307,7 +6268,9 @@ function Home() {
       setCharacters(data)
     } catch (error) {
       console.error('Error extracting characters:', error)
-      setCharactersError(error.message || 'Failed to extract characters')
+      // Handle Firebase-specific errors
+      const errorMessage = error.code ? `Firebase error: ${error.message}` : (error.message || 'Failed to extract characters')
+      setCharactersError(errorMessage)
       setCharacters(null)
     } finally {
       setIsCharactersLoading(false)
