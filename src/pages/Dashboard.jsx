@@ -15,7 +15,8 @@ import {
   IconEdit,
   IconMoreVertical,
   IconLoading,
-  IconCheck
+  IconCheck,
+  IconClose
 } from '../components/Icons.jsx'
 import '../App.css'
 
@@ -38,8 +39,15 @@ function Dashboard() {
   const [loadingThumbnails, setLoadingThumbnails] = useState(new Set())
   const [thumbnails, setThumbnails] = useState({}) // Use state instead of ref for reactivity
   const [selectedDocs, setSelectedDocs] = useState(new Set()) // Track selected document IDs
+  const [tooltipCard, setTooltipCard] = useState(null) // Track which card should show tooltip
   const fileInputRef = useRef(null)
   const thumbnailCanvasRefs = useRef({}) // Keep ref for checking if thumbnail exists
+  const tooltipTimeoutRef = useRef(null) // Ref for tooltip timeout
+  const [supportForm, setSupportForm] = useState({ email: '', message: '' })
+  const [supportAttachments, setSupportAttachments] = useState([]) // Array of { file, preview }
+  const [isSubmittingSupport, setIsSubmittingSupport] = useState(false)
+  const [supportSubmitStatus, setSupportSubmitStatus] = useState(null)
+  const supportFileInputRef = useRef(null)
 
   // Fetch documents from Firestore
   useEffect(() => {
@@ -356,9 +364,83 @@ function Dashboard() {
     }
   }
 
-  // Support email handler
-  const handleSupportEmail = () => {
-    window.location.href = `mailto:aaronfajardoh@hotmail.com?subject=SpeechCase Support Request`
+  // Handle support form attachment
+  const handleSupportAttachment = (event) => {
+    const files = Array.from(event.target.files || [])
+    if (files.length === 0) return
+
+    files.forEach(file => {
+      if (!file.type.startsWith('image/')) {
+        alert('Please only attach image files (screenshots)')
+        return
+      }
+
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        setSupportAttachments(prev => [...prev, {
+          file,
+          preview: e.target.result,
+          id: Date.now() + Math.random()
+        }])
+      }
+      reader.readAsDataURL(file)
+    })
+
+    // Reset input
+    if (supportFileInputRef.current) {
+      supportFileInputRef.current.value = ''
+    }
+  }
+
+  // Remove support attachment
+  const removeSupportAttachment = (id) => {
+    setSupportAttachments(prev => prev.filter(att => att.id !== id))
+  }
+
+
+  // Handle support form submission
+  const handleSupportSubmit = async (e) => {
+    e.preventDefault()
+    setIsSubmittingSupport(true)
+    setSupportSubmitStatus(null)
+
+    try {
+      // Prepare attachments as base64
+      const attachments = await Promise.all(
+        supportAttachments.map(async (att) => {
+          // att.preview is already a data URL, extract base64 part
+          return {
+            data: att.preview,
+            filename: att.file.name || `screenshot-${att.id}.png`
+          }
+        })
+      )
+
+      // Call Cloud Function to send email
+      const sendSupportEmail = httpsCallable(functions, 'sendSupportEmail')
+      const result = await sendSupportEmail({
+        email: supportForm.email,
+        message: supportForm.message,
+        attachments: attachments
+      })
+
+      if (result.data.success) {
+        setSupportSubmitStatus('success')
+        setSupportForm({ email: '', message: '' })
+        setSupportAttachments([])
+      } else {
+        throw new Error('Failed to send email')
+      }
+    } catch (error) {
+      console.error('Error sending support email:', error)
+      setSupportSubmitStatus('error')
+      // Show more detailed error message
+      if (error.message) {
+        alert(`Error sending email: ${error.message}`)
+      }
+    } finally {
+      setIsSubmittingSupport(false)
+    }
   }
 
   if (loading) {
@@ -375,7 +457,8 @@ function Dashboard() {
       {/* Sidebar */}
       <div className="dashboard-sidebar">
         <div className="dashboard-sidebar-header">
-          <h2>SpeechCase</h2>
+          <img src="/logo.png" alt="Casedive" className="logo-small"/>
+          <h2>Casedive</h2>
         </div>
         
         <nav className="dashboard-sidebar-nav">
@@ -499,10 +582,26 @@ function Dashboard() {
                   <div
                     key={doc.id}
                     className={`dashboard-card ${hoveredCard === doc.id ? 'hovered' : ''} ${deleting.has(doc.id) ? 'deleting' : ''} ${selectedDocs.has(doc.id) ? 'selected' : ''}`}
-                    onMouseEnter={() => setHoveredCard(doc.id)}
+                    onMouseEnter={() => {
+                      setHoveredCard(doc.id)
+                      // Clear any existing timeout
+                      if (tooltipTimeoutRef.current) {
+                        clearTimeout(tooltipTimeoutRef.current)
+                      }
+                      // Set timeout to show tooltip after 1 second
+                      tooltipTimeoutRef.current = setTimeout(() => {
+                        setTooltipCard(doc.id)
+                      }, 1000)
+                    }}
                     onMouseLeave={() => {
                       setHoveredCard(null)
                       setMenuOpen(null)
+                      setTooltipCard(null)
+                      // Clear timeout if mouse leaves before 1 second
+                      if (tooltipTimeoutRef.current) {
+                        clearTimeout(tooltipTimeoutRef.current)
+                        tooltipTimeoutRef.current = null
+                      }
                     }}
                     onClick={(e) => {
                       // Don't navigate if clicking on menu or checkbox
@@ -552,6 +651,11 @@ function Dashboard() {
                       <h3 className="dashboard-card-title">
                         {doc.fileName || doc.id}
                       </h3>
+                      {tooltipCard === doc.id && (
+                        <div className="dashboard-card-tooltip">
+                          {doc.fileName || doc.id}
+                        </div>
+                      )}
                       <p className="dashboard-card-date">
                         {formatDate(doc.processedAt || doc.uploadedAt)}
                       </p>
@@ -622,19 +726,89 @@ function Dashboard() {
               <h1>Support</h1>
             </div>
             <div className="dashboard-view-content">
-              <div className="dashboard-support">
-                <IconMail size={48} />
-                <h2>Need Help?</h2>
-                <p>If you're experiencing any technical issues or have questions, please reach out to us.</p>
-                <button
-                  className="dashboard-support-btn"
-                  onClick={handleSupportEmail}
-                >
-                  <IconMail size={20} />
-                  Email Support
+              <form className="dashboard-support-form" onSubmit={handleSupportSubmit}>
+                <div className="dashboard-support-form-group">
+                  <label htmlFor="support-email">Your Email</label>
+                  <input
+                    type="email"
+                    id="support-email"
+                    value={supportForm.email}
+                    onChange={(e) => setSupportForm({ ...supportForm, email: e.target.value })}
+                    required
+                    placeholder="your.email@example.com"
+                  />
+                </div>
+                <div className="dashboard-support-form-group">
+                  <label htmlFor="support-message">Message</label>
+                  <textarea
+                    id="support-message"
+                    value={supportForm.message}
+                    onChange={(e) => setSupportForm({ ...supportForm, message: e.target.value })}
+                    required
+                    rows="6"
+                    placeholder="Describe the issue or question..."
+                  />
+                </div>
+                <div className="dashboard-support-form-group">
+                  <label htmlFor="support-attachments">Screenshots (Optional)</label>
+                  <div className="dashboard-support-attachments">
+                    <button
+                      type="button"
+                      className="dashboard-support-attach-btn"
+                      onClick={() => supportFileInputRef.current?.click()}
+                    >
+                      <IconUpload size={18} />
+                      Attach Screenshot
+                    </button>
+                    <input
+                      ref={supportFileInputRef}
+                      type="file"
+                      id="support-attachments"
+                      accept="image/*"
+                      multiple
+                      onChange={handleSupportAttachment}
+                      style={{ display: 'none' }}
+                    />
+                    {supportAttachments.length > 0 && (
+                      <div className="dashboard-support-attachments-preview">
+                        {supportAttachments.map((att) => (
+                          <div key={att.id} className="dashboard-support-attachment-item">
+                            <img src={att.preview} alt="Attachment preview" />
+                            <div className="dashboard-support-attachment-actions">
+                              <button
+                                type="button"
+                                className="dashboard-support-attachment-remove"
+                                onClick={() => removeSupportAttachment(att.id)}
+                                aria-label="Remove attachment"
+                              >
+                                <IconClose size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {supportAttachments.length > 0 && (
+                      <p className="dashboard-support-attachments-note">
+                        {supportAttachments.length} screenshot(s) will be attached to your support email.
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {supportSubmitStatus === 'success' && (
+                  <div className="dashboard-support-form-status success">
+                    ✓ Support email sent successfully! We'll get back to you soon.
+                  </div>
+                )}
+                {supportSubmitStatus === 'error' && (
+                  <div className="dashboard-support-form-status error">
+                    ✗ Error opening email client. Please try again.
+                  </div>
+                )}
+                <button type="submit" className="dashboard-support-submit-btn" disabled={isSubmittingSupport}>
+                  {isSubmittingSupport ? 'Sending...' : 'Send Message'}
                 </button>
-                <p className="dashboard-support-email">aaronfajardoh@hotmail.com</p>
-              </div>
+              </form>
             </div>
           </div>
         )}

@@ -29,6 +29,7 @@ const prompts = require("./src/prompts");
 const {getOpenAIClient} = require("./src/embeddings");
 const textToSpeech = require("@google-cloud/text-to-speech");
 const {getCharacterImagesBatch} = require("./src/imageService");
+const nodemailer = require("nodemailer");
 
 // Initialize Firestore
 const db = admin.firestore();
@@ -681,3 +682,108 @@ exports.deleteDocument = onCall(async (request) => {
     throw new HttpsError("internal", `Failed to delete document: ${error.message}`);
   }
 });
+
+/**
+ * Send Support Email: Send support request email with attachments
+ * @param {Object} data - Request data
+ * @param {string} data.email - User's email address
+ * @param {string} data.message - Support message
+ * @param {Array} data.attachments - Array of base64 encoded images with filenames
+ * @param {Object} context - Firebase callable context (includes auth)
+ * @return {Promise<Object>} Success response
+ */
+exports.sendSupportEmail = onCall(
+    {
+      secrets: ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS"],
+    },
+    async (request) => {
+      try {
+        const {email, message, attachments = []} = request.data;
+        const uid = request.auth && request.auth.uid;
+
+        if (!uid) {
+          throw new HttpsError("unauthenticated", "User must be authenticated");
+        }
+
+        if (!email || !message) {
+          throw new HttpsError("invalid-argument", "email and message are required");
+        }
+
+        logger.info(`Sending support email from user ${uid}`);
+
+        // Get SMTP configuration from secrets
+        const smtpHost = process.env.SMTP_HOST;
+        const smtpPort = parseInt(process.env.SMTP_PORT || "587", 10);
+        const smtpUser = process.env.SMTP_USER;
+        const smtpPass = process.env.SMTP_PASS;
+        const supportEmail = process.env.SUPPORT_EMAIL || "aaronfajardoh@hotmail.com";
+
+        if (!smtpHost || !smtpUser || !smtpPass) {
+          logger.error("SMTP configuration missing");
+          throw new HttpsError(
+              "failed-precondition",
+              "SMTP configuration not set. Please configure SMTP_HOST, SMTP_USER, and SMTP_PASS secrets.",
+          );
+        }
+
+        // Create transporter
+        const transporter = nodemailer.createTransport({
+          host: smtpHost,
+          port: smtpPort,
+          secure: smtpPort === 465, // true for 465, false for other ports
+          auth: {
+            user: smtpUser,
+            pass: smtpPass,
+          },
+        });
+
+        // Prepare email attachments
+        const emailAttachments = attachments.map((att, index) => {
+          // att should be { data: base64String, filename: string }
+          const base64Data = att.data.replace(/^data:image\/\w+;base64,/, "");
+          return {
+            filename: att.filename || `screenshot-${index + 1}.png`,
+            content: base64Data,
+            encoding: "base64",
+          };
+        });
+
+        // Email content
+        const mailOptions = {
+          from: `"SpeechCase Support" <${smtpUser}>`,
+          to: supportEmail,
+          replyTo: email,
+          subject: "SpeechCase Support Request",
+          text: `Support Request from: ${email}\n\nMessage:\n${message}`,
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #1d1d1f;">Support Request</h2>
+              <p><strong>From:</strong> ${email}</p>
+              <div style="margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px;">
+                <p style="margin: 0; white-space: pre-wrap;">${message.replace(/\n/g, "<br>")}</p>
+              </div>
+              ${attachments.length > 0 ? `<p style="margin-top: 20px;"><strong>Attachments:</strong> ${attachments.length} screenshot(s)</p>` : ""}
+            </div>
+          `,
+          attachments: emailAttachments,
+        };
+
+        // Send email
+        const info = await transporter.sendMail(mailOptions);
+
+        logger.info(`Support email sent successfully: ${info.messageId}`);
+
+        return {
+          success: true,
+          messageId: info.messageId,
+          message: "Support email sent successfully",
+        };
+      } catch (error) {
+        logger.error("Error sending support email:", error);
+        if (error instanceof HttpsError) {
+          throw error;
+        }
+        throw new HttpsError("internal", `Failed to send support email: ${error.message}`);
+      }
+    },
+);
