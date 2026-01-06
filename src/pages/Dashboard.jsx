@@ -396,17 +396,17 @@ function Dashboard() {
                         />
                       ) : loadingThumbnails.has(doc.id) ? (
                         <div className="dashboard-card-thumbnail-loading">
-                          <IconLoading size={32} />
+                          <IconLoading size={29.44} />
                           <span>Loading...</span>
                         </div>
                       ) : (
                         <div className="dashboard-card-thumbnail-placeholder">
-                          <IconDocument size={48} />
+                          <IconDocument size={44.16} />
                         </div>
                       )}
                       {deleting === doc.id && (
                         <div className="dashboard-card-deleting-overlay">
-                          <IconLoading size={24} />
+                          <IconLoading size={19.2} />
                           <span>Deleting...</span>
                         </div>
                       )}
@@ -435,7 +435,7 @@ function Dashboard() {
                             setMenuOpen(menuOpen === doc.id ? null : doc.id)
                           }}
                         >
-                          <IconMoreVertical size={20} />
+                          <IconMoreVertical size={16} />
                         </button>
                         {menuOpen === doc.id && (
                           <div className="dashboard-card-menu-dropdown">
@@ -445,7 +445,7 @@ function Dashboard() {
                                 handleRename(doc.id, doc.fileName || doc.id)
                               }}
                             >
-                              <IconEdit size={16} />
+                              <IconEdit size={12.8} />
                               <span>Rename</span>
                             </button>
                             <button
@@ -455,7 +455,7 @@ function Dashboard() {
                               }}
                               className="danger"
                             >
-                              <IconTrash size={16} />
+                              <IconTrash size={12.8} />
                               <span>Delete</span>
                             </button>
                           </div>
