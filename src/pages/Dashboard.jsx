@@ -387,14 +387,31 @@ function Dashboard() {
             <span>Documents</span>
           </button>
 
-          <button
-            className="dashboard-nav-item dashboard-upload-btn"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
+          <div
+            className={`dashboard-upload-area ${uploading ? 'uploading' : ''}`}
+            onClick={() => !uploading && fileInputRef.current?.click()}
+            onDragOver={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+            }}
+            onDrop={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              if (uploading) return
+              const file = e.dataTransfer.files[0]
+              if (file && file.type === 'application/pdf') {
+                const event = { target: { files: [file] } }
+                handleFileUpload(event)
+              }
+            }}
           >
-            <IconUpload size={20} />
-            <span>{uploading ? 'Uploading...' : 'Upload PDF'}</span>
-          </button>
+            <div className="dashboard-upload-content">
+              <IconUpload size={43} className="dashboard-upload-icon" />
+              <span className="dashboard-upload-text">
+                {uploading ? 'Uploading...' : 'Click to upload PDF'}
+              </span>
+            </div>
+          </div>
 
           <button
             className={`dashboard-nav-item ${activeView === 'settings' ? 'active' : ''}`}
@@ -451,13 +468,30 @@ function Dashboard() {
                 <IconDocument size={64} />
                 <h2>No documents yet</h2>
                 <p>Upload your first PDF to get started</p>
-                <button
-                  className="dashboard-empty-upload-btn"
+                <div
+                  className="dashboard-empty-upload-area"
                   onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    const file = e.dataTransfer.files[0]
+                    if (file && file.type === 'application/pdf') {
+                      const event = { target: { files: [file] } }
+                      handleFileUpload(event)
+                    }
+                  }}
                 >
-                  <IconUpload size={20} />
-                  Upload PDF
-                </button>
+                  <div className="dashboard-empty-upload-content">
+                    <IconUpload size={58} className="dashboard-empty-upload-icon" />
+                    <span className="dashboard-empty-upload-text">
+                      Click to upload PDF
+                    </span>
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="dashboard-grid">
