@@ -5426,6 +5426,57 @@
   color: #5f6368;
 }
 
+.dashboard-selection-indicator {
+  position: fixed;
+  top: 2rem;
+  right: 2rem;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  z-index: 1000;
+  border: 1px solid #e5e5e7;
+}
+
+.dashboard-selection-count {
+  font-size: 0.875rem;
+  color: #1d1d1f;
+  font-weight: 500;
+}
+
+.dashboard-selection-delete-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #ffffff;
+  color: #ff3b30;
+  border: 1px solid #ff3b30;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.dashboard-selection-delete-btn:hover {
+  background: #fff5f5;
+  border-color: #d70015;
+  color: #d70015;
+}
+
+.dashboard-selection-delete-btn svg {
+  color: #ff3b30;
+}
+
+.dashboard-selection-delete-btn:hover svg {
+  color: #d70015;
+}
+
 /* Empty State */
 .dashboard-empty {
   display: flex;
@@ -5506,6 +5557,58 @@
 .dashboard-card.deleting {
   opacity: 0.5;
   pointer-events: none;
+}
+
+.dashboard-card.selected {
+  border-color: #007aff;
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.2);
+}
+
+.dashboard-card-checkbox-container {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.6rem;
+  z-index: 10;
+}
+
+.dashboard-card-checkbox {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1.5px solid rgba(0, 0, 0, 0.15);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  opacity: 0.7;
+}
+
+.dashboard-card:hover .dashboard-card-checkbox {
+  opacity: 1;
+}
+
+.dashboard-card-checkbox:hover {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.25);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.dashboard-card-checkbox.checked {
+  background: #007aff;
+  border-color: #007aff;
+  opacity: 1;
+  box-shadow: 0 1px 3px rgba(0, 122, 255, 0.3);
+}
+
+.dashboard-card-checkbox.checked:hover {
+  background: #0051d5;
+  border-color: #0051d5;
 }
 
 .dashboard-card-thumbnail {
@@ -5819,6 +5922,21 @@
 
   .dashboard-header h1 {
     font-size: 1.5rem;
+  }
+
+  .dashboard-selection-indicator {
+    top: 1rem;
+    right: 1rem;
+    padding: 0.625rem 0.875rem;
+  }
+
+  .dashboard-selection-count {
+    font-size: 0.8125rem;
+  }
+
+  .dashboard-selection-delete-btn {
+    padding: 0.4375rem 0.625rem;
+    font-size: 0.75rem;
   }
 }
 

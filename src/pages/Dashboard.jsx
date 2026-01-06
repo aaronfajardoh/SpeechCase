@@ -14,7 +14,8 @@ import {
   IconTrash,
   IconEdit,
   IconMoreVertical,
-  IconLoading
+  IconLoading,
+  IconCheck
 } from '../components/Icons.jsx'
 import '../App.css'
 
@@ -33,9 +34,10 @@ function Dashboard() {
   const [hoveredCard, setHoveredCard] = useState(null)
   const [menuOpen, setMenuOpen] = useState(null) // documentId of open menu
   const [uploading, setUploading] = useState(false)
-  const [deleting, setDeleting] = useState(null)
+  const [deleting, setDeleting] = useState(new Set()) // Track multiple deleting documents
   const [loadingThumbnails, setLoadingThumbnails] = useState(new Set())
   const [thumbnails, setThumbnails] = useState({}) // Use state instead of ref for reactivity
+  const [selectedDocs, setSelectedDocs] = useState(new Set()) // Track selected document IDs
   const fileInputRef = useRef(null)
   const thumbnailCanvasRefs = useRef({}) // Keep ref for checking if thumbnail exists
 
@@ -199,13 +201,13 @@ function Dashboard() {
     }
   }
 
-  // Handle document deletion
+  // Handle document deletion (single or multiple)
   const handleDelete = async (docId, storageUrl) => {
     if (!confirm('Are you sure you want to delete this document? This action cannot be undone.')) {
       return
     }
 
-    setDeleting(docId)
+    setDeleting(prev => new Set(prev).add(docId))
     setMenuOpen(null)
 
     try {
@@ -235,8 +237,84 @@ function Dashboard() {
       console.error('Error deleting document:', error)
       alert('Error deleting document. Please try again.')
     } finally {
-      setDeleting(null)
+      setDeleting(prev => {
+        const next = new Set(prev)
+        next.delete(docId)
+        return next
+      })
     }
+  }
+
+  // Handle multiple document deletion
+  const handleDeleteMultiple = async () => {
+    if (selectedDocs.size === 0) return
+
+    const count = selectedDocs.size
+    if (!confirm(`Are you sure you want to delete ${count} ${count === 1 ? 'document' : 'documents'}? This action cannot be undone.`)) {
+      return
+    }
+
+    const docsToDelete = Array.from(selectedDocs)
+    
+    // Set all as deleting
+    setDeleting(new Set(docsToDelete))
+
+    try {
+      // Delete all documents in parallel
+      await Promise.all(
+        docsToDelete.map(async (docId) => {
+          const docData = documents.find(d => d.id === docId)
+          if (!docData) return
+
+          try {
+            // Delete from Firestore
+            const docRef = doc(db, 'users', currentUser.uid, 'documents', docId)
+            await deleteDoc(docRef)
+
+            // Delete from Storage if URL exists
+            if (docData.storageUrl) {
+              try {
+                const fileRef = storageRef(storage, docData.storageUrl)
+                await deleteObject(fileRef)
+              } catch (storageError) {
+                console.warn(`Error deleting file from Storage for ${docId}:`, storageError)
+              }
+            }
+
+            // Clean up thumbnail
+            delete thumbnailCanvasRefs.current[docId]
+            setThumbnails(prev => {
+              const next = { ...prev }
+              delete next[docId]
+              return next
+            })
+          } catch (error) {
+            console.error(`Error deleting document ${docId}:`, error)
+          }
+        })
+      )
+    } catch (error) {
+      console.error('Error deleting documents:', error)
+      alert('Error deleting some documents. Please try again.')
+    } finally {
+      // Clear selection and reset deleting state
+      setSelectedDocs(new Set())
+      setDeleting(new Set())
+    }
+  }
+
+  // Handle checkbox toggle
+  const handleCheckboxToggle = (docId, e) => {
+    e.stopPropagation()
+    setSelectedDocs(prev => {
+      const next = new Set(prev)
+      if (next.has(docId)) {
+        next.delete(docId)
+      } else {
+        next.add(docId)
+      }
+      return next
+    })
   }
 
   // Handle document rename
@@ -353,6 +431,21 @@ function Dashboard() {
               <p>{documents.length} {documents.length === 1 ? 'document' : 'documents'}</p>
             </div>
 
+            {selectedDocs.size > 0 && (
+              <div className="dashboard-selection-indicator">
+                <span className="dashboard-selection-count">
+                  {selectedDocs.size} {selectedDocs.size === 1 ? 'pdf' : 'pdfs'} selected
+                </span>
+                <button
+                  className="dashboard-selection-delete-btn"
+                  onClick={handleDeleteMultiple}
+                >
+                  <IconTrash size={14} />
+                  Delete
+                </button>
+              </div>
+            )}
+
             {documents.length === 0 ? (
               <div className="dashboard-empty">
                 <IconDocument size={64} />
@@ -371,18 +464,27 @@ function Dashboard() {
                 {documents.map((doc) => (
                   <div
                     key={doc.id}
-                    className={`dashboard-card ${hoveredCard === doc.id ? 'hovered' : ''} ${deleting === doc.id ? 'deleting' : ''}`}
+                    className={`dashboard-card ${hoveredCard === doc.id ? 'hovered' : ''} ${deleting.has(doc.id) ? 'deleting' : ''} ${selectedDocs.has(doc.id) ? 'selected' : ''}`}
                     onMouseEnter={() => setHoveredCard(doc.id)}
                     onMouseLeave={() => {
                       setHoveredCard(null)
                       setMenuOpen(null)
                     }}
                     onClick={(e) => {
-                      // Don't navigate if clicking on menu
-                      if (e.target.closest('.dashboard-card-menu')) return
+                      // Don't navigate if clicking on menu or checkbox
+                      if (e.target.closest('.dashboard-card-menu') || e.target.closest('.dashboard-card-checkbox')) return
                       handleCardClick(doc.id, doc.storageUrl)
                     }}
                   >
+                    <div className="dashboard-card-checkbox-container">
+                      <button
+                        className={`dashboard-card-checkbox ${selectedDocs.has(doc.id) ? 'checked' : ''}`}
+                        onClick={(e) => handleCheckboxToggle(doc.id, e)}
+                        aria-label={`Select ${doc.fileName || doc.id}`}
+                      >
+                        {selectedDocs.has(doc.id) && <IconCheck size={14} />}
+                      </button>
+                    </div>
                     <div className="dashboard-card-thumbnail">
                       {thumbnails[doc.id] || thumbnailCanvasRefs.current[doc.id] ? (
                         <img 
@@ -404,7 +506,7 @@ function Dashboard() {
                           <IconDocument size={44.16} />
                         </div>
                       )}
-                      {deleting === doc.id && (
+                      {deleting.has(doc.id) && (
                         <div className="dashboard-card-deleting-overlay">
                           <IconLoading size={19.2} />
                           <span>Deleting...</span>
