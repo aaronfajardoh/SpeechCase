@@ -1,0 +1,11 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // User-centric data model: all files under users/{userId}/...
+    match /users/{userId}/{allPaths=**} {
+      // Allow read and write only if authenticated and accessing own data
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
+
