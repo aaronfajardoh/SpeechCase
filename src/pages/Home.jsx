@@ -122,6 +122,7 @@ function Home() {
   const isSidebarCollapsedRef = useRef(false) // Track current sidebar collapsed state
   const sidebarViewRef = useRef('pages') // Track current sidebar view
   const previousSidebarViewRef = useRef('pages') // Track previous sidebar view to detect changes
+  const processingFileRef = useRef(null) // Track file being processed to prevent duplicate processing
   const [documentId, setDocumentId] = useState(null) // Document ID for AI features
   const [highlightItems, setHighlightItems] = useState([]) // Store highlight items for sidebar: { id, text, color, order }
   const [isPDFProcessing, setIsPDFProcessing] = useState(false) // Track if PDF is being processed
@@ -204,16 +205,39 @@ function Home() {
   // Load document from Storage if navigated from Dashboard
   useEffect(() => {
     const loadDocumentFromStorage = async () => {
-      if (!location.state || !currentUser || pdfDoc) return // Don't load if PDF is already loaded
+      if (!location.state || !currentUser || pdfDoc) {
+        return // Don't load if PDF is already loaded
+      }
       
       const { documentId, storageUrl, file } = location.state
       
       // If a file is provided directly (from upload), use it
       if (file) {
+        // Prevent duplicate processing (React Strict Mode causes double renders)
+        // Use a unique key based on file properties to identify the same file
+        const fileKey = `${file.name}-${file.size}-${file.lastModified}`
+        
+        // Check if we're already processing this exact file
+        if (processingFileRef.current === fileKey) {
+          return
+        }
+        
+        // Set the ref IMMEDIATELY (synchronously) to prevent race condition
+        processingFileRef.current = fileKey
+        
         const event = { target: { files: [file] } }
         await handleFileChange(event)
+        
         // Clear state to prevent re-loading
         navigate(location.pathname, { replace: true, state: null })
+        
+        // Clear processing ref after processing completes
+        // Use a longer delay to ensure handleFileChange completes
+        setTimeout(() => {
+          if (processingFileRef.current === fileKey) {
+            processingFileRef.current = null
+          }
+        }, 2000)
         return
       }
       
@@ -237,9 +261,9 @@ function Home() {
           if (docSnap.exists()) {
             setDocumentId(documentId)
             
-            // Process the file like a normal upload
+            // Process the file like a normal upload, passing the existing documentId
             const event = { target: { files: [file] } }
-            await handleFileChange(event)
+            await handleFileChange(event, documentId)
           } else {
             setError('Document not found')
             setIsLoading(false)
@@ -6054,7 +6078,7 @@ function Home() {
     return start
   }
 
-  const handleFileChange = async (event) => {
+  const handleFileChange = async (event, existingDocumentId = null) => {
     const file = event.target.files[0]
     if (!file) return
 
@@ -6160,27 +6184,52 @@ function Home() {
 
       // Upload PDF to Storage and process for AI features
       if (initialText && initialText.length > 0 && currentUser) {
-        const newDocumentId = `${file.name}-${Date.now()}`
-        setDocumentId(newDocumentId)
+        // Use existing documentId if provided, otherwise create a new one
+        const finalDocumentId = existingDocumentId || documentId || `${file.name}-${Date.now()}`
+        
+        // Only create new documentId if we don't have one
+        if (!existingDocumentId && !documentId) {
+          setDocumentId(finalDocumentId)
+        } else {
+          // Ensure documentId state is set even if we're reusing
+          if (finalDocumentId !== documentId) {
+            setDocumentId(finalDocumentId)
+          }
+        }
         setTimeline(null) // Clear previous timeline
         setTimelineError(null)
         setTimelineIcons({}) // Clear previous icons
         setIsPDFProcessing(true)
         
-        // Upload PDF to Storage first
-        let storageUrl = null
-        try {
-          const storageRef = ref(storage, `users/${currentUser.uid}/uploads/${newDocumentId}.pdf`)
-          await uploadBytes(storageRef, file)
-          storageUrl = await getDownloadURL(storageRef)
-          console.log('PDF uploaded to Storage:', storageUrl)
-        } catch (storageError) {
-          console.error('Error uploading PDF to Storage:', storageError)
-          // Continue processing even if storage upload fails
-        }
+          // Upload PDF to Storage first (only if new document, otherwise reuse existing storage)
+          let storageUrl = null
+          if (!existingDocumentId && !documentId) {
+            // New document - upload to storage
+            try {
+              const storageRef = ref(storage, `users/${currentUser.uid}/uploads/${finalDocumentId}.pdf`)
+              await uploadBytes(storageRef, file)
+              storageUrl = await getDownloadURL(storageRef)
+              console.log('PDF uploaded to Storage:', storageUrl)
+            } catch (storageError) {
+              console.error('Error uploading PDF to Storage:', storageError)
+              // Continue processing even if storage upload fails
+            }
+          } else {
+            // Existing document - get existing storage URL from Firestore
+            try {
+              const docRef = doc(db, 'users', currentUser.uid, 'documents', finalDocumentId)
+              const docSnap = await getDoc(docRef)
+              if (docSnap.exists() && docSnap.data().storageUrl) {
+                storageUrl = docSnap.data().storageUrl
+                console.log('Using existing Storage URL:', storageUrl)
+              }
+            } catch (error) {
+              console.warn('Error fetching existing storage URL:', error)
+            }
+          }
         
         // Process PDF in background (don't block UI)
-        processPDFForAI(newDocumentId, initialText, {
+        processPDFForAI(finalDocumentId, initialText, {
           fileName: file.name,
           pageCount: pdf.numPages,
           textLength: initialText.length,
