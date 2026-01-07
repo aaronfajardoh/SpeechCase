@@ -179,7 +179,7 @@
 }
 
 .hero-subtitle {
-  font-size: 1.25rem;
+  font-size: 1.15rem;
   line-height: 1.6;
   color: #5f6368;
   margin: 0;
@@ -225,7 +225,7 @@
 .cta-note {
   font-size: 0.875rem;
   color: #5f6368;
-  margin: 0;
+  margin-top: 20px;
 }
 
 .hero-image {
@@ -236,7 +236,7 @@
 }
 
 .hero-mobile-img {
-  max-width: 75%;
+  max-width: 57%;
   height: auto;
   background: none;
   border: none;
@@ -367,7 +367,7 @@
 }
 
 .feature-card:hover .feature-image {
-  transform: scale(1.05);
+  transform: scale(1.01);
 }
 
 /* Technology Section */
@@ -624,6 +624,7 @@
 
   .hero-subtitle {
     max-width: 100%;
+    font-size: 1rem;
   }
 
   .cta-primary {
@@ -681,7 +682,7 @@
   }
 
   .hero-subtitle {
-    font-size: 1.125rem;
+    font-size: 1rem;
   }
 
   .section-title {

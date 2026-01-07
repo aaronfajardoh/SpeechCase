@@ -34,7 +34,7 @@ const LandingPage = () => {
     setSubmitStatus(null);
 
     try {
-      const mailtoLink = `mailto:aaronfajardoh@hotmail.com?subject=Contact from SpeechCase&body=Name: ${encodeURIComponent(contactForm.name)}%0AEmail: ${encodeURIComponent(contactForm.email)}%0A%0AMessage:%0A${encodeURIComponent(contactForm.message)}`;
+      const mailtoLink = `mailto:aaronfajardoh@hotmail.com?subject=Contact from Casediver&body=Name: ${encodeURIComponent(contactForm.name)}%0AEmail: ${encodeURIComponent(contactForm.email)}%0A%0AMessage:%0A${encodeURIComponent(contactForm.message)}`;
       window.location.href = mailtoLink;
       setSubmitStatus('success');
       setContactForm({ name: '', email: '', message: '' });
@@ -60,8 +60,8 @@ const LandingPage = () => {
       <nav className="landing-navbar">
         <div className="navbar-container">
           <div className="navbar-logo">
-            <img src="/logo.png" alt="SpeechCase Logo" className="logo-img" />
-            <span className="logo-text">Casedive</span>
+            <img src="/logo.png" alt="Casediver Logo" className="logo-img" />
+            <span className="logo-text">Casediver</span>
           </div>
           <div className="navbar-links">
             <button 
@@ -123,8 +123,8 @@ const LandingPage = () => {
           </div>
           <div className="hero-image">
             <img 
-              src="/Mobile.png" 
-              alt="SpeechCase Mobile Interface" 
+              src="/mobile.png" 
+              alt="Casediver Mobile Interface" 
               className="hero-mobile-img"
             />
           </div>
@@ -329,7 +329,7 @@ const LandingPage = () => {
       {/* Footer */}
       <footer className="landing-footer">
         <div className="footer-container">
-          <p>&copy; 2026 Casedive. All rights reserved.</p>
+          <p>&copy; 2026 Casediver. All rights reserved.</p>
           <p className="footer-tagline">Mastering PDFs with AI</p>
         </div>
       </footer>

@@ -13415,7 +13415,7 @@ function Home() {
         <div className="toolbar-left">
           <div className="toolbar-logo">
             <img src="/logo.png" alt="SpeechCase" className="logo-small" />
-            <span className="toolbar-title">Casedive</span>
+            <span className="toolbar-title">Casediver</span>
           </div>
           <div className="toolbar-file-info">
             <IconDocument size={16} />

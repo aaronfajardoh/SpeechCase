@@ -453,8 +453,8 @@ function Dashboard() {
       {/* Sidebar */}
       <div className="dashboard-sidebar">
         <div className="dashboard-sidebar-header">
-          <img src="/logo.png" alt="Casedive" className="logo-small"/>
-          <h2>Casedive</h2>
+          <img src="/logo.png" alt="Casediver" className="logo-small"/>
+          <h2>Casediver</h2>
         </div>
         
         <nav className="dashboard-sidebar-nav">

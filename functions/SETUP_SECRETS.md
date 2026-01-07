@@ -27,7 +27,20 @@ echo -n "your-google-ai-api-key" | firebase functions:secrets:set GOOGLE_AI_KEY
 
 **Note:** Character images will work even without these keys - characters will just display without images (using avatar placeholders instead).
 
-### Step 3: Redeploy Functions
+### 3. SMTP Secrets (Optional - for Support Email Function)
+
+If you want to use the `sendSupportEmail` function, set these SMTP configuration secrets:
+
+```bash
+echo -n "smtp.gmail.com" | firebase functions:secrets:set SMTP_HOST
+echo -n "587" | firebase functions:secrets:set SMTP_PORT
+echo -n "your-email@gmail.com" | firebase functions:secrets:set SMTP_USER
+echo -n "your-app-password" | firebase functions:secrets:set SMTP_PASS
+```
+
+**Note:** If these secrets are not set, the `sendSupportEmail` function will return an error when called. The function is optional and removing it from the secrets array allows deployment to succeed without them.
+
+### Step 4: Redeploy Functions
 
 After setting secrets, redeploy your functions:
 
