@@ -4,7 +4,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import { PDFDocument, rgb } from 'pdf-lib'
 import { httpsCallable } from 'firebase/functions'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
-import { doc, getDoc, onSnapshot, collection, query, orderBy } from 'firebase/firestore'
+import { doc, getDoc, onSnapshot, collection, query, orderBy, updateDoc } from 'firebase/firestore'
 import { functions, storage, db } from '../firebase'
 import { useAuth } from '../contexts/AuthContext'
 import '../App.css'
@@ -61,6 +61,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.j
 // if a second render starts before the first one finishes (e.g., on resize).
 let renderPagesPromise = null
 let renderThumbnailsPromise = null
+let activeRenderTasks = new Map() // Store active render tasks by page number to cancel them
+let activeThumbnailTasks = new Map() // Store active thumbnail render tasks by page number
 
 function Home() {
   const { currentUser } = useAuth()
@@ -86,6 +88,7 @@ function Home() {
   const [renderedPages, setRenderedPages] = useState([]) // Track which pages are rendered
   const [pageData, setPageData] = useState([]) // Store page rendering data
   const [highlights, setHighlights] = useState([]) // Store highlight data: { page, x, y, width, height, text, connections }
+  const isInitialLoadRef = useRef(true) // Track if we're in initial load phase to prevent auto-save
   const [highlightHistory, setHighlightHistory] = useState([[]]) // History stack for undo/redo
   const [historyIndex, setHistoryIndex] = useState(0) // Current position in history
   const [interactionMode, setInteractionMode] = useState('read') // 'read' or 'highlight'
@@ -141,6 +144,7 @@ function Home() {
   const [isCharactersLoading, setIsCharactersLoading] = useState(false) // Characters loading state
   const [charactersError, setCharactersError] = useState(null) // Characters error message
   const [isCharactersExpanded, setIsCharactersExpanded] = useState(false) // Characters expanded in main view
+  const [chatHistory, setChatHistory] = useState([]) // Chat conversation history
   const fileInputRef = useRef(null)
   const utteranceRef = useRef(null)
   const synthRef = useRef(null)
@@ -261,13 +265,48 @@ function Home() {
           
           // Load timeline if it exists
           if (docData.timeline && Array.isArray(docData.timeline)) {
-            setTimeline(docData.timeline)
+            // Filter out events with completely null dates or validate them
+            const validatedTimeline = docData.timeline.map((event, index) => {
+              // If event has no date fields at all, keep it but ensure it has at least a placeholder
+              if (!event.date && !event.date_original_format && !event.date_normalized) {
+                return { ...event, date: `Event ${index + 1}` }
+              }
+              // Ensure event has order and importance fields
+              return {
+                ...event,
+                order: event.order || index + 1,
+                importance: event.importance || 'medium'
+              }
+            }).sort((a, b) => (a.order || 0) - (b.order || 0)) // Sort by order
+            setTimeline(validatedTimeline)
+          }
+          
+          // Load timeline icons if they exist
+          if (docData.timelineIcons && typeof docData.timelineIcons === 'object') {
+            setTimelineIcons(docData.timelineIcons)
           }
           
           // Load summary if it exists
           if (docData.summary) {
             setSummaryText(docData.summary)
           }
+          
+          // Load highlights if they exist
+          if (docData.highlights && Array.isArray(docData.highlights)) {
+            setHighlights(docData.highlights)
+          }
+          
+          // Don't load highlightItems directly - let the useEffect create them from highlights
+          // This ensures they're sorted by text position, not creation order
+          // highlightItems will be generated automatically by the useEffect that syncs with highlights
+          
+          // Load chat history if it exists
+          if (docData.chatHistory && Array.isArray(docData.chatHistory)) {
+            setChatHistory(docData.chatHistory)
+          }
+          
+          // Mark initial load as complete - now user actions should be saved
+          isInitialLoadRef.current = false
           
           // Load PDF from Storage
           if (docData.storageUrl) {
@@ -309,19 +348,50 @@ function Home() {
     
     const docRef = doc(db, 'users', currentUser.uid, 'documents', documentId)
     
-    // Listen for document updates (timeline, summary)
+    // Listen for document updates (timeline, summary, highlights, chatHistory)
     const unsubscribeDoc = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data()
         
         // Update timeline if it exists and is different
         if (data.timeline && Array.isArray(data.timeline)) {
-          setTimeline(data.timeline)
+          // Apply same validation as initial load - filter null dates and ensure proper structure
+          const validatedTimeline = data.timeline.map((event, index) => {
+            // If event has no date fields at all, keep it but ensure it has at least a placeholder
+            if (!event.date && !event.date_original_format && !event.date_normalized) {
+              return { ...event, date: `Event ${index + 1}` }
+            }
+            // Ensure event has order and importance fields
+            return {
+              ...event,
+              order: event.order || index + 1,
+              importance: event.importance || 'medium'
+            }
+          }).sort((a, b) => (a.order || 0) - (b.order || 0)) // Sort by order
+          setTimeline(validatedTimeline)
+        }
+        
+        // Update timeline icons if they exist and are different
+        if (data.timelineIcons && typeof data.timelineIcons === 'object') {
+          setTimelineIcons(data.timelineIcons)
         }
         
         // Update summary if it exists and is different
         if (data.summary && data.summary !== summaryText) {
           setSummaryText(data.summary)
+        }
+        
+        // Update highlights if they exist and are different
+        if (data.highlights && Array.isArray(data.highlights)) {
+          setHighlights(data.highlights)
+        }
+        
+        // Don't update highlightItems from onSnapshot - let the useEffect create them from highlights
+        // This ensures they're sorted by text position, not creation order
+        
+        // Update chat history if it exists and is different
+        if (data.chatHistory && Array.isArray(data.chatHistory)) {
+          setChatHistory(data.chatHistory)
         }
       }
     }, (error) => {
@@ -339,22 +409,60 @@ function Home() {
       }))
       
       if (charactersList.length > 0) {
-        // Get metadata from main document
+        // Get metadata from main document first to check for authorNames
         getDoc(docRef).then((docSnap) => {
+          let filteredCharacters = charactersList
+          
+          // Apply author filtering if authorNames are stored in document metadata
           if (docSnap.exists()) {
             const data = docSnap.data()
+            
+            // Filter out authors if authorNames are stored
+            if (data.authorNames && Array.isArray(data.authorNames) && data.authorNames.length > 0) {
+              const normalizedAuthorNames = data.authorNames.map(name => name.toLowerCase().trim())
+              filteredCharacters = charactersList.filter(character => {
+                const characterName = character.name ? character.name.toLowerCase().trim() : ''
+                const isAuthor = normalizedAuthorNames.some(authorName => {
+                  return characterName === authorName || 
+                         characterName.includes(authorName) || 
+                         authorName.includes(characterName)
+                })
+                return !isAuthor
+              })
+            }
+            
+            // Set characters with filtering applied
+            setCharacters({
+              characters: filteredCharacters,
+              isOrgChart: data.isOrgChart || false,
+            })
+          } else {
+            // No document metadata - set characters without filtering
+            // Note: Author filtering should ideally happen in the Cloud Function when generating characters
             setCharacters({
               characters: charactersList,
-              isOrgChart: data.isOrgChart || false,
-              characterCount: charactersList.length
+              isOrgChart: characters?.isOrgChart || false,
             })
           }
         }).catch((err) => {
           console.error('Error fetching character metadata:', err)
+          // Fallback: set characters without filtering if metadata fetch fails
+          setCharacters({
+            characters: charactersList,
+            isOrgChart: characters?.isOrgChart || false,
+          })
         })
       } else {
-        // No characters yet
-        setCharacters(null)
+        // Don't set to null if we already have characters (prevents clearing on initial empty snapshot)
+        // Only set to null if this is a deliberate deletion (snapshot has metadata indicating deletion)
+        setCharacters(prev => {
+          // If we already have characters, keep them (this handles the initial empty snapshot case)
+          if (prev && prev.characters && prev.characters.length > 0) {
+            return prev
+          }
+          // Otherwise, set to null (no characters exist)
+          return null
+        })
       }
     }, (error) => {
       console.error('Error listening to characters:', error)
@@ -366,6 +474,128 @@ function Home() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId, currentUser])
+
+  // Helper function to estimate size of data in bytes (rough estimate)
+  const estimateSize = (data) => {
+    try {
+      return new Blob([JSON.stringify(data)]).size
+    } catch (e) {
+      return 0
+    }
+  }
+
+  // Helper function to update document fields in Firestore
+  const updateDocumentField = useCallback(async (field, value) => {
+    if (!documentId || !currentUser) {
+      console.warn('Cannot update document: missing documentId or currentUser')
+      return
+    }
+
+    try {
+      // Check size before saving (Firestore has ~1MB limit per document)
+      const size = estimateSize(value)
+      const maxSize = 900000 // 900KB to leave room for other fields
+      
+      if (size > maxSize) {
+        console.warn(`Field ${field} is too large (${size} bytes), skipping save to avoid transaction error`)
+        // For highlights, we can save a simplified version or skip
+        if (field === 'highlights') {
+          // Only save essential highlight data (without full rectangle arrays)
+          const simplifiedHighlights = value.map(h => ({
+            id: h.id,
+            page: h.page,
+            text: h.text,
+            color: h.color,
+            // Skip rects, scale, textLayerWidth, textLayerHeight, columnIndex to reduce size
+          }))
+          const simplifiedSize = estimateSize(simplifiedHighlights)
+          if (simplifiedSize < maxSize) {
+            await updateDoc(doc(db, 'users', currentUser.uid, 'documents', documentId), {
+              [field]: simplifiedHighlights
+            })
+            console.log(`Saved simplified ${field} to Firestore (${simplifiedSize} bytes)`)
+          } else {
+            console.warn(`Even simplified ${field} is too large, skipping save`)
+          }
+          return
+        }
+        return
+      }
+
+      const docRef = doc(db, 'users', currentUser.uid, 'documents', documentId)
+      await updateDoc(docRef, {
+        [field]: value
+      })
+      console.log(`Successfully updated ${field} in Firestore (${size} bytes)`)
+    } catch (error) {
+      console.error(`Error updating ${field} in Firestore:`, error)
+      // Don't throw - allow UI to continue functioning even if save fails
+    }
+  }, [documentId, currentUser])
+
+  // Handler for saving summary text (onBlur)
+  const handleSummaryBlur = useCallback(async (newSummaryText) => {
+    if (newSummaryText !== summaryText) {
+      setSummaryText(newSummaryText)
+      await updateDocumentField('summary', newSummaryText)
+    }
+  }, [summaryText, updateDocumentField])
+
+  // Handler for saving timeline (onBlur for event edits)
+  const handleTimelineUpdate = useCallback(async (updatedTimeline) => {
+    if (JSON.stringify(updatedTimeline) !== JSON.stringify(timeline)) {
+      setTimeline(updatedTimeline)
+      await updateDocumentField('timeline', updatedTimeline)
+    }
+  }, [timeline, updateDocumentField])
+
+  // Handler for saving character updates (updates subcollection)
+  const handleCharacterUpdate = useCallback(async (characterId, updates) => {
+    if (!documentId || !currentUser) return
+    
+    try {
+      const characterRef = doc(db, 'users', currentUser.uid, 'documents', documentId, 'characters', characterId)
+      await updateDoc(characterRef, updates)
+      console.log(`Successfully updated character ${characterId}`)
+      
+      // Update local state
+      setCharacters(prev => {
+        if (!prev || !prev.characters) return prev
+        return {
+          ...prev,
+          characters: prev.characters.map(char => 
+            char.id === characterId ? { ...char, ...updates } : char
+          )
+        }
+      })
+    } catch (error) {
+      console.error(`Error updating character ${characterId}:`, error)
+    }
+  }, [documentId, currentUser])
+
+  // Handler for saving chat history (append-and-save strategy)
+  const handleChatMessage = useCallback(async (userMessage, aiResponse) => {
+    const newMessages = [
+      ...chatHistory,
+      { role: 'user', content: userMessage, timestamp: new Date().toISOString() },
+      { role: 'assistant', content: aiResponse, timestamp: new Date().toISOString() }
+    ]
+    
+    setChatHistory(newMessages)
+    await updateDocumentField('chatHistory', newMessages)
+  }, [chatHistory, updateDocumentField])
+
+  // Wrapper for setHighlightItems that auto-saves to Firestore
+  const setHighlightItemsWithSave = useCallback((updater) => {
+    setHighlightItems(prev => {
+      const newItems = typeof updater === 'function' ? updater(prev) : updater
+      // Auto-save to Firestore
+      updateDocumentField('highlightItems', newItems).catch(err => {
+        console.error('Failed to save highlight items:', err)
+      })
+      return newItems
+    })
+  }, [updateDocumentField])
   
   // Redirect to dashboard if no PDF is loaded and not processing one
   useEffect(() => {
@@ -2973,6 +3203,17 @@ function Home() {
   const renderPages = async () => {
     if (!pdfDoc || pageData.length === 0) return
 
+    // Cancel ALL existing render tasks BEFORE waiting for promise
+    // This prevents multiple renders from starting simultaneously
+    for (const [pageNum, task] of activeRenderTasks.entries()) {
+      try {
+        task.cancel()
+      } catch (e) {
+        // Ignore cancellation errors
+      }
+    }
+    activeRenderTasks.clear()
+
     // Serialize render operations: wait for any previous render to finish
     if (renderPagesPromise) {
       try {
@@ -2984,6 +3225,9 @@ function Home() {
     }
 
     const run = async () => {
+      // Small delay to ensure any previous cancellation completes
+      await new Promise(resolve => setTimeout(resolve, 50))
+      
       for (const pageInfo of pageData) {
         const { pageNum, viewport, pageCharOffset, textContent } = pageInfo
         const canvas = canvasRefs.current[pageNum]
@@ -2992,10 +3236,24 @@ function Home() {
 
         if (!canvas || !textLayerDiv) continue
 
+        // Double-check: Cancel any existing render task for this page (defensive)
+        const existingTask = activeRenderTasks.get(pageNum)
+        if (existingTask) {
+          try {
+            existingTask.cancel()
+          } catch (e) {
+            // Ignore cancellation errors
+          }
+          activeRenderTasks.delete(pageNum)
+        }
+
         // Render canvas
         const page = await pdfDoc.getPage(pageNum)
         const viewportObj = page.getViewport({ scale: pageScale })
         const context = canvas.getContext('2d')
+        
+        // Clear canvas before rendering to prevent artifacts
+        context.clearRect(0, 0, canvas.width || viewportObj.width, canvas.height || viewportObj.height)
         
         // Set internal dimensions to match viewport (for crisp rendering at the desired scale)
         canvas.height = viewportObj.height
@@ -3006,10 +3264,25 @@ function Home() {
         canvas.style.width = viewportObj.width + 'px'
         canvas.style.height = viewportObj.height + 'px'
 
-        await page.render({
+        const renderTask = page.render({
           canvasContext: context,
           viewport: viewportObj
-        }).promise
+        })
+        
+        // Store the render task so we can cancel it if needed
+        activeRenderTasks.set(pageNum, renderTask)
+        
+        try {
+          await renderTask.promise
+        } catch (renderError) {
+          // Ignore cancellation errors - they're expected when cancelling
+          if (!renderError.message?.includes('cancelled') && !renderError.message?.includes('Rendering cancelled')) {
+            throw renderError
+          }
+        }
+        
+        // Remove from active tasks after completion
+        activeRenderTasks.delete(pageNum)
 
         // Wait for canvas to be laid out
         await new Promise(resolve => requestAnimationFrame(resolve))
@@ -3067,6 +3340,16 @@ function Home() {
   const renderThumbnails = async () => {
     if (!pdfDoc || totalPages === 0) return
 
+    // Cancel ALL existing thumbnail render tasks BEFORE waiting for promise
+    for (const [pageNum, task] of activeThumbnailTasks.entries()) {
+      try {
+        task.cancel()
+      } catch (e) {
+        // Ignore cancellation errors
+      }
+    }
+    activeThumbnailTasks.clear()
+
     // Serialize thumbnail renders to avoid overlapping operations on the same canvas
     if (renderThumbnailsPromise) {
       try {
@@ -3077,6 +3360,9 @@ function Home() {
     }
 
     const run = async () => {
+      // Small delay to ensure any previous cancellation completes
+      await new Promise(resolve => setTimeout(resolve, 50))
+      
       // Calculate thumbnail scale to show approximately 4-4.5 pages in the sidebar
       // Sidebar width is 180px, thumbnails will be CSS-scaled to fit this width
       // For a typical PDF page (612x792 points at 72 DPI):
@@ -3090,19 +3376,49 @@ function Home() {
         const thumbnailCanvas = thumbnailRefs.current[pageNum]
         if (!thumbnailCanvas) continue
 
+        // Double-check: Cancel any existing render task for this thumbnail (defensive)
+        const existingTask = activeThumbnailTasks.get(pageNum)
+        if (existingTask) {
+          try {
+            existingTask.cancel()
+            await new Promise(resolve => setTimeout(resolve, 10))
+          } catch (e) {
+            // Ignore cancellation errors
+          }
+          activeThumbnailTasks.delete(pageNum)
+        }
+        
         const page = await pdfDoc.getPage(pageNum)
         const viewport = page.getViewport({ scale: thumbnailScale })
         const context = thumbnailCanvas.getContext('2d')
+        
+        // Clear canvas before rendering
+        context.clearRect(0, 0, thumbnailCanvas.width || viewport.width, thumbnailCanvas.height || viewport.height)
         
         // Set canvas dimensions
         thumbnailCanvas.width = viewport.width
         thumbnailCanvas.height = viewport.height
         
         // Render the page
-        await page.render({
+        const renderTask = page.render({
           canvasContext: context,
           viewport: viewport
-        }).promise
+        })
+        
+        // Store the render task so we can cancel it if needed
+        activeThumbnailTasks.set(pageNum, renderTask)
+        
+        try {
+          await renderTask.promise
+        } catch (renderError) {
+          // Ignore cancellation errors - they're expected when cancelling
+          if (!renderError.message?.includes('cancelled') && !renderError.message?.includes('Rendering cancelled')) {
+            throw renderError
+          }
+        }
+        
+        // Remove from active tasks after completion
+        activeThumbnailTasks.delete(pageNum)
 
         setRenderedThumbnails(prev => {
           if (!prev.includes(pageNum)) {
@@ -6189,9 +6505,14 @@ function Home() {
     setCurrentPage(1)
     setTotalPages(0)
     setStartPosition(0)
-    setHighlights([])
-    setHighlightItems([])
-    setHighlightColor('yellow') // Reset to yellow when uploading a new PDF
+    
+    // Only clear highlights/highlightItems if this is a NEW document (not loading existing)
+    const isNewDocument = !existingDocumentId && !documentId
+    if (isNewDocument) {
+      setHighlights([])
+      setHighlightItems([])
+      setHighlightColor('yellow') // Reset to yellow when uploading a new PDF
+    }
 
     try {
       const arrayBuffer = await file.arrayBuffer()
@@ -6200,8 +6521,16 @@ function Home() {
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
       setPdfDoc(pdf)
       setTotalPages(pdf.numPages)
-      setHighlights([]) // Clear highlights when loading new PDF
-      setHighlightItems([]) // Clear highlight items when loading new PDF
+      
+      // Mark initial load as complete - now user actions should be saved
+      // This must happen before any user interaction (like creating highlights)
+      isInitialLoadRef.current = false
+      
+      // Only clear highlights when loading a NEW PDF (not when reopening existing)
+      if (isNewDocument) {
+        setHighlights([]) // Clear highlights when loading new PDF
+        setHighlightItems([]) // Clear highlight items when loading new PDF
+      }
       setHighlightHistory([[]]) // Reset history
       setHistoryIndex(0)
       historyIndexRef.current = 0
@@ -6288,62 +6617,85 @@ function Home() {
             setDocumentId(finalDocumentId)
           }
         }
-        setTimeline(null) // Clear previous timeline
-        setTimelineError(null)
-        setTimelineIcons({}) // Clear previous icons
-        setIsPDFProcessing(true)
         
-          // Upload PDF to Storage first (only if new document, otherwise reuse existing storage)
-          let storageUrl = null
-          if (!existingDocumentId && !documentId) {
-            // New document - upload to storage
-            try {
-              const storageRef = ref(storage, `users/${currentUser.uid}/uploads/${finalDocumentId}.pdf`)
-              await uploadBytes(storageRef, file)
-              storageUrl = await getDownloadURL(storageRef)
-              console.log('PDF uploaded to Storage:', storageUrl)
-            } catch (storageError) {
-              console.error('Error uploading PDF to Storage:', storageError)
-              // Continue processing even if storage upload fails
-            }
-          } else {
-            // Existing document - get existing storage URL from Firestore
-            try {
-              const docRef = doc(db, 'users', currentUser.uid, 'documents', finalDocumentId)
-              const docSnap = await getDoc(docRef)
-              if (docSnap.exists() && docSnap.data().storageUrl) {
-                storageUrl = docSnap.data().storageUrl
+        // Upload PDF to Storage first (only if new document, otherwise reuse existing storage)
+        let storageUrl = null
+        const isNewDocument = !existingDocumentId && !documentId
+        
+        // Only clear timeline if this is a NEW document (not loading existing)
+        if (isNewDocument) {
+          setTimeline(null) // Clear previous timeline
+          setTimelineError(null)
+          setTimelineIcons({}) // Clear previous icons
+        }
+        
+        // Check if document already exists and has been processed
+        let documentAlreadyProcessed = false
+        if (!isNewDocument) {
+          try {
+            const docRef = doc(db, 'users', currentUser.uid, 'documents', finalDocumentId)
+            const docSnap = await getDoc(docRef)
+            if (docSnap.exists()) {
+              const docData = docSnap.data()
+              // Check if document has been processed (has chunks or other AI processing indicators)
+              documentAlreadyProcessed = !!(docData.storageUrl || docData.processedAt || docData.chunks)
+              if (docData.storageUrl) {
+                storageUrl = docData.storageUrl
                 console.log('Using existing Storage URL:', storageUrl)
               }
-            } catch (error) {
-              console.warn('Error fetching existing storage URL:', error)
             }
+          } catch (error) {
+            console.warn('Error checking existing document:', error)
           }
+        }
         
-        // Process PDF in background (don't block UI)
-        const isNewDocument = !existingDocumentId && !documentId
-        processPDFForAI(finalDocumentId, initialText, {
-          fileName: file.name,
-          pageCount: pdf.numPages,
-          textLength: initialText.length,
-          storageUrl: storageUrl,
-          fileSize: file.size,
-          uploadedAt: new Date().toISOString()
-        }).then(() => {
+        // Only set isPDFProcessing for new documents or if document hasn't been processed yet
+        if (isNewDocument || !documentAlreadyProcessed) {
+          setIsPDFProcessing(true)
+        } else {
           setIsPDFProcessing(false)
-          // Redirect to document route after new upload completes
-          if (isNewDocument && finalDocumentId) {
-            navigate(`/document/${finalDocumentId}`, { replace: true })
+          // Mark initial load as complete - now user actions should be saved
+          isInitialLoadRef.current = false
+        }
+        
+        if (isNewDocument) {
+          // New document - upload to storage
+          try {
+            const storageRef = ref(storage, `users/${currentUser.uid}/uploads/${finalDocumentId}.pdf`)
+            await uploadBytes(storageRef, file)
+            storageUrl = await getDownloadURL(storageRef)
+            console.log('PDF uploaded to Storage:', storageUrl)
+          } catch (storageError) {
+            console.error('Error uploading PDF to Storage:', storageError)
+            // Continue processing even if storage upload fails
           }
-        }).catch(err => {
-          console.error('Error processing PDF for AI:', err)
-          setIsPDFProcessing(false)
-          // Don't show error to user - AI features will just be unavailable
-          // Still redirect even if processing fails
-          if (isNewDocument && finalDocumentId) {
-            navigate(`/document/${finalDocumentId}`, { replace: true })
-          }
-        })
+        }
+        
+        // Process PDF in background (don't block UI) - only if needed
+        if (isNewDocument || !documentAlreadyProcessed) {
+          processPDFForAI(finalDocumentId, initialText, {
+            fileName: file.name,
+            pageCount: pdf.numPages,
+            textLength: initialText.length,
+            storageUrl: storageUrl,
+            fileSize: file.size,
+            uploadedAt: new Date().toISOString()
+          }).then(() => {
+            setIsPDFProcessing(false)
+            // Redirect to document route after new upload completes
+            if (isNewDocument && finalDocumentId) {
+              navigate(`/document/${finalDocumentId}`, { replace: true })
+            }
+          }).catch(err => {
+            console.error('Error processing PDF for AI:', err)
+            setIsPDFProcessing(false)
+            // Don't show error to user - AI features will just be unavailable
+            // Still redirect even if processing fails
+            if (isNewDocument && finalDocumentId) {
+              navigate(`/document/${finalDocumentId}`, { replace: true })
+            }
+          })
+        }
       }
       
       // Initialize Media Session metadata so macOS recognizes this as a media source
@@ -6430,15 +6782,29 @@ function Home() {
         return
       }
 
-      setTimeline(data.timeline || [])
+      const newTimeline = data.timeline || []
+      // Ensure timeline events have proper structure (order, importance, dates)
+      const validatedTimeline = newTimeline.map((event, index) => ({
+        ...event,
+        order: event.order || index + 1,
+        importance: event.importance || 'medium',
+        // Ensure at least one date field exists (prefer existing date, fallback to placeholder)
+        date: event.date || event.date_original_format || event.date_normalized || `Event ${index + 1}`
+      })).sort((a, b) => (a.order || 0) - (b.order || 0)) // Sort by order
+      
+      setTimeline(validatedTimeline)
       
       // If icons are included in the response, store them
-      if (data.icons && Object.keys(data.icons).length > 0) {
-        console.log(`Timeline loaded with ${Object.keys(data.icons).length} pre-generated icons`)
-        setTimelineIcons(data.icons)
-      } else {
-        setTimelineIcons({}) // Clear icons if none provided
+      const newIcons = data.icons && Object.keys(data.icons).length > 0 ? data.icons : {}
+      setTimelineIcons(newIcons)
+      
+      if (Object.keys(newIcons).length > 0) {
+        console.log(`Timeline loaded with ${Object.keys(newIcons).length} pre-generated icons`)
       }
+      
+      // Save validated timeline and icons to Firestore
+      await updateDocumentField('timeline', validatedTimeline)
+      await updateDocumentField('timelineIcons', newIcons)
     } catch (error) {
       console.error('Error generating timeline:', error)
       // Handle Firebase-specific errors
@@ -10394,19 +10760,20 @@ function Home() {
             setHistoryIndex(newIdx)
             return newHistory
           })
+          
+          // Auto-save highlights to Firestore immediately (skip during initial load)
+          if (!isInitialLoadRef.current) {
+            updateDocumentField('highlights', newHighlights).catch(err => {
+              console.error('Failed to save highlights:', err)
+            })
+          }
+          
           return newHighlights
         })
         
-        // Add to highlight items for sidebar (with expanded text)
-        setHighlightItems(prev => {
-          const newItem = {
-            id: highlight.id,
-            text: selectedText.trim(), // Full words in the highlights-editor
-            color: highlightColor,
-            order: prev.length
-          }
-          return [...prev, newItem]
-        })
+        // Note: Don't save highlightItems directly - let the useEffect (line 11700) 
+        // create sorted highlightItems from highlights based on text position
+        // This ensures highlights are always ordered by their position in the text, not creation order
       } else {
         // No rectangles calculated - log warning with details for debugging
         console.warn('No rectangles calculated for selection', {
@@ -11069,16 +11436,31 @@ function Home() {
         setHistoryIndex(newIdx)
         return newHistory
       })
+      
+      // Auto-save highlights to Firestore (skip during initial load)
+      if (!isInitialLoadRef.current) {
+        updateDocumentField('highlights', updated).catch(err => {
+          console.error('Failed to save highlights:', err)
+        })
+      }
+      
       return updated
     })
     // Update highlightItems color
     setHighlightItems(prev => {
-      return prev.map(item => {
+      const updatedItems = prev.map(item => {
         if (item.id === highlightId) {
           return { ...item, color: newColor }
         }
         return item
       })
+      
+      // Auto-save highlight items to Firestore
+      updateDocumentField('highlightItems', updatedItems).catch(err => {
+        console.error('Failed to save highlight items:', err)
+      })
+      
+      return updatedItems
     })
     setShowTooltipFor(null) // Hide tooltip after color change
   }
@@ -11097,11 +11479,26 @@ function Home() {
         setHistoryIndex(newIdx)
         return newHistory
       })
+      
+      // Auto-save highlights to Firestore (skip during initial load)
+      if (!isInitialLoadRef.current) {
+        updateDocumentField('highlights', filtered).catch(err => {
+          console.error('Failed to save highlights:', err)
+        })
+      }
+      
       return filtered
     })
     // Remove from highlightItems
     setHighlightItems(prev => {
-      return prev.filter(item => item.id !== highlightId)
+      const filteredItems = prev.filter(item => item.id !== highlightId)
+      
+      // Auto-save highlight items to Firestore
+      updateDocumentField('highlightItems', filteredItems).catch(err => {
+        console.error('Failed to save highlight items:', err)
+      })
+      
+      return filteredItems
     })
     setShowTooltipFor(null) // Hide tooltip after delete
     setHoveredHighlightId(null)
@@ -11361,6 +11758,8 @@ function Home() {
       let newItemCounter = 0
       
       // Update existing items with new text/color, add new ones
+      // IMPORTANT: Use the sorted order from mergeConnectedHighlights (text position order)
+      // Only preserve manual text edits, not order (order should always follow text position)
       const updated = mergedItems.map(mergedItem => {
         // First, check if the merged item's ID itself exists in previous items
         // (This handles the case where the merged item uses the first highlight's ID)
@@ -11377,11 +11776,12 @@ function Home() {
               // Combine text from all existing items in the order they appear in mergedIds
               // This ensures the first highlight's text comes first, then the second, etc.
               const combinedText = existingItems.map(item => item.text).filter(Boolean).join(' ')
-              return { ...mergedItem, text: combinedText, order: existingByMergedId.order ?? mergedItem.order }
+              // Use sorted order from mergeConnectedHighlights, not prev order
+              return { ...mergedItem, text: combinedText, order: mergedItem.order }
             }
           }
-          // Always preserve text and order from existing item (user's manual edits and custom order)
-          return { ...mergedItem, text: existingByMergedId.text, order: existingByMergedId.order ?? mergedItem.order }
+          // Preserve text from existing item (user's manual edits) but use sorted order from mergeConnectedHighlights
+          return { ...mergedItem, text: existingByMergedId.text, order: mergedItem.order }
         }
         
         // For merged items, check if any of the merged highlight IDs have existing items
@@ -11397,27 +11797,22 @@ function Home() {
               // Combine text from all existing items in the order they appear in mergedIds
               // This ensures the first highlight's text comes first, then the second, etc.
               const combinedText = existingItems.map(item => item.text).filter(Boolean).join(' ')
-              // Use the order from the first item (the one with the merged item's ID)
-              const firstItem = existingItems.find(item => item.id === mergedItem.id) || existingItems[0]
-              const existingOrder = firstItem.order ?? mergedItem.order
-              return { ...mergedItem, text: combinedText, order: existingOrder }
+              // Use sorted order from mergeConnectedHighlights, not prev order
+              return { ...mergedItem, text: combinedText, order: mergedItem.order }
             }
-            // Single existing item - preserve its text and order
+            // Single existing item - preserve text but use sorted order
             const existingText = existingItems[0].text
-            const existingOrder = existingItems[0].order ?? mergedItem.order
-            return { ...mergedItem, text: existingText, order: existingOrder }
+            return { ...mergedItem, text: existingText, order: mergedItem.order }
           }
         } else {
-          // For non-merged items, preserve existing text and order if available
+          // For non-merged items, preserve existing text but use sorted order from mergeConnectedHighlights
           const existing = prev.find(item => item.id === mergedItem.id)
           if (existing) {
-            return { ...mergedItem, text: existing.text, order: existing.order ?? mergedItem.order }
+            return { ...mergedItem, text: existing.text, order: mergedItem.order }
           }
         }
-        // For new items, assign order after all existing items (increment for each new item)
-        const newOrder = maxExistingOrder + 1 + newItemCounter
-        newItemCounter++
-        return { ...mergedItem, order: newOrder }
+        // For new items, use the sorted order from mergeConnectedHighlights (already set)
+        return mergedItem
       })
       
       // Remove items that no longer exist as separate items (they're now merged)
@@ -12979,7 +13374,7 @@ function Home() {
               <div className="header-logo">
                 <img src="/logo.png" alt="SpeechCase" className="logo" />
               </div>
-              <h1>SpeechCase</h1>
+              <h1>Casedive</h1>
             </header>
 
             <div className="upload-section">
@@ -13291,7 +13686,7 @@ function Home() {
                 {sidebarView === 'highlights' && (
                   <HighlightsSidebar
                     highlightItems={highlightItems}
-                    setHighlightItems={setHighlightItems}
+                    setHighlightItems={setHighlightItemsWithSave}
                     documentId={documentId}
                     highlights={highlights}
                     onColorChange={handleChangeHighlightColor}
@@ -13350,7 +13745,7 @@ function Home() {
           <SummaryFullView
             summaryText={summaryText}
             highlightItems={highlightItems}
-            setHighlightItems={setHighlightItems}
+            setHighlightItems={setHighlightItemsWithSave}
             documentId={documentId}
             highlights={highlights}
             onColorChange={handleChangeHighlightColor}
@@ -13360,9 +13755,12 @@ function Home() {
               setIsSummaryExpanded(false)
               setIsSidebarCollapsed(false)
             }}
-            onSummaryGenerated={(text) => {
+            onSummaryGenerated={async (text) => {
               setSummaryText(text)
+              // Auto-save summary to Firestore
+              await updateDocumentField('summary', text)
             }}
+            onSummaryBlur={handleSummaryBlur}
           />
         ) : isHighlightsExpanded && highlightItems.length > 0 ? (
           <HighlightsFullView
@@ -13378,8 +13776,10 @@ function Home() {
               setIsHighlightsExpanded(false)
               setIsSidebarCollapsed(false)
             }}
-            onSummaryGenerated={(text) => {
+            onSummaryGenerated={async (text) => {
               setSummaryText(text)
+              // Auto-save summary to Firestore
+              await updateDocumentField('summary', text)
             }}
           />
         ) : isCharactersExpanded && characters && characters.characters && characters.characters.length > 0 ? (

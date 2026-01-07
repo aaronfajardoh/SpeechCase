@@ -37,14 +37,41 @@ const TimelineSidebar = ({
     }
 
     if (timeline && timeline.length > 0) {
-      updateLineHeight()
+      // Wait for refs to be attached before trying to update line height
+      const tryUpdate = () => {
+        if (itemsContainerRef.current && lineRef.current) {
+          updateLineHeight()
+          return true
+        }
+        return false
+      }
+      
+      // Try immediately if refs are ready
+      if (!tryUpdate()) {
+        // Refs not ready - wait for them with multiple attempts
+        // Use requestAnimationFrame to ensure DOM is ready (especially on first load)
+        // Double RAF for reliability - first one waits for layout, second ensures paint
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (!tryUpdate()) {
+              // Still not ready - try again after a delay
+              setTimeout(() => {
+                tryUpdate()
+                // Final fallback
+                setTimeout(updateLineHeight, 200)
+              }, 50)
+            }
+          })
+        })
+      } else {
+        // Refs were ready - also update after a short delay as fallback
+        setTimeout(updateLineHeight, 100)
+      }
+      
       // Update on window resize
       window.addEventListener('resize', updateLineHeight)
-      // Update after a short delay to ensure content is rendered
-      const timeoutId = setTimeout(updateLineHeight, 100)
       return () => {
         window.removeEventListener('resize', updateLineHeight)
-        clearTimeout(timeoutId)
       }
     }
   }, [timeline])

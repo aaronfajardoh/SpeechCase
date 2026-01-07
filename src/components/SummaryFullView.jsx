@@ -7,7 +7,7 @@ import MermaidDiagram from './MermaidDiagram.jsx'
 import { markdownToClipboardHtml, copyHtmlToClipboard } from '../utils/clipboardUtils.js'
 import { Document, Packer, Paragraph, TextRun } from 'docx'
 
-const SummaryFullView = ({ summaryText, highlightItems, setHighlightItems, documentId, highlights, onColorChange, onDelete, pdfFileName, onMinimize, onSummaryGenerated }) => {
+const SummaryFullView = ({ summaryText, highlightItems, setHighlightItems, documentId, highlights, onColorChange, onDelete, pdfFileName, onMinimize, onSummaryGenerated, onSummaryBlur }) => {
   const [hoveredItemId, setHoveredItemId] = useState(null)
   const [tooltipPosition, setTooltipPosition] = useState(null)
   const isHoveringTooltipRef = useRef(false)
@@ -19,9 +19,19 @@ const SummaryFullView = ({ summaryText, highlightItems, setHighlightItems, docum
   const [dropPosition, setDropPosition] = useState(null) // { itemId, position: 'before' | 'after', inline: boolean }
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false)
   const [activeTab, setActiveTab] = useState('summary') // 'highlights' | 'summary'
+  const [isEditingSummary, setIsEditingSummary] = useState(false)
+  const [localSummaryText, setLocalSummaryText] = useState(summaryText || '')
   const editInputRef = useRef(null)
+  const summaryTextareaRef = useRef(null)
   const highlightsItemsRef = useRef(null)
   const prevHighlightItemsLengthRef = useRef(highlightItems?.length || 0)
+
+  // Update local summary text when prop changes (from Firestore)
+  useEffect(() => {
+    if (!isEditingSummary && summaryText !== localSummaryText) {
+      setLocalSummaryText(summaryText || '')
+    }
+  }, [summaryText, isEditingSummary])
 
   // Cleanup timeout on unmount or when editing starts
   useEffect(() => {
@@ -733,7 +743,7 @@ ${htmlContent}
               </>
             )}
 
-            {activeTab === 'summary' && summaryText && (
+            {activeTab === 'summary' && (summaryText || localSummaryText) && (
               <div className="highlights-summary-content">
                 <div className="highlights-summary-markdown">
                   <button
@@ -744,27 +754,74 @@ ${htmlContent}
                   >
                     <IconRefresh size={14} />
                   </button>
-                  <ReactMarkdown
-                    components={{
-                      code({ node, inline, className, children, ...props }) {
-                        const match = /language-(\w+)/.exec(className || '')
-                        const language = match ? match[1] : ''
-                        const codeString = String(children).replace(/\n$/, '')
-                        
-                        if (!inline && language === 'mermaid') {
-                          return <MermaidDiagram chart={codeString} fontSize={16} />
+                  {isEditingSummary ? (
+                    <textarea
+                      ref={summaryTextareaRef}
+                      value={localSummaryText}
+                      onChange={(e) => setLocalSummaryText(e.target.value)}
+                      onBlur={() => {
+                        setIsEditingSummary(false)
+                        if (onSummaryBlur && localSummaryText !== summaryText) {
+                          onSummaryBlur(localSummaryText)
                         }
-                        
-                        return (
-                          <code className={className} {...props}>
-                            {children}
-                          </code>
-                        )
-                      }
-                    }}
-                  >
-                    {summaryText}
-                  </ReactMarkdown>
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                          setLocalSummaryText(summaryText || '')
+                          setIsEditingSummary(false)
+                        }
+                      }}
+                      className="summary-edit-textarea"
+                      style={{
+                        width: '100%',
+                        minHeight: '400px',
+                        padding: '12px',
+                        border: '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontFamily: 'inherit',
+                        fontSize: '14px',
+                        lineHeight: '1.6',
+                        resize: 'vertical'
+                      }}
+                      autoFocus
+                    />
+                  ) : (
+                    <div
+                      onDoubleClick={() => {
+                        setIsEditingSummary(true)
+                        setLocalSummaryText(summaryText || localSummaryText || '')
+                        setTimeout(() => {
+                          if (summaryTextareaRef.current) {
+                            summaryTextareaRef.current.focus()
+                          }
+                        }, 0)
+                      }}
+                      style={{ cursor: 'text' }}
+                      title="Double-click to edit"
+                    >
+                      <ReactMarkdown
+                        components={{
+                          code({ node, inline, className, children, ...props }) {
+                            const match = /language-(\w+)/.exec(className || '')
+                            const language = match ? match[1] : ''
+                            const codeString = String(children).replace(/\n$/, '')
+                            
+                            if (!inline && language === 'mermaid') {
+                              return <MermaidDiagram chart={codeString} fontSize={16} />
+                            }
+                            
+                            return (
+                              <code className={className} {...props}>
+                                {children}
+                              </code>
+                            )
+                          }
+                        }}
+                      >
+                        {summaryText || localSummaryText}
+                      </ReactMarkdown>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
