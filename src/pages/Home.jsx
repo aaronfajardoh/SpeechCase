@@ -4,7 +4,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import { PDFDocument, rgb } from 'pdf-lib'
 import { httpsCallable } from 'firebase/functions'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
-import { doc, getDoc, onSnapshot, collection, query, orderBy, updateDoc } from 'firebase/firestore'
+import { doc, getDoc, onSnapshot, collection, query, orderBy, updateDoc, setDoc } from 'firebase/firestore'
 import { functions, storage, db } from '../firebase'
 import { useAuth } from '../contexts/AuthContext'
 import '../App.css'
@@ -510,9 +510,10 @@ function Home() {
           }))
           const simplifiedSize = estimateSize(simplifiedHighlights)
           if (simplifiedSize < maxSize) {
-            await updateDoc(doc(db, 'users', currentUser.uid, 'documents', documentId), {
+            const docRef = doc(db, 'users', currentUser.uid, 'documents', documentId)
+            await setDoc(docRef, {
               [field]: simplifiedHighlights
-            })
+            }, { merge: true })
             console.log(`Saved simplified ${field} to Firestore (${simplifiedSize} bytes)`)
           } else {
             console.warn(`Even simplified ${field} is too large, skipping save`)
@@ -523,9 +524,9 @@ function Home() {
       }
 
       const docRef = doc(db, 'users', currentUser.uid, 'documents', documentId)
-      await updateDoc(docRef, {
+      await setDoc(docRef, {
         [field]: value
-      })
+      }, { merge: true })
       console.log(`Successfully updated ${field} in Firestore (${size} bytes)`)
     } catch (error) {
       console.error(`Error updating ${field} in Firestore:`, error)
@@ -6669,6 +6670,28 @@ function Home() {
             console.error('Error uploading PDF to Storage:', storageError)
             // Continue processing even if storage upload fails
           }
+          
+          // Create document in Firestore immediately so highlights can be saved
+          // This must happen before processPDFForAI to ensure document exists
+          try {
+            const docRef = doc(db, 'users', currentUser.uid, 'documents', finalDocumentId)
+            const now = new Date().toISOString()
+            await setDoc(docRef, {
+              fileName: file.name,
+              pageCount: pdf.numPages,
+              textLength: initialText.length,
+              storageUrl: storageUrl,
+              fileSize: file.size,
+              uploadedAt: now,
+              createdAt: now,
+              processedAt: now, // Set initial processedAt so document shows in dashboard
+              processingStatus: 'pending'
+            }, { merge: true })
+            console.log('Document created in Firestore:', finalDocumentId)
+          } catch (docError) {
+            console.error('Error creating document in Firestore:', docError)
+            // Continue even if document creation fails - processPDFForAI will try again
+          }
         }
         
         // Process PDF in background (don't block UI) - only if needed
@@ -6722,6 +6745,19 @@ function Home() {
 
   // Process PDF for AI features (chunking and embeddings)
   const processPDFForAI = async (docId, text, metadata) => {
+    // Create basic document entry first, even if processing fails
+    // This ensures highlights and other features can be saved
+    const docRef = doc(db, 'users', currentUser.uid, 'documents', docId)
+    try {
+      await setDoc(docRef, {
+        ...metadata,
+        createdAt: new Date().toISOString(),
+        processingStatus: 'processing'
+      }, { merge: true })
+    } catch (createError) {
+      console.warn('Error creating document entry:', createError)
+    }
+
     try {
       const processPdf = httpsCallable(functions, 'processPdf')
       const result = await processPdf({
@@ -6731,9 +6767,26 @@ function Home() {
       })
 
       console.log('PDF processed for AI:', result.data)
+      
+      // Update document with success status
+      await setDoc(docRef, {
+        processingStatus: 'completed'
+      }, { merge: true })
+      
       return result
     } catch (error) {
       console.error('Error processing PDF for AI:', error)
+      
+      // Update document with error status, but keep it so highlights can be saved
+      try {
+        await setDoc(docRef, {
+          processingStatus: 'failed',
+          processingError: error.message
+        }, { merge: true })
+      } catch (updateError) {
+        console.warn('Error updating document status:', updateError)
+      }
+      
       // Handle Firebase-specific errors
       if (error.code) {
         throw new Error(`Firebase error: ${error.message}`)

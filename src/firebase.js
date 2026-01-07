@@ -29,7 +29,8 @@ import { getStorage } from "firebase/storage";
 // Initialize Auth, Firestore, Functions, and Storage
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const functions = getFunctions(app);
+// Connect to us-central1 region to match Cloud Functions deployment
+export const functions = getFunctions(app, 'us-central1');
 export const storage = getStorage(app);
 
 // Export the app and analytics for use throughout your app
