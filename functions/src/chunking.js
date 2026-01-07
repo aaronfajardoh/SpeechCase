@@ -333,6 +333,49 @@ function addMetadataTags(chunks, fullText) {
       tags.push("has_locations");
     }
 
+    // -----------------------------------------------------------------------
+    // Exhibit detection (English and Spanish)
+    // -----------------------------------------------------------------------
+    // Patterns for exhibit names: Exhibit 7, Exhibit A.1, Anexo 3, Prueba A, etc.
+    const exhibitPatterns = [
+      // English: Exhibit, Exhibit A, Exhibit 7, Exhibit A.1, Exhibit 7-A
+      /\bexhibit\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+      // Spanish: Anexo, Anexo A, Anexo 3, Anexo A.1
+      /\banexo\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+      // Spanish: Prueba, Prueba A, Prueba 3
+      /\bprueba\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+      // Spanish: Evidencia, Evidencia A
+      /\bevidencia\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+      // Spanish: Documento, Documento A
+      /\bdocumento\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+    ];
+
+    const exhibitMatches = [];
+    let exhibitMetadata = [];
+
+    for (const pattern of exhibitPatterns) {
+      let match;
+      // Reset regex lastIndex to ensure we get all matches
+      pattern.lastIndex = 0;
+      while ((match = pattern.exec(originalText)) !== null) {
+        const fullMatch = match[0];
+        const exhibitNumber = match[1];
+        const matchIndex = chunk.startIndex + match.index;
+
+        exhibitMatches.push(fullMatch);
+        exhibitMetadata.push({
+          fullText: fullMatch,
+          number: exhibitNumber,
+          position: matchIndex,
+          positionInChunk: match.index,
+        });
+      }
+    }
+
+    if (exhibitMatches.length > 0) {
+      tags.push("has_exhibits");
+    }
+
     // Chunk position tags
     if (index === 0) {
       tags.push("is_beginning");
@@ -373,13 +416,74 @@ function addMetadataTags(chunks, fullText) {
           relativeWeeks: uniqueRelativeWeeks,
           relativeYears: uniqueRelativeYears,
         },
+        // Exhibit metadata
+        hasExhibits: tags.includes("has_exhibits"),
+        exhibits: exhibitMetadata.length > 0 ? exhibitMetadata : null,
       },
     };
   });
 }
 
+/**
+ * Extract all exhibits from full text with their positions
+ * This is used to find the actual exhibit content (usually after the name)
+ * @param {string} fullText - The full document text
+ * @return {Array<Object>} Array of exhibit objects with name, number, and position
+ */
+function extractExhibits(fullText) {
+  if (!fullText) return [];
+
+  const exhibitPatterns = [
+    // English: Exhibit, Exhibit A, Exhibit 7, Exhibit A.1, Exhibit 7-A
+    /\bexhibit\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+    // Spanish: Anexo, Anexo A, Anexo 3, Anexo A.1
+    /\banexo\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+    // Spanish: Prueba, Prueba A, Prueba 3
+    /\bprueba\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+    // Spanish: Evidencia, Evidencia A
+    /\bevidencia\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+    // Spanish: Documento, Documento A
+    /\bdocumento\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+  ];
+
+  const allExhibits = [];
+
+  for (const pattern of exhibitPatterns) {
+    let match;
+    pattern.lastIndex = 0;
+    while ((match = pattern.exec(fullText)) !== null) {
+      allExhibits.push({
+        fullText: match[0],
+        number: match[1],
+        position: match.index,
+        type: pattern.source.includes("exhibit") ? "exhibit" :
+              pattern.source.includes("anexo") ? "anexo" :
+              pattern.source.includes("prueba") ? "prueba" :
+              pattern.source.includes("evidencia") ? "evidencia" : "documento",
+      });
+    }
+  }
+
+  // Sort by position
+  allExhibits.sort((a, b) => a.position - b.position);
+
+  // Group by exhibit number and keep only the last occurrence of each
+  // (since exhibits are usually presented at the last mention)
+  const exhibitMap = new Map();
+  allExhibits.forEach((exhibit) => {
+    const key = `${exhibit.type}-${exhibit.number.toLowerCase()}`;
+    const existing = exhibitMap.get(key);
+    if (!existing || exhibit.position > existing.position) {
+      exhibitMap.set(key, exhibit);
+    }
+  });
+
+  return Array.from(exhibitMap.values());
+}
+
 module.exports = {
   chunkText,
   addMetadataTags,
+  extractExhibits,
 };
 

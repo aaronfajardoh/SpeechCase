@@ -49,6 +49,8 @@ import CharactersSidebar from '../components/CharactersSidebar.jsx'
 import CharactersFullView from '../components/CharactersFullView.jsx'
 import ChatSidebar from '../components/ChatSidebar.jsx'
 import HighlightsSidebar from '../components/HighlightsSidebar.jsx'
+import ExhibitsSidebar from '../components/ExhibitsSidebar.jsx'
+import { extractExhibits } from '../../services/chunking.js'
 import SummaryFullView from '../components/SummaryFullView.jsx'
 import HighlightsFullView from '../components/HighlightsFullView.jsx'
 
@@ -114,9 +116,10 @@ function Home() {
   const selectionStartRangeRef = useRef(null) // Store the start of selection range
   const lastValidRangeRef = useRef(null) // Track last valid range during mouse move (for whitespace handling)
   const [renderedThumbnails, setRenderedThumbnails] = useState([]) // Track which thumbnails are rendered
-  const [sidebarView, setSidebarView] = useState('pages') // 'pages', 'timeline', 'characters', 'chat', 'highlights'
+  const [sidebarView, setSidebarView] = useState('pages') // 'pages', 'timeline', 'characters', 'chat', 'highlights', 'exhibits'
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false) // Sidebar collapsed state
   const [sidebarWidth, setSidebarWidth] = useState(230) // Sidebar width in pixels
+  const [isExhibitsExpanded, setIsExhibitsExpanded] = useState(false) // Exhibits sidebar expanded state
   const [isResizing, setIsResizing] = useState(false) // Track if sidebar is being resized
   const isResizingRef = useRef(false) // Track if user is resizing the sidebar
   const resizeStartXRef = useRef(0) // Track initial mouse X position when resizing starts
@@ -197,6 +200,20 @@ function Home() {
   const pendingScrollTimeoutRef = useRef(null) // Track pending scroll timeout to cancel if needed
   const scrollPositionBeforeZoomRef = useRef(null) // Store scroll position before zoom to restore after re-render
   const scrollPositionBeforeFullViewRef = useRef(null) // Store scroll position before opening full view to restore after returning
+  const [exhibits, setExhibits] = useState([]) // Store detected exhibits
+  const exhibitsRef = useRef([]) // Ref for exhibits to avoid stale closures
+
+  // Extract exhibits when text is loaded
+  useEffect(() => {
+    if (extractedText && extractedText.length > 0 && !isPDFProcessing) {
+      const extracted = extractExhibits(extractedText)
+      setExhibits(extracted)
+      exhibitsRef.current = extracted
+    } else {
+      setExhibits([])
+      exhibitsRef.current = []
+    }
+  }, [extractedText, isPDFProcessing])
 
   // Detect mobile device
   useEffect(() => {
@@ -608,27 +625,57 @@ function Home() {
 
   // Sidebar resize handlers
   const handleResizeStart = useCallback((e) => {
-    if (isSidebarCollapsed) return
+    // Always allow resizing when viewing an exhibit, otherwise only when not collapsed
+    const isViewingExhibit = sidebarView === 'exhibits' && isExhibitsExpanded
+    if (isSidebarCollapsed && !isViewingExhibit) return
+    
     e.preventDefault()
     isResizingRef.current = true
     setIsResizing(true) // Disable CSS transition during resize
     resizeStartXRef.current = e.clientX
-    resizeStartWidthRef.current = sidebarWidth
+    
+    // If collapsed and viewing exhibit, start from collapsed width
+    // Otherwise use current sidebar width
+    if (isSidebarCollapsed && isViewingExhibit) {
+      resizeStartWidthRef.current = 52 // Collapsed width
+      // Uncollapse when starting to resize from collapsed state
+      setIsSidebarCollapsed(false)
+    } else {
+      resizeStartWidthRef.current = sidebarWidth
+    }
+    
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
-  }, [isSidebarCollapsed, sidebarWidth])
+  }, [isSidebarCollapsed, sidebarWidth, sidebarView, isExhibitsExpanded])
 
   const handleResizeMove = useCallback((e) => {
     if (!isResizingRef.current) return
     const deltaX = e.clientX - resizeStartXRef.current
-    const newWidth = Math.max(220, Math.min(500, resizeStartWidthRef.current + deltaX))
+    const isViewingExhibit = sidebarView === 'exhibits' && isExhibitsExpanded
+    
+    // When viewing exhibit, allow expansion up to 80vw, minimum is 220px (can shrink below 50vw)
+    // When not viewing exhibit, use normal constraints
+    let minWidth = 220
+    let maxWidth = 500
+    if (isViewingExhibit) {
+      // Allow full range when viewing exhibit - user can shrink or expand as needed
+      minWidth = 220
+      maxWidth = Math.floor(window.innerWidth * 0.8)
+    }
+    
+    const newWidth = Math.max(minWidth, Math.min(maxWidth, resizeStartWidthRef.current + deltaX))
     setSidebarWidth(newWidth)
+    
+    // Auto-expand exhibits sidebar if resizing from collapsed state
+    if (isViewingExhibit && !isExhibitsExpanded && newWidth >= 220) {
+      setIsExhibitsExpanded(true)
+    }
     
     // Update normal width if not on highlights tab (preserve original normal width when on highlights)
     if (sidebarView !== 'highlights') {
       normalSidebarWidthRef.current = newWidth
     }
-  }, [sidebarView])
+  }, [sidebarView, isExhibitsExpanded])
 
   const handleResizeEnd = useCallback(() => {
     if (!isResizingRef.current) return
@@ -1063,143 +1110,128 @@ function Home() {
         return false
       }
 
-      // Use Google TTS for Spanish, browser TTS for English
+      // Use browser TTS for all languages
       console.log('Media Session: Starting playback, language:', langToUse, 'text length:', textToRead.length)
-      if (langToUse === 'es') {
-        // Use Google TTS for Spanish
-        console.log('Media Session: Using Google TTS for Spanish text')
-        try {
-          const success = await playGoogleTTSAudio(textToRead, position, playbackSpeedRef.current)
-          console.log('Media Session: Google TTS playback started:', success)
-          return success
-        } catch (error) {
-          console.error('Media Session: Google TTS error:', error)
-          setError('Error with Google TTS: ' + error.message)
-          return false
-        }
-      } else {
-        console.log('Media Session: Using browser TTS for', langToUse === 'es' ? 'Spanish' : 'English', 'text')
-        // Use browser TTS for English
-        if (!synthRef.current) {
-          setError('Text-to-speech is not available in your browser.')
-          return false
-        }
+      console.log('Media Session: Using browser TTS for', langToUse === 'es' ? 'Spanish' : 'English', 'text')
+      if (!synthRef.current) {
+        setError('Text-to-speech is not available in your browser.')
+        return false
+      }
 
-        // Split text into segments with header detection for browser TTS
-        // Note: documentId is not available in Media Session context, so we'll use on-the-fly detection
-        const segments = splitTextForBrowserTTS(textToRead, null)
-        console.log(`Media Session: Split text into ${segments.length} segments, ${segments.filter(s => s.isHeader).length} headers detected`)
+      // Split text into segments with header detection for browser TTS
+      // Note: documentId is not available in Media Session context, so we'll use on-the-fly detection
+      const segments = splitTextForBrowserTTS(textToRead, null)
+      console.log(`Media Session: Split text into ${segments.length} segments, ${segments.filter(s => s.isHeader).length} headers detected`)
 
-        let currentSegmentIndex = 0
-        let totalTextOffset = 0
-        
-        // Function to speak next segment
-        const speakNextSegment = () => {
-          if (currentSegmentIndex >= segments.length) {
-            // All segments done
-            setIsPlaying(false)
-            currentPlaybackPositionRef.current = position + textToRead.length
-            playbackStartTimeRef.current = null
-            if ('mediaSession' in navigator) {
-              navigator.mediaSession.playbackState = 'paused'
-            }
-            return
+      let currentSegmentIndex = 0
+      let totalTextOffset = 0
+      
+      // Function to speak next segment
+      const speakNextSegment = () => {
+        if (currentSegmentIndex >= segments.length) {
+          // All segments done
+          setIsPlaying(false)
+          currentPlaybackPositionRef.current = position + textToRead.length
+          playbackStartTimeRef.current = null
+          if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'paused'
           }
+          return
+        }
 
-          const segment = segments[currentSegmentIndex]
-          if (!segment.text || segment.text.trim().length === 0) {
-            currentSegmentIndex++
+        const segment = segments[currentSegmentIndex]
+        if (!segment.text || segment.text.trim().length === 0) {
+          currentSegmentIndex++
+          speakNextSegment()
+          return
+        }
+
+        // If this segment is after a header, add delay
+        if (currentSegmentIndex > 0 && segments[currentSegmentIndex - 1].isHeader) {
+          const delay = segments[currentSegmentIndex - 1].delay
+          setTimeout(() => {
             speakNextSegment()
-            return
-          }
+          }, delay)
+          return
+        }
 
-          // If this segment is after a header, add delay
-          if (currentSegmentIndex > 0 && segments[currentSegmentIndex - 1].isHeader) {
-            const delay = segments[currentSegmentIndex - 1].delay
+        // Create utterance for this segment
+        const utterance = new SpeechSynthesisUtterance(segment.text)
+        utterance.lang = langToUse === 'es' ? 'es-ES' : 'en-US'
+        utterance.rate = playbackSpeedRef.current
+        utterance.pitch = 1.0
+        utterance.volume = 1.0
+
+        const segmentStartInText = totalTextOffset
+        totalTextOffset += segment.text.length + (currentSegmentIndex < segments.length - 1 ? 1 : 0)
+
+        utterance.onboundary = (event) => {
+          if (event.name === 'word' || event.name === 'sentence') {
+            const absolutePosition = position + segmentStartInText + event.charIndex
+            currentPlaybackPositionRef.current = absolutePosition
+            lastBoundaryPositionRef.current = absolutePosition
+          }
+        }
+
+        utterance.onstart = () => {
+          if (currentSegmentIndex === 0) {
+            setIsPlaying(true)
+            currentPlaybackPositionRef.current = position
+            playbackStartPositionRef.current = position
+            playbackStartTimeRef.current = Date.now()
+            lastBoundaryPositionRef.current = position
+            
+            if ('mediaSession' in navigator) {
+              navigator.mediaSession.playbackState = 'playing'
+              navigator.mediaSession.metadata = new MediaMetadata({
+                title: pdfFileRef.current ? pdfFileRef.current.name : 'SpeechCase',
+                artist: 'Text-to-Speech',
+                album: 'PDF Reader'
+              })
+            }
+          }
+        }
+        
+        utterance.onend = () => {
+          currentSegmentIndex++
+          if (segment.isHeader) {
             setTimeout(() => {
               speakNextSegment()
-            }, delay)
-            return
+            }, segment.delay)
+          } else {
+            speakNextSegment()
           }
-
-          // Create utterance for this segment
-          const utterance = new SpeechSynthesisUtterance(segment.text)
-          utterance.lang = 'en-US'
-          utterance.rate = playbackSpeedRef.current
-          utterance.pitch = 1.0
-          utterance.volume = 1.0
-
-          const segmentStartInText = totalTextOffset
-          totalTextOffset += segment.text.length + (currentSegmentIndex < segments.length - 1 ? 1 : 0)
-
-          utterance.onboundary = (event) => {
-            if (event.name === 'word' || event.name === 'sentence') {
-              const absolutePosition = position + segmentStartInText + event.charIndex
-              currentPlaybackPositionRef.current = absolutePosition
-              lastBoundaryPositionRef.current = absolutePosition
-            }
-          }
-
-          utterance.onstart = () => {
-            if (currentSegmentIndex === 0) {
-              setIsPlaying(true)
-              currentPlaybackPositionRef.current = position
-              playbackStartPositionRef.current = position
-              playbackStartTimeRef.current = Date.now()
-              lastBoundaryPositionRef.current = position
-              
-              if ('mediaSession' in navigator) {
-                navigator.mediaSession.playbackState = 'playing'
-                navigator.mediaSession.metadata = new MediaMetadata({
-                  title: pdfFileRef.current ? pdfFileRef.current.name : 'SpeechCase',
-                  artist: 'Text-to-Speech',
-                  album: 'PDF Reader'
-                })
-              }
-            }
-          }
-          
-          utterance.onend = () => {
-            currentSegmentIndex++
-            if (segment.isHeader) {
-              setTimeout(() => {
-                speakNextSegment()
-              }, segment.delay)
-            } else {
-              speakNextSegment()
-            }
-          }
-          
-          utterance.onerror = (event) => {
-            // Ignore "interrupted" errors - these are expected when pausing/cancelling speech
-            if (event.error === 'interrupted') {
-              setIsPlaying(false)
-              playbackStartTimeRef.current = null
-              
-              if ('mediaSession' in navigator) {
-                navigator.mediaSession.playbackState = 'paused'
-              }
-              return
-            }
-            
-            // Only show errors for actual problems
-            setError('Error during speech: ' + event.error)
+        }
+        
+        utterance.onerror = (event) => {
+          // Ignore "interrupted" errors - these are expected when pausing/cancelling speech
+          if (event.error === 'interrupted') {
             setIsPlaying(false)
             playbackStartTimeRef.current = null
             
             if ('mediaSession' in navigator) {
               navigator.mediaSession.playbackState = 'paused'
             }
+            return
           }
-
-          utteranceRef.current = utterance
-          synthRef.current.speak(utterance)
+          
+          // Only show errors for actual problems
+          setError('Error during speech: ' + event.error)
+          setIsPlaying(false)
+          playbackStartTimeRef.current = null
+          
+          if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'paused'
+          }
         }
-        
-        // Start speaking the first segment
-        speakNextSegment()
-        return true
+
+        utteranceRef.current = utterance
+        synthRef.current.speak(utterance)
       }
+      
+      // Start speaking the first segment
+      speakNextSegment()
+      return true
     }
 
     // Helper function to pause playback
@@ -1807,15 +1839,8 @@ function Home() {
 
   // Async version (for background processing) - now uses only repetition-based filtering
   const filterHeadersAndFootersWithLLM = async (pageData, textToPages, minRepetitions = 2) => {
-    try {
-      const { filterHeadersAndFooters } = await import('../services/pdfProcessing/footerFilter.js')
-      return await filterHeadersAndFooters(pageData, textToPages, {
-        minRepetitions
-      })
-    } catch (error) {
-      console.warn('Footer filtering failed, using sync version:', error)
-      return filterHeadersAndFootersSync(pageData, textToPages, minRepetitions)
-    }
+    // Use sync version directly (LLM version not implemented)
+    return filterHeadersAndFootersSync(pageData, textToPages, minRepetitions)
   }
 
   // Simple language detection based on common Spanish characters and words
@@ -4536,8 +4561,42 @@ function Home() {
           }
           pageTextItems.push(textItem)
           
+          // Check if this word is part of an exhibit name
+          const currentExhibits = exhibitsRef.current
+          if (currentExhibits && currentExhibits.length > 0) {
+            for (const exhibit of currentExhibits) {
+              const exhibitStart = exhibit.position
+              const exhibitEnd = exhibit.position + exhibit.fullText.length
+              // Check if this word overlaps with an exhibit
+              const wordStart = wordCharIndex
+              const wordEnd = wordCharIndex + word.length
+              if (wordStart < exhibitEnd && wordEnd > exhibitStart) {
+                span.classList.add('exhibit-highlight')
+                span.dataset.exhibitType = exhibit.type
+                span.dataset.exhibitNumber = exhibit.number
+                span.style.cursor = 'pointer'
+                
+                // Add click handler for exhibit
+                span.addEventListener('click', (e) => {
+                  if (interactionMode === 'read') {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    // Switch to exhibits sidebar
+                    setSidebarView('exhibits')
+                    // Dispatch event to select the exhibit in sidebar
+                    window.dispatchEvent(new CustomEvent('selectExhibit', {
+                      detail: { exhibit }
+                    }))
+                  }
+                })
+                
+                break // Only highlight once per exhibit
+              }
+            }
+          }
+          
           span.addEventListener('click', (e) => {
-            if (interactionMode === 'read') {
+            if (interactionMode === 'read' && !span.classList.contains('exhibit-highlight')) {
               e.preventDefault()
               if (/\S/.test(word)) {
                 handleWordClick(textItem.charIndex, word, textItem.element)
@@ -7785,23 +7844,9 @@ function Home() {
       return false
     }
 
-    // Use Google TTS for Spanish, browser TTS for English
+    // Use browser TTS for all languages
     console.log('Starting playback, language:', langToUse, 'text length:', textToRead.length)
-    if (langToUse === 'es') {
-      // Use Google TTS for Spanish
-      console.log('Using Google TTS for Spanish text')
-      try {
-        const success = await playGoogleTTSAudio(textToRead, position, playbackSpeed)
-        console.log('Google TTS playback started:', success)
-        return success
-      } catch (error) {
-        console.error('Google TTS error:', error)
-        setError('Error with Google TTS: ' + error.message)
-        return false
-      }
-    } else {
-      console.log('Using browser TTS for', langToUse === 'es' ? 'Spanish' : 'English', 'text')
-      // Use browser TTS for English
+    console.log('Using browser TTS for', langToUse === 'es' ? 'Spanish' : 'English', 'text')
       if (!synthRef.current) {
         setError('Text-to-speech is not available in your browser.')
         return false
@@ -8231,7 +8276,6 @@ function Home() {
       // Start speaking the first segment
       speakNextSegment()
       return true
-    }
   }
 
   const handlePlay = () => {
@@ -13612,7 +13656,7 @@ function Home() {
         {/* Enhanced Sidebar with Tabs */}
         {pdfDoc && totalPages > 0 && !isMobile && (
           <div 
-            className={`pdf-sidebar ${isSidebarCollapsed ? 'collapsed' : ''} ${isResizing ? 'resizing' : ''}`}
+            className={`pdf-sidebar ${isSidebarCollapsed ? 'collapsed' : ''} ${isResizing ? 'resizing' : ''} ${sidebarView === 'exhibits' && isExhibitsExpanded ? 'exhibits-expanded' : ''}`}
             style={{ width: isSidebarCollapsed ? '52px' : `${sidebarWidth}px` }}
           >
             {/* Sidebar Header with Tabs */}
@@ -13657,6 +13701,14 @@ function Home() {
                 >
                   <IconHighlighter size={18} />
                   {!isSidebarCollapsed && <span>Highlights</span>}
+                </button>
+                <button
+                  className={`sidebar-tab ${sidebarView === 'exhibits' ? 'active' : ''}`}
+                  onClick={() => setSidebarView('exhibits')}
+                  title="Exhibits Insights"
+                >
+                  <IconFileText size={18} />
+                  {!isSidebarCollapsed && <span>Exhibits</span>}
                 </button>
               </div>
               <button
@@ -13736,6 +13788,23 @@ function Home() {
                   />
                 )}
                 {sidebarView === 'chat' && <ChatSidebar />}
+                {sidebarView === 'exhibits' && (
+                  <ExhibitsSidebar
+                    extractedText={extractedText}
+                    pdfDoc={pdfDoc}
+                    documentId={documentId}
+                    isPDFProcessing={isPDFProcessing}
+                    pageData={pageData}
+                    isExpanded={isExhibitsExpanded}
+                    setIsExpanded={setIsExhibitsExpanded}
+                    sidebarWidth={sidebarWidth}
+                    setSidebarWidth={setSidebarWidth}
+                    onExhibitClick={(exhibit) => {
+                      // Don't scroll the PDF viewer - just show the exhibit in sidebar
+                      // The sidebar will handle displaying the page
+                    }}
+                  />
+                )}
                 {sidebarView === 'highlights' && (
                   <HighlightsSidebar
                     highlightItems={highlightItems}
@@ -13784,8 +13853,9 @@ function Home() {
               </div>
             )}
             {/* Resize Handle */}
-            {!isSidebarCollapsed && (
-              <div 
+            {/* Always show resize handle when viewing exhibit, otherwise only when not collapsed */}
+            {((sidebarView === 'exhibits' && isExhibitsExpanded) || !isSidebarCollapsed) && (
+              <div
                 className="sidebar-resize-handle"
                 onMouseDown={handleResizeStart}
               />
