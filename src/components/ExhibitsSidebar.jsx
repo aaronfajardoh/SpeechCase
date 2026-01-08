@@ -122,9 +122,9 @@ const ExhibitsSidebar = ({
         const validatedExhibits = await Promise.all(
           rawExhibits.map(async (exhibit) => {
             try {
-              // Find which page contains this exhibit
+              // Find which page contains the mention of this exhibit
               const exhibitPosition = exhibit.position
-              let targetPageNum = 1
+              let mentionPageNum = 1
               
               if (pageData && pageData.length > 0) {
                 for (let i = 0; i < pageData.length; i++) {
@@ -132,22 +132,158 @@ const ExhibitsSidebar = ({
                   const nextPageInfo = pageData[i + 1]
                   if (exhibitPosition >= pageInfo.pageCharOffset) {
                     if (!nextPageInfo || exhibitPosition < nextPageInfo.pageCharOffset) {
-                      targetPageNum = pageInfo.pageNum
+                      mentionPageNum = pageInfo.pageNum
                       break
                     }
                   }
                 }
                 
-                if (targetPageNum === 1 && pageData.length > 0) {
+                if (mentionPageNum === 1 && pageData.length > 0) {
                   const lastPage = pageData[pageData.length - 1]
                   if (exhibitPosition >= lastPage.pageCharOffset) {
-                    targetPageNum = lastPage.pageNum
+                    mentionPageNum = lastPage.pageNum
                   }
                 }
               } else {
-                targetPageNum = Math.ceil((exhibitPosition / extractedText.length) * pdfDoc.numPages)
-                targetPageNum = Math.max(1, Math.min(targetPageNum, pdfDoc.numPages))
+                mentionPageNum = Math.ceil((exhibitPosition / extractedText.length) * pdfDoc.numPages)
+                mentionPageNum = Math.max(1, Math.min(mentionPageNum, pdfDoc.numPages))
               }
+
+              // Format the exhibit name to search for
+              const formatExhibitName = (ex) => {
+                const typeMap = {
+                  'exhibit': 'Exhibit',
+                  'anexo': 'Anexo',
+                  'prueba': 'Prueba',
+                  'evidencia': 'Evidencia',
+                  'documento': 'Documento'
+                }
+                const typeName = typeMap[ex.type] || ex.type
+                return `${typeName} ${ex.number}`
+              }
+              const exhibitName = formatExhibitName(exhibit)
+              
+              // Simple strategy: Find the LAST occurrence of the exhibit name in the full text
+              // The last mention is almost always the actual exhibit page
+              let targetPageNum = mentionPageNum
+              
+              // Search for all occurrences of the exhibit name in the full text
+              const exhibitNameLower = exhibitName.toLowerCase()
+              const exhibitPattern = new RegExp(`\\b${exhibitNameLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi')
+              const allMatches = []
+              let match
+              exhibitPattern.lastIndex = 0
+              
+              while ((match = exhibitPattern.exec(extractedText)) !== null) {
+                allMatches.push({
+                  position: match.index,
+                  text: match[0]
+                })
+              }
+              
+              // Use the last occurrence to determine the page
+              if (allMatches.length > 0) {
+                const lastMatch = allMatches[allMatches.length - 1]
+                const lastMatchPosition = lastMatch.position
+                
+                // Find which page contains the last occurrence
+                if (pageData && pageData.length > 0) {
+                  for (let i = 0; i < pageData.length; i++) {
+                    const pageInfo = pageData[i]
+                    const nextPageInfo = pageData[i + 1]
+                    if (lastMatchPosition >= pageInfo.pageCharOffset) {
+                      if (!nextPageInfo || lastMatchPosition < nextPageInfo.pageCharOffset) {
+                        targetPageNum = pageInfo.pageNum
+                        break
+                      }
+                    }
+                  }
+                  
+                  // Fallback: check if it's on the last page
+                  if (targetPageNum === mentionPageNum && pageData.length > 0) {
+                    const lastPage = pageData[pageData.length - 1]
+                    if (lastMatchPosition >= lastPage.pageCharOffset) {
+                      targetPageNum = lastPage.pageNum
+                    }
+                  }
+                } else {
+                  targetPageNum = Math.ceil((lastMatchPosition / extractedText.length) * pdfDoc.numPages)
+                  targetPageNum = Math.max(1, Math.min(targetPageNum, pdfDoc.numPages))
+                }
+              } else {
+                // Fallback: if no matches found, use mention page
+              }
+
+              // Verify with AI that the selected page actually contains this specific exhibit
+              // This is important when multiple exhibits are on the same page
+              let verifiedPageNum = targetPageNum
+              try {
+                const verifyPage = await pdfDoc.getPage(targetPageNum - 1)
+                const verifyScale = 1.0 // Lower scale for faster verification
+                const verifyViewport = verifyPage.getViewport({ scale: verifyScale })
+                const verifyCanvas = document.createElement('canvas')
+                const verifyContext = verifyCanvas.getContext('2d')
+                verifyCanvas.width = verifyViewport.width
+                verifyCanvas.height = verifyViewport.height
+                
+                await verifyPage.render({
+                  canvasContext: verifyContext,
+                  viewport: verifyViewport
+                }).promise
+                
+                const verifyImageDataUrl = verifyCanvas.toDataURL('image/png')
+                const verifyResult = await validateExhibitName(verifyImageDataUrl, exhibitName)
+                
+                // Check if the found exhibit name contains our specific exhibit
+                const foundExhibitName = verifyResult.exhibitName ? verifyResult.exhibitName.toLowerCase() : ''
+                const searchExhibitName = exhibitName.toLowerCase()
+                const exactNamePattern = new RegExp(`\\b${searchExhibitName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+                const exactMatch = exactNamePattern.test(foundExhibitName)
+                
+                // Accept if: validated AND (matches OR exact name found in list)
+                const pageContainsExhibit = verifyResult.validated && (verifyResult.matches || exactMatch)
+                
+                // If the page doesn't contain this specific exhibit, search forward
+                if (!pageContainsExhibit) {
+                  // Search forward up to 5 pages to find the page with this specific exhibit
+                  for (let pageNum = targetPageNum + 1; pageNum <= Math.min(targetPageNum + 5, pdfDoc.numPages); pageNum++) {
+                    try {
+                      const testPage = await pdfDoc.getPage(pageNum - 1)
+                      const testScale = 1.0
+                      const testViewport = testPage.getViewport({ scale: testScale })
+                      const testCanvas = document.createElement('canvas')
+                      const testContext = testCanvas.getContext('2d')
+                      testCanvas.width = testViewport.width
+                      testCanvas.height = testViewport.height
+                      
+                      await testPage.render({
+                        canvasContext: testContext,
+                        viewport: testViewport
+                      }).promise
+                      
+                      const testImageDataUrl = testCanvas.toDataURL('image/png')
+                      const testResult = await validateExhibitName(testImageDataUrl, exhibitName)
+                      
+                      const testFoundName = testResult.exhibitName ? testResult.exhibitName.toLowerCase() : ''
+                      const testExactMatch = exactNamePattern.test(testFoundName)
+                      const testPageContainsExhibit = testResult.validated && (testResult.matches || testExactMatch)
+                      
+                      if (testPageContainsExhibit) {
+                        verifiedPageNum = pageNum
+                        break
+                      }
+                    } catch (testError) {
+                      console.error(`Error testing page ${pageNum}:`, testError)
+                    }
+                  }
+                }
+              } catch (verifyError) {
+                console.error('Error verifying page with AI:', verifyError)
+                // Continue with the selected page if verification fails
+              }
+              
+              // Use the verified page number
+              targetPageNum = verifiedPageNum
 
               // Render the page as an image
               const page = await pdfDoc.getPage(targetPageNum - 1)
@@ -165,20 +301,8 @@ const ExhibitsSidebar = ({
               
               const imageDataUrl = canvas.toDataURL('image/png')
               
-              // Format the extracted exhibit name for validation
-              const formatExhibitName = (ex) => {
-                const typeMap = {
-                  'exhibit': 'Exhibit',
-                  'anexo': 'Anexo',
-                  'prueba': 'Prueba',
-                  'evidencia': 'Evidencia',
-                  'documento': 'Documento'
-                }
-                const typeName = typeMap[ex.type] || ex.type
-                return `${typeName} ${ex.number}`
-              }
-              
-              const extractedName = formatExhibitName(exhibit)
+              // Use the formatted exhibit name we already created
+              const extractedName = exhibitName
               
               // Validate with AI
               const validationResult = await validateExhibitName(imageDataUrl, extractedName)
@@ -731,40 +855,150 @@ const ExhibitsSidebar = ({
         return
       }
 
-      // Find which page contains this exhibit based on pageCharOffset
-      const exhibitPosition = exhibit.position
-      let targetPageNum = 1
+      // Find the LAST occurrence of the exhibit name to get the actual exhibit page
+      // Format the exhibit name
+      const formatExhibitName = (ex) => {
+        const typeMap = {
+          'exhibit': 'Exhibit',
+          'anexo': 'Anexo',
+          'prueba': 'Prueba',
+          'evidencia': 'Evidencia',
+          'documento': 'Documento'
+        }
+        const typeName = typeMap[ex.type] || ex.type
+        return `${typeName} ${ex.number}`
+      }
+      const exhibitName = formatExhibitName(exhibit)
       
-      if (pageData && pageData.length > 0) {
-        // Find the page that contains this character position
-        // The exhibit position should be >= pageCharOffset and < next page's pageCharOffset
-        for (let i = 0; i < pageData.length; i++) {
-          const pageInfo = pageData[i]
-          const nextPageInfo = pageData[i + 1]
+      // Find all occurrences of the exhibit name in the full text
+      const exhibitNameLower = exhibitName.toLowerCase()
+      const exhibitPattern = new RegExp(`\\b${exhibitNameLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi')
+      const allMatches = []
+      let match
+      exhibitPattern.lastIndex = 0
+      
+      while ((match = exhibitPattern.exec(extractedText)) !== null) {
+        allMatches.push({
+          position: match.index,
+          text: match[0]
+        })
+      }
+      
+      // Use the last occurrence to determine the page
+      let targetPageNum = 1
+      if (allMatches.length > 0) {
+        const lastMatch = allMatches[allMatches.length - 1]
+        const lastMatchPosition = lastMatch.position
+        
+        // Find which page contains the last occurrence
+        if (pageData && pageData.length > 0) {
+          for (let i = 0; i < pageData.length; i++) {
+            const pageInfo = pageData[i]
+            const nextPageInfo = pageData[i + 1]
+            if (lastMatchPosition >= pageInfo.pageCharOffset) {
+              if (!nextPageInfo || lastMatchPosition < nextPageInfo.pageCharOffset) {
+                targetPageNum = pageInfo.pageNum
+                break
+              }
+            }
+          }
           
-          // Check if exhibit position is within this page's range
-          if (exhibitPosition >= pageInfo.pageCharOffset) {
-            // If there's no next page, or the position is before the next page starts
-            if (!nextPageInfo || exhibitPosition < nextPageInfo.pageCharOffset) {
-              targetPageNum = pageInfo.pageNum
-              break
+          // Fallback: check if it's on the last page
+          if (targetPageNum === 1 && pageData.length > 0) {
+            const lastPage = pageData[pageData.length - 1]
+            if (lastMatchPosition >= lastPage.pageCharOffset) {
+              targetPageNum = lastPage.pageNum
+            }
+          }
+        } else {
+          // Fallback: estimate page based on text position
+          targetPageNum = Math.ceil((lastMatchPosition / extractedText.length) * pdfDoc.numPages)
+          targetPageNum = Math.max(1, Math.min(targetPageNum, pdfDoc.numPages))
+        }
+      } else {
+        // Fallback: use the original position if no matches found
+        const exhibitPosition = exhibit.position
+        if (pageData && pageData.length > 0) {
+          for (let i = 0; i < pageData.length; i++) {
+            const pageInfo = pageData[i]
+            const nextPageInfo = pageData[i + 1]
+            if (exhibitPosition >= pageInfo.pageCharOffset) {
+              if (!nextPageInfo || exhibitPosition < nextPageInfo.pageCharOffset) {
+                targetPageNum = pageInfo.pageNum
+                break
+              }
+            }
+          }
+        } else {
+          targetPageNum = Math.ceil((exhibitPosition / extractedText.length) * pdfDoc.numPages)
+          targetPageNum = Math.max(1, Math.min(targetPageNum, pdfDoc.numPages))
+        }
+      }
+      
+      // Verify with AI that the selected page actually contains this specific exhibit
+      let verifiedPageNum = targetPageNum
+      try {
+        const verifyPage = await pdfDoc.getPage(targetPageNum - 1)
+        const verifyScale = 1.0
+        const verifyViewport = verifyPage.getViewport({ scale: verifyScale })
+        const verifyCanvas = document.createElement('canvas')
+        const verifyContext = verifyCanvas.getContext('2d')
+        verifyCanvas.width = verifyViewport.width
+        verifyCanvas.height = verifyViewport.height
+        
+        await verifyPage.render({
+          canvasContext: verifyContext,
+          viewport: verifyViewport
+        }).promise
+        
+        const verifyImageDataUrl = verifyCanvas.toDataURL('image/png')
+        const verifyResult = await validateExhibitName(verifyImageDataUrl, exhibitName)
+        
+        const foundExhibitName = verifyResult.exhibitName ? verifyResult.exhibitName.toLowerCase() : ''
+        const searchExhibitName = exhibitName.toLowerCase()
+        const exactNamePattern = new RegExp(`\\b${searchExhibitName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+        const exactMatch = exactNamePattern.test(foundExhibitName)
+        const pageContainsExhibit = verifyResult.validated && (verifyResult.matches || exactMatch)
+        
+        // If the page doesn't contain this specific exhibit, search forward
+        if (!pageContainsExhibit) {
+          for (let pageNum = targetPageNum + 1; pageNum <= Math.min(targetPageNum + 5, pdfDoc.numPages); pageNum++) {
+            try {
+              const testPage = await pdfDoc.getPage(pageNum - 1)
+              const testScale = 1.0
+              const testViewport = testPage.getViewport({ scale: testScale })
+              const testCanvas = document.createElement('canvas')
+              const testContext = testCanvas.getContext('2d')
+              testCanvas.width = testViewport.width
+              testCanvas.height = testViewport.height
+              
+              await testPage.render({
+                canvasContext: testContext,
+                viewport: testViewport
+              }).promise
+              
+              const testImageDataUrl = testCanvas.toDataURL('image/png')
+              const testResult = await validateExhibitName(testImageDataUrl, exhibitName)
+              
+              const testFoundName = testResult.exhibitName ? testResult.exhibitName.toLowerCase() : ''
+              const testExactMatch = exactNamePattern.test(testFoundName)
+              const testPageContainsExhibit = testResult.validated && (testResult.matches || testExactMatch)
+              
+              if (testPageContainsExhibit) {
+                verifiedPageNum = pageNum
+                break
+              }
+            } catch (testError) {
+              console.error(`Error testing page ${pageNum}:`, testError)
             }
           }
         }
-        
-        // If we didn't find a page (shouldn't happen, but fallback)
-        if (targetPageNum === 1 && pageData.length > 0) {
-          // Check if it's actually on the last page
-          const lastPage = pageData[pageData.length - 1]
-          if (exhibitPosition >= lastPage.pageCharOffset) {
-            targetPageNum = lastPage.pageNum
-          }
-        }
-      } else {
-        // Fallback: estimate page based on text position
-        targetPageNum = Math.ceil((exhibitPosition / extractedText.length) * pdfDoc.numPages)
-        targetPageNum = Math.max(1, Math.min(targetPageNum, pdfDoc.numPages))
+      } catch (verifyError) {
+        console.error('Error verifying display page with AI:', verifyError)
       }
+      
+      // Use the verified page number
+      targetPageNum = verifiedPageNum
       
       // Render the page where the exhibit appears
       const pageImage = await renderPageAsImage(targetPageNum)

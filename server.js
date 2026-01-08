@@ -1661,30 +1661,31 @@ app.post('/api/ai/validate-exhibit', async (req, res) => {
       }
 
       // Create prompt to extract exhibit name
-      const prompt = `Analyze this document page image and extract the main exhibit name/title.
+      const prompt = `Analyze this document page image and determine if it contains an actual EXHIBIT (chart, table, diagram, or visual data) or just prose text that mentions an exhibit.
 
-Look for text that appears to be an exhibit header or title, typically:
-- At the top of the page or in a prominent position
-- Format like "Exhibit 10", "Exhibit A", "Anexo 3", "Prueba 1.2", etc.
-- May be centered, bold, or in a larger font
-- Usually appears before the main content of the exhibit
+IMPORTANT: Only return an exhibit name if this page is the ACTUAL EXHIBIT PAGE containing the visual/chart/table, NOT if it's just prose text that mentions the exhibit.
 
-${extractedName ? `The system extracted "${extractedName}" from the text. Please verify if this matches what you see in the image, or provide the correct exhibit name if different.` : 'Extract the exhibit name from the image.'}
+Look for:
+- An exhibit header/title (e.g., "Exhibit 10", "Exhibit A", "Anexo 3") followed by a chart, table, diagram, or visual data
+- The exhibit should be the MAIN CONTENT of the page, not just a mention in body text
+- If the page is mostly prose/text and only mentions an exhibit in passing, return null
+
+${extractedName ? `The system is looking for "${extractedName}". Only return this name if you see it as an actual exhibit header on this page (with visual content), not if it's just mentioned in prose.` : 'Extract the exhibit name only if this is an actual exhibit page with visual content.'}
 
 Return ONLY a JSON object with this exact structure:
 {
-  "exhibitName": "the exact exhibit name as it appears in the image (e.g., 'Exhibit 10', 'Prueba 1.2')",
+  "exhibitName": "the exact exhibit name as it appears in the image header (e.g., 'Exhibit 10', 'Prueba 1.2') OR null if this is not an exhibit page",
   "confidence": "high" | "medium" | "low",
   "matchesExtracted": true or false (whether it matches the extracted name),
-  "notes": "any relevant observations"
+  "notes": "any relevant observations about whether this is an actual exhibit page or just prose"
 }
 
-If you cannot find an exhibit name, return:
+If this page is prose text that mentions an exhibit but is NOT the actual exhibit page, return:
 {
   "exhibitName": null,
-  "confidence": "low",
+  "confidence": "high",
   "matchesExtracted": false,
-  "notes": "reason why no exhibit name was found"
+  "notes": "This page contains prose text mentioning the exhibit, but is not the actual exhibit page with visual content"
 }`;
 
       // Call Gemini Vision API
