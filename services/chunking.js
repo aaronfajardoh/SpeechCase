@@ -447,20 +447,42 @@ export function extractExhibits(fullText) {
   const exhibitPatterns = [
     // English: Exhibit, Exhibit A, Exhibit 7, Exhibit A.1, Exhibit 7-A
     // Handles: "Exhibit 1.2", "Exhibit 1 .2" (with space), "Exhibit 1.2." (with trailing period)
-    /\bexhibit\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
+    { pattern: /\bexhibit\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'exhibit' },
     // Spanish: Anexo, Anexo A, Anexo 3, Anexo A.1
-    /\banexo\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
+    { pattern: /\banexo\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'anexo' },
     // Spanish: Prueba, Prueba A, Prueba 3, Prueba 1.2
-    /\bprueba\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
+    { pattern: /\bprueba\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'prueba' },
     // Spanish: Evidencia, Evidencia A
-    /\bevidencia\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
+    { pattern: /\bevidencia\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'evidencia' },
     // Spanish: Documento, Documento A
-    /\bdocumento\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
+    { pattern: /\bdocumento\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'documento' },
+    // English: Figure, Figure 1, Figure 1.2
+    { pattern: /\bfigure\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'figure' },
+    // Spanish: Figura, Figura 1, Figura 1.2
+    { pattern: /\bfigura\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'figura' },
+    // English: Appendix, Appendix A, Appendix 1
+    { pattern: /\bappendix\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'appendix' },
+    // English: Annex, Annex A, Annex 1
+    { pattern: /\bannex\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'annex' },
+    // English: Attachment, Attachment A, Attachment 1
+    { pattern: /\battachment\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'attachment' },
+    // English: Chart, Chart 1, Chart A
+    { pattern: /\bchart\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'chart' },
+    // English: Table, Table 1, Table A
+    { pattern: /\btable\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'table' },
+    // Spanish: Tabla, Tabla 1, Tabla A
+    { pattern: /\btabla\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'tabla' },
+    // English: Diagram, Diagram 1, Diagram A
+    { pattern: /\bdiagram\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'diagram' },
+    // Spanish: Diagrama, Diagrama 1, Diagrama A
+    { pattern: /\bdiagrama\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'diagrama' },
+    // English: Schedule, Schedule 1, Schedule A
+    { pattern: /\bschedule\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: 'schedule' },
   ];
 
   const allExhibits = [];
 
-  for (const pattern of exhibitPatterns) {
+  for (const { pattern, type } of exhibitPatterns) {
     let match;
     pattern.lastIndex = 0;
     while ((match = pattern.exec(fullText)) !== null) {
@@ -471,10 +493,7 @@ export function extractExhibits(fullText) {
         fullText: match[0],
         number: normalizedNumber,
         position: match.index,
-        type: pattern.source.includes('exhibit') ? 'exhibit' :
-              pattern.source.includes('anexo') ? 'anexo' :
-              pattern.source.includes('prueba') ? 'prueba' :
-              pattern.source.includes('evidencia') ? 'evidencia' : 'documento'
+        type: type
       });
     }
   }

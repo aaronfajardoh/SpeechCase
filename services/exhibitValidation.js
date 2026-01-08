@@ -53,13 +53,24 @@ export function parseExhibitName(exhibitName) {
   // Take the first one
   const firstExhibit = normalized.split(/[,;]/)[0].trim();
   
-  // Match patterns like "Exhibit 10", "Prueba 1.2", "Anexo A", etc.
+  // Match patterns like "Exhibit 10", "Prueba 1.2", "Anexo A", "Figure 1", etc.
   const patterns = [
     { regex: /^exhibit\s+(.+)$/i, type: 'exhibit' },
     { regex: /^anexo\s+(.+)$/i, type: 'anexo' },
     { regex: /^prueba\s+(.+)$/i, type: 'prueba' },
     { regex: /^evidencia\s+(.+)$/i, type: 'evidencia' },
-    { regex: /^documento\s+(.+)$/i, type: 'documento' }
+    { regex: /^documento\s+(.+)$/i, type: 'documento' },
+    { regex: /^figure\s+(.+)$/i, type: 'figure' },
+    { regex: /^figura\s+(.+)$/i, type: 'figura' },
+    { regex: /^appendix\s+(.+)$/i, type: 'appendix' },
+    { regex: /^annex\s+(.+)$/i, type: 'annex' },
+    { regex: /^attachment\s+(.+)$/i, type: 'attachment' },
+    { regex: /^chart\s+(.+)$/i, type: 'chart' },
+    { regex: /^table\s+(.+)$/i, type: 'table' },
+    { regex: /^tabla\s+(.+)$/i, type: 'tabla' },
+    { regex: /^diagram\s+(.+)$/i, type: 'diagram' },
+    { regex: /^diagrama\s+(.+)$/i, type: 'diagrama' },
+    { regex: /^schedule\s+(.+)$/i, type: 'schedule' }
   ];
 
   for (const pattern of patterns) {
