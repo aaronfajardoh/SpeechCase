@@ -169,7 +169,7 @@ function getOverlapText(text, overlapSize) {
 /**
  * Normalize exhibit number by removing extra spaces around decimal points
  * @param {string} number - The exhibit number to normalize
- * @returns {string} Normalized exhibit number
+ * @return {string} Normalized exhibit number
  */
 function normalizeExhibitNumber(number) {
   if (!number) return "";
@@ -364,7 +364,7 @@ function addMetadataTags(chunks, fullText) {
     ];
 
     const exhibitMatches = [];
-    let exhibitMetadata = [];
+    const exhibitMetadata = [];
 
     for (const pattern of exhibitPatterns) {
       let match;
@@ -438,17 +438,6 @@ function addMetadataTags(chunks, fullText) {
 }
 
 /**
- * Normalize exhibit number by removing extra spaces around decimal points
- * @param {string} number - The exhibit number to normalize
- * @returns {string} Normalized exhibit number
- */
-function normalizeExhibitNumber(number) {
-  if (!number) return "";
-  // Remove spaces around decimal points: "1 .2" -> "1.2"
-  return number.replace(/\s*\.\s*/g, ".").trim();
-}
-
-/**
  * Extract all exhibits from full text with their positions
  * This is used to find the actual exhibit content (usually after the name)
  * @param {string} fullText - The full document text
@@ -461,48 +450,48 @@ function extractExhibits(fullText) {
   const exhibitPatterns = [
     // English: Exhibit, Exhibit A, Exhibit 7, Exhibit A.1, Exhibit 7-A
     // Handles: "Exhibit 1.2", "Exhibit 1 .2" (with space), "Exhibit 1.2." (with trailing period)
-    { pattern: /\bexhibit\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "exhibit" },
+    {pattern: /\bexhibit\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "exhibit"},
     // Spanish: Anexo, Anexo A, Anexo 3, Anexo A.1
-    { pattern: /\banexo\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "anexo" },
+    {pattern: /\banexo\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "anexo"},
     // Spanish: Prueba, Prueba A, Prueba 3, Prueba 1.2
-    { pattern: /\bprueba\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "prueba" },
+    {pattern: /\bprueba\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "prueba"},
     // Spanish: Evidencia, Evidencia A
-    { pattern: /\bevidencia\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "evidencia" },
+    {pattern: /\bevidencia\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "evidencia"},
     // Spanish: Documento, Documento A
-    { pattern: /\bdocumento\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "documento" },
+    {pattern: /\bdocumento\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "documento"},
     // English: Figure, Figure 1, Figure 1.2
-    { pattern: /\bfigure\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "figure" },
+    {pattern: /\bfigure\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "figure"},
     // Spanish: Figura, Figura 1, Figura 1.2
-    { pattern: /\bfigura\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "figura" },
+    {pattern: /\bfigura\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "figura"},
     // English: Appendix, Appendix A, Appendix 1
-    { pattern: /\bappendix\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "appendix" },
+    {pattern: /\bappendix\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "appendix"},
     // English: Annex, Annex A, Annex 1
-    { pattern: /\bannex\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "annex" },
+    {pattern: /\bannex\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "annex"},
     // English: Attachment, Attachment A, Attachment 1
-    { pattern: /\battachment\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "attachment" },
+    {pattern: /\battachment\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "attachment"},
     // English: Chart, Chart 1, Chart A
-    { pattern: /\bchart\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "chart" },
+    {pattern: /\bchart\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "chart"},
     // English: Table, Table 1, Table A
-    { pattern: /\btable\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "table" },
+    {pattern: /\btable\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "table"},
     // Spanish: Tabla, Tabla 1, Tabla A
-    { pattern: /\btabla\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "tabla" },
+    {pattern: /\btabla\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "tabla"},
     // English: Diagram, Diagram 1, Diagram A
-    { pattern: /\bdiagram\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "diagram" },
+    {pattern: /\bdiagram\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "diagram"},
     // Spanish: Diagrama, Diagrama 1, Diagrama A
-    { pattern: /\bdiagrama\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "diagrama" },
+    {pattern: /\bdiagrama\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "diagrama"},
     // English: Schedule, Schedule 1, Schedule A
-    { pattern: /\bschedule\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "schedule" },
+    {pattern: /\bschedule\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi, type: "schedule"},
   ];
 
   const allExhibits = [];
 
-  for (const { pattern, type } of exhibitPatterns) {
+  for (const {pattern, type} of exhibitPatterns) {
     let match;
     pattern.lastIndex = 0;
     while ((match = pattern.exec(fullText)) !== null) {
       // Normalize the exhibit number to handle spacing issues
       const normalizedNumber = normalizeExhibitNumber(match[1]);
-      
+
       allExhibits.push({
         fullText: match[0],
         number: normalizedNumber,
@@ -524,7 +513,7 @@ function extractExhibits(fullText) {
     const normalizedNumber = normalizeExhibitNumber(exhibit.number);
     const key = `${exhibit.type}-${normalizedNumber.toLowerCase()}`;
     const existing = exhibitMap.get(key);
-    
+
     // Keep the first occurrence (earlier position) instead of the last
     // This ensures we get the actual exhibit label rather than a later reference
     if (!existing || exhibit.position < existing.position) {

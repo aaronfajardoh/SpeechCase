@@ -485,6 +485,14 @@ exports.generateCharacters = onCall(
 exports.generateSummary = onCall(
     {
       secrets: ["OPENAI_API_KEY"],
+      cors: [
+        "https://casediver.web.app",
+        "https://casediver.firebaseapp.com",
+        /^https:\/\/.*\.web\.app$/,
+        /^https:\/\/.*\.firebaseapp\.com$/,
+        "http://localhost:5173",
+        "http://localhost:3000",
+      ],
     },
     async (request) => {
       try {
@@ -553,10 +561,14 @@ exports.generateSummary = onCall(
         };
       } catch (error) {
         logger.error("Error generating summary:", error);
+        logger.error("Error stack:", error.stack);
+        logger.error("Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
         if (error instanceof HttpsError) {
           throw error;
         }
-        throw new HttpsError("internal", `Failed to generate summary: ${error.message}`);
+        // Ensure we provide a meaningful error message
+        const errorMessage = error.message || "Unknown error occurred";
+        throw new HttpsError("internal", `Failed to generate summary: ${errorMessage}`);
       }
     },
 );
