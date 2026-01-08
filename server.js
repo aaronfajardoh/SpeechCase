@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { existsSync } from 'fs';
+import { existsSync, appendFileSync } from 'fs';
 import textToSpeech from '@google-cloud/text-to-speech';
 import { chunkText, addMetadataTags } from './services/chunking.js';
 import { initializeOpenAI, initializeDeepSeek, generateEmbedding, generateEmbeddingsBatch } from './services/embeddings.js';
@@ -10,6 +10,7 @@ import { vectorStore } from './services/vectorStore.js';
 import { generateEventIcon, generateEventIconsBatch } from './services/iconGenerator.js';
 import { getCharacterImagesBatch } from './services/imageService.js';
 import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1613,6 +1614,148 @@ app.delete('/api/ai/document/:documentId', (req, res) => {
   } catch (error) {
     console.error('Error deleting document:', error);
     res.status(500).json({ error: 'Failed to delete document', details: error.message });
+  }
+});
+
+/**
+ * Validate exhibit name by extracting it from the exhibit image using Google Gemini Vision
+ * POST /api/ai/validate-exhibit
+ * Body: { imageDataUrl: string, extractedName: string }
+ */
+app.post('/api/ai/validate-exhibit', async (req, res) => {
+  try {
+    const { imageDataUrl, extractedName } = req.body;
+
+    if (!imageDataUrl) {
+      return res.status(400).json({ error: 'imageDataUrl is required' });
+    }
+
+    const googleAiKey = process.env.GOOGLE_AI_KEY;
+    if (!googleAiKey) {
+      console.warn('GOOGLE_AI_KEY not found. Skipping exhibit validation.');
+      return res.json({
+        success: false,
+        validated: false,
+        message: 'Google AI API key not configured',
+        extractedName: extractedName
+      });
+    }
+
+    try {
+      // Initialize Google Generative AI
+      const genAI = new GoogleGenerativeAI(googleAiKey);
+      // Use gemini-3-flash-preview for OCR and extracting text from images (high speed, low latency)
+      const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
+
+      // Extract base64 data from data URL
+      const base64Data = imageDataUrl.includes(',') 
+        ? imageDataUrl.split(',')[1] 
+        : imageDataUrl;
+
+      // Determine MIME type from data URL
+      let mimeType = 'image/png';
+      if (imageDataUrl.startsWith('data:image/jpeg')) {
+        mimeType = 'image/jpeg';
+      } else if (imageDataUrl.startsWith('data:image/png')) {
+        mimeType = 'image/png';
+      }
+
+      // Create prompt to extract exhibit name
+      const prompt = `Analyze this document page image and extract the main exhibit name/title.
+
+Look for text that appears to be an exhibit header or title, typically:
+- At the top of the page or in a prominent position
+- Format like "Exhibit 10", "Exhibit A", "Anexo 3", "Prueba 1.2", etc.
+- May be centered, bold, or in a larger font
+- Usually appears before the main content of the exhibit
+
+${extractedName ? `The system extracted "${extractedName}" from the text. Please verify if this matches what you see in the image, or provide the correct exhibit name if different.` : 'Extract the exhibit name from the image.'}
+
+Return ONLY a JSON object with this exact structure:
+{
+  "exhibitName": "the exact exhibit name as it appears in the image (e.g., 'Exhibit 10', 'Prueba 1.2')",
+  "confidence": "high" | "medium" | "low",
+  "matchesExtracted": true or false (whether it matches the extracted name),
+  "notes": "any relevant observations"
+}
+
+If you cannot find an exhibit name, return:
+{
+  "exhibitName": null,
+  "confidence": "low",
+  "matchesExtracted": false,
+  "notes": "reason why no exhibit name was found"
+}`;
+
+      // Call Gemini Vision API
+      const result = await model.generateContent([
+        {
+          inlineData: {
+            data: base64Data,
+            mimeType: mimeType
+          }
+        },
+        { text: prompt }
+      ]);
+
+      const response = await result.response;
+      const responseText = response.text();
+
+      // Parse JSON response
+      let validationResult;
+      try {
+        // Extract JSON from response (handle markdown code blocks if present)
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          validationResult = JSON.parse(jsonMatch[0]);
+        } else {
+          throw new Error('No JSON found in response');
+        }
+      } catch (parseError) {
+        console.error('Error parsing Gemini response:', parseError);
+        console.error('Response text:', responseText);
+        return res.json({
+          success: false,
+          validated: false,
+          message: 'Failed to parse AI response',
+          extractedName: extractedName,
+          rawResponse: responseText
+        });
+      }
+
+      // Determine if validation was successful
+      // validated should be true when AI found a valid exhibit name (regardless of whether it matches)
+      const validated = validationResult.exhibitName && 
+                   validationResult.confidence !== 'low';
+
+      const responseData = {
+        success: true,
+        validated: validated,
+        exhibitName: validationResult.exhibitName,
+        extractedName: extractedName,
+        matches: validationResult.matchesExtracted,
+        confidence: validationResult.confidence,
+        notes: validationResult.notes
+      };
+      return res.json(responseData);
+
+    } catch (geminiError) {
+      console.error('Error calling Google Gemini Vision API:', geminiError);
+      return res.json({
+        success: false,
+        validated: false,
+        message: 'Failed to validate exhibit with AI',
+        extractedName: extractedName,
+        error: geminiError.message
+      });
+    }
+
+  } catch (error) {
+    console.error('Error validating exhibit:', error);
+    res.status(500).json({ 
+      error: 'Failed to validate exhibit', 
+      details: error.message 
+    });
   }
 });
 

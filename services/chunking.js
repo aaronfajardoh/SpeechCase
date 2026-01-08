@@ -166,6 +166,17 @@ function getOverlapText(text, overlapSize) {
 }
 
 /**
+ * Normalize exhibit number by removing extra spaces around decimal points
+ * @param {string} number - The exhibit number to normalize
+ * @returns {string} Normalized exhibit number
+ */
+function normalizeExhibitNumber(number) {
+  if (!number) return '';
+  // Remove spaces around decimal points: "1 .2" -> "1.2"
+  return number.replace(/\s*\.\s*/g, '.').trim();
+}
+
+/**
  * Adds metadata tags to chunks based on content analysis
  * @param {Array<Object>} chunks - Array of chunk objects
  * @param {string} fullText - The full text for context
@@ -334,17 +345,19 @@ export function addMetadataTags(chunks, fullText) {
     // Exhibit detection (English and Spanish)
     // -----------------------------------------------------------------------
     // Patterns for exhibit names: Exhibit 7, Exhibit A.1, Anexo 3, Prueba A, etc.
+    // Improved patterns to handle spacing issues and trailing punctuation
     const exhibitPatterns = [
       // English: Exhibit, Exhibit A, Exhibit 7, Exhibit A.1, Exhibit 7-A
-      /\bexhibit\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+      // Handles: "Exhibit 1.2", "Exhibit 1 .2" (with space), "Exhibit 1.2." (with trailing period)
+      /\bexhibit\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
       // Spanish: Anexo, Anexo A, Anexo 3, Anexo A.1
-      /\banexo\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
-      // Spanish: Prueba, Prueba A, Prueba 3
-      /\bprueba\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+      /\banexo\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
+      // Spanish: Prueba, Prueba A, Prueba 3, Prueba 1.2
+      /\bprueba\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
       // Spanish: Evidencia, Evidencia A
-      /\bevidencia\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+      /\bevidencia\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
       // Spanish: Documento, Documento A
-      /\bdocumento\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+      /\bdocumento\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
     ];
 
     const exhibitMatches = [];
@@ -356,7 +369,7 @@ export function addMetadataTags(chunks, fullText) {
       pattern.lastIndex = 0;
       while ((match = pattern.exec(originalText)) !== null) {
         const fullMatch = match[0];
-        const exhibitNumber = match[1];
+        const exhibitNumber = normalizeExhibitNumber(match[1]);
         const matchIndex = chunk.startIndex + match.index;
         
         exhibitMatches.push(fullMatch);
@@ -430,17 +443,19 @@ export function addMetadataTags(chunks, fullText) {
 export function extractExhibits(fullText) {
   if (!fullText) return [];
 
+  // Improved patterns to handle spacing issues and trailing punctuation
   const exhibitPatterns = [
     // English: Exhibit, Exhibit A, Exhibit 7, Exhibit A.1, Exhibit 7-A
-    /\bexhibit\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+    // Handles: "Exhibit 1.2", "Exhibit 1 .2" (with space), "Exhibit 1.2." (with trailing period)
+    /\bexhibit\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
     // Spanish: Anexo, Anexo A, Anexo 3, Anexo A.1
-    /\banexo\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
-    // Spanish: Prueba, Prueba A, Prueba 3
-    /\bprueba\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+    /\banexo\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
+    // Spanish: Prueba, Prueba A, Prueba 3, Prueba 1.2
+    /\bprueba\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
     // Spanish: Evidencia, Evidencia A
-    /\bevidencia\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+    /\bevidencia\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
     // Spanish: Documento, Documento A
-    /\bdocumento\s+([A-Z0-9]+(?:\.[0-9]+)?(?:-[A-Z0-9]+)?)\b/gi,
+    /\bdocumento\s+([A-Z0-9]+(?:\s*\.\s*[0-9]+)?(?:-[A-Z0-9]+)?)\.?\b/gi,
   ];
 
   const allExhibits = [];
@@ -449,9 +464,12 @@ export function extractExhibits(fullText) {
     let match;
     pattern.lastIndex = 0;
     while ((match = pattern.exec(fullText)) !== null) {
+      // Normalize the exhibit number to handle spacing issues
+      const normalizedNumber = normalizeExhibitNumber(match[1]);
+      
       allExhibits.push({
         fullText: match[0],
-        number: match[1],
+        number: normalizedNumber,
         position: match.index,
         type: pattern.source.includes('exhibit') ? 'exhibit' :
               pattern.source.includes('anexo') ? 'anexo' :
@@ -464,13 +482,19 @@ export function extractExhibits(fullText) {
   // Sort by position
   allExhibits.sort((a, b) => a.position - b.position);
 
-  // Group by exhibit number and keep only the last occurrence of each
-  // (since exhibits are usually presented at the last mention)
+  // Group by exhibit number and keep only the FIRST occurrence of each
+  // (since the first mention is more likely to be the actual exhibit label/header)
+  // This prevents later mentions from overwriting the correct exhibit name
   const exhibitMap = new Map();
   allExhibits.forEach(exhibit => {
-    const key = `${exhibit.type}-${exhibit.number.toLowerCase()}`;
+    // Create a normalized key for deduplication
+    const normalizedNumber = normalizeExhibitNumber(exhibit.number);
+    const key = `${exhibit.type}-${normalizedNumber.toLowerCase()}`;
     const existing = exhibitMap.get(key);
-    if (!existing || exhibit.position > existing.position) {
+    
+    // Keep the first occurrence (earlier position) instead of the last
+    // This ensures we get the actual exhibit label rather than a later reference
+    if (!existing || exhibit.position < existing.position) {
       exhibitMap.set(key, exhibit);
     }
   });

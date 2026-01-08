@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { IconFileText, IconLoading, IconClose, IconChevronLeft } from './Icons.jsx'
 import { extractExhibits } from '../../services/chunking.js'
+import { validateExhibitName, parseExhibitName } from '../../services/exhibitValidation.js'
 
 // Sidebar tab: exhibits insights
 const ExhibitsSidebar = ({
@@ -20,6 +21,9 @@ const ExhibitsSidebar = ({
   const [exhibitContent, setExhibitContent] = useState(null)
   const [isLoadingContent, setIsLoadingContent] = useState(false)
   const [exhibitImages, setExhibitImages] = useState({}) // Store exhibit images by exhibit key
+  const [validatingExhibits, setValidatingExhibits] = useState(false) // Track validation progress
+  const [validationComplete, setValidationComplete] = useState(false) // Track if validation has completed
+  const [rawExhibits, setRawExhibits] = useState([]) // Store raw exhibits before validation
   const selectedExhibitRef = useRef(null) // Ref to track selected exhibit for external selection
   
   // Zoom and pan state
@@ -37,13 +41,200 @@ const ExhibitsSidebar = ({
   useEffect(() => {
     if (extractedText && extractedText.length > 0 && !isPDFProcessing) {
       const extracted = extractExhibits(extractedText)
-      // Sort by position to ensure consistent ordering
-      extracted.sort((a, b) => a.position - b.position)
-      setExhibits(extracted)
+      
+      // Post-process: if pageData is available, group exhibits by page
+      // and if multiple exhibits are on the same page, prefer the earliest one
+      // This prevents cases where a page titled "Exhibit 10" also contains
+      // a reference to "Exhibit 8" in a table, and we incorrectly show "Exhibit 8"
+      let filteredExhibits = []
+      if (pageData && pageData.length > 0) {
+        const exhibitsByPage = new Map()
+        
+        extracted.forEach(exhibit => {
+          // Find which page this exhibit is on based on its character position
+          let exhibitPage = 1
+          for (let i = 0; i < pageData.length; i++) {
+            const pageInfo = pageData[i]
+            const nextPageInfo = pageData[i + 1]
+            if (exhibit.position >= pageInfo.pageCharOffset) {
+              if (!nextPageInfo || exhibit.position < nextPageInfo.pageCharOffset) {
+                exhibitPage = pageInfo.pageNum
+                break
+              }
+            }
+          }
+          
+          // Fallback: check if it's on the last page
+          if (exhibitPage === 1 && pageData.length > 0) {
+            const lastPage = pageData[pageData.length - 1]
+            if (exhibit.position >= lastPage.pageCharOffset) {
+              exhibitPage = lastPage.pageNum
+            }
+          }
+          
+          if (!exhibitsByPage.has(exhibitPage)) {
+            exhibitsByPage.set(exhibitPage, [])
+          }
+          exhibitsByPage.get(exhibitPage).push(exhibit)
+        })
+        
+        // For pages with multiple exhibits, keep only the earliest one
+        // The earliest exhibit on a page is most likely the main title/header
+        exhibitsByPage.forEach((pageExhibits, pageNum) => {
+          if (pageExhibits.length > 1) {
+            // Multiple exhibits on same page - prefer the earliest (main title)
+            pageExhibits.sort((a, b) => a.position - b.position)
+            filteredExhibits.push(pageExhibits[0])
+          } else {
+            filteredExhibits.push(pageExhibits[0])
+          }
+        })
+        
+        // Sort final exhibits by position to ensure consistent ordering
+        filteredExhibits.sort((a, b) => a.position - b.position)
+      } else {
+        // No pageData available, use exhibits as-is
+        filteredExhibits = extracted.sort((a, b) => a.position - b.position)
+      }
+      
+      // Store raw exhibits and reset validation state
+      setRawExhibits(filteredExhibits)
+      setExhibits([]) // Clear validated exhibits until validation completes
+      setValidationComplete(false) // Reset validation state
     } else {
+      setRawExhibits([])
       setExhibits([])
+      setValidationComplete(false)
     }
-  }, [extractedText, isPDFProcessing])
+  }, [extractedText, isPDFProcessing, pageData])
+
+  // Validate exhibit names using AI vision after exhibits are extracted and PDF is ready
+  useEffect(() => {
+    // Only validate if we have raw exhibits, PDF is ready, and validation hasn't completed yet
+    if (!rawExhibits.length || !pdfDoc || isPDFProcessing || validatingExhibits || validationComplete) {
+      return
+    }
+
+    const validateExhibits = async () => {
+      setValidatingExhibits(true)
+      
+      try {
+        const validatedExhibits = await Promise.all(
+          rawExhibits.map(async (exhibit) => {
+            try {
+              // Find which page contains this exhibit
+              const exhibitPosition = exhibit.position
+              let targetPageNum = 1
+              
+              if (pageData && pageData.length > 0) {
+                for (let i = 0; i < pageData.length; i++) {
+                  const pageInfo = pageData[i]
+                  const nextPageInfo = pageData[i + 1]
+                  if (exhibitPosition >= pageInfo.pageCharOffset) {
+                    if (!nextPageInfo || exhibitPosition < nextPageInfo.pageCharOffset) {
+                      targetPageNum = pageInfo.pageNum
+                      break
+                    }
+                  }
+                }
+                
+                if (targetPageNum === 1 && pageData.length > 0) {
+                  const lastPage = pageData[pageData.length - 1]
+                  if (exhibitPosition >= lastPage.pageCharOffset) {
+                    targetPageNum = lastPage.pageNum
+                  }
+                }
+              } else {
+                targetPageNum = Math.ceil((exhibitPosition / extractedText.length) * pdfDoc.numPages)
+                targetPageNum = Math.max(1, Math.min(targetPageNum, pdfDoc.numPages))
+              }
+
+              // Render the page as an image
+              const page = await pdfDoc.getPage(targetPageNum - 1)
+              const scale = 2.0
+              const viewport = page.getViewport({ scale: scale })
+              const canvas = document.createElement('canvas')
+              const context = canvas.getContext('2d')
+              canvas.width = viewport.width
+              canvas.height = viewport.height
+              
+              await page.render({
+                canvasContext: context,
+                viewport: viewport
+              }).promise
+              
+              const imageDataUrl = canvas.toDataURL('image/png')
+              
+              // Format the extracted exhibit name for validation
+              const formatExhibitName = (ex) => {
+                const typeMap = {
+                  'exhibit': 'Exhibit',
+                  'anexo': 'Anexo',
+                  'prueba': 'Prueba',
+                  'evidencia': 'Evidencia',
+                  'documento': 'Documento'
+                }
+                const typeName = typeMap[ex.type] || ex.type
+                return `${typeName} ${ex.number}`
+              }
+              
+              const extractedName = formatExhibitName(exhibit)
+              
+              // Validate with AI
+              const validationResult = await validateExhibitName(imageDataUrl, extractedName)
+              
+              // If validation found a different name, update the exhibit
+              if (validationResult.success && 
+                  validationResult.validated && 
+                  validationResult.exhibitName &&
+                  !validationResult.matches) {
+                const parsed = parseExhibitName(validationResult.exhibitName)
+                if (parsed.type && parsed.number) {
+                  console.log(`Validated exhibit: "${extractedName}" -> "${validationResult.exhibitName}"`)
+                  return {
+                    ...exhibit,
+                    type: parsed.type,
+                    number: parsed.number,
+                    fullText: validationResult.exhibitName,
+                    validated: true,
+                    originalName: extractedName
+                  }
+                }
+              }
+              
+              // Return original exhibit (either validated as correct or validation failed)
+              return {
+                ...exhibit,
+                validated: validationResult.validated || false
+              }
+            } catch (error) {
+              console.error(`Error validating exhibit ${exhibit.type} ${exhibit.number}:`, error)
+              // Return original exhibit if validation fails
+              return { ...exhibit, validated: false }
+            }
+          })
+        )
+        
+        // Update exhibits with validated names
+        setExhibits(validatedExhibits)
+        setValidationComplete(true) // Mark validation as complete
+      } catch (error) {
+        console.error('Error during exhibit validation:', error)
+        // On error, show raw exhibits anyway
+        setExhibits(rawExhibits)
+        setValidationComplete(true) // Mark as complete even on error to prevent retries
+      } finally {
+        setValidatingExhibits(false)
+      }
+    }
+
+    // Small delay to ensure PDF is fully loaded
+    const timeoutId = setTimeout(() => {
+      validateExhibits()
+    }, 500)
+
+    return () => clearTimeout(timeoutId)
+  }, [rawExhibits, pdfDoc, isPDFProcessing, validationComplete])
 
   // Listen for external exhibit selection (from text layer clicks)
   useEffect(() => {
@@ -222,7 +413,7 @@ const ExhibitsSidebar = ({
       
       // Calculate what newZoom would be (same calculation as component's handleWheel)
       const rawDelta = e.deltaY > 0 ? 0.9 : 1.1
-      const delta = 1 + (rawDelta - 1) / 50
+      const delta = 1 + (rawDelta - 1) / 19
       const newZoom = Math.max(0.5, Math.min(5, zoom * delta))
       const wouldReachMax = newZoom >= (MAX_ZOOM - ZOOM_EPSILON)
       const isZoomingIn = e.deltaY < 0
@@ -329,11 +520,11 @@ const ExhibitsSidebar = ({
       )
       
       if (lastPinchDistanceRef.current && imageContainerRef.current) {
-        // Significantly decrease sensitivity (50x less sensitive than original)
-        // This means the scale change should be divided by 50
+        // Decrease sensitivity (19x less sensitive than original)
+        // This means the scale change should be divided by 19
         const rawScaleChange = distance / lastPinchDistanceRef.current
-        // Make it 50x less sensitive: if distance doubles, zoom only increases by 1/50 of that
-        const scaleChange = 1 + (rawScaleChange - 1) / 50
+        // Make it 19x less sensitive: if distance doubles, zoom only increases by 1/19 of that
+        const scaleChange = 1 + (rawScaleChange - 1) / 19
         
         const newZoom = Math.max(0.5, Math.min(5, zoom * scaleChange))
         
@@ -418,7 +609,7 @@ const ExhibitsSidebar = ({
       
       // Calculate what the new zoom would be
       const rawDelta = e.deltaY > 0 ? 0.9 : 1.1
-      const delta = 1 + (rawDelta - 1) / 50
+      const delta = 1 + (rawDelta - 1) / 19
       const newZoom = Math.max(0.5, Math.min(5, zoom * delta))
       
       // Check if we're at or would reach max zoom and trying to zoom in
@@ -681,6 +872,19 @@ const ExhibitsSidebar = ({
           <IconLoading size={32} />
           <p>Processing PDF for AI features...</p>
           <p className="exhibits-loading-subtitle">This may take a moment</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Show loading state while validating
+  if (validatingExhibits || (!validationComplete && rawExhibits.length > 0)) {
+    return (
+      <div className="sidebar-tab-content exhibits-sidebar-content">
+        <div className="feature-placeholder">
+          <IconLoading size={48} />
+          <h3>Validating Exhibits</h3>
+          <p>Analyzing exhibit images to ensure accurate names...</p>
         </div>
       </div>
     )
