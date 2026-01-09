@@ -9028,47 +9028,115 @@ function Home() {
       }
       
       // For non-rotated text, combine all spans into one rectangle
-      // Calculate the start position of the first span's selected portion
-      const firstTextBefore = firstSpan.textNode.textContent.substring(0, firstSpan.startOffset)
-      const firstTextBeforeWidth = measureTextWidth(firstTextBefore, firstSpan.fontFamily, firstSpan.fontSize)
-      const firstStartX = firstSpan.spanLeft + firstTextBeforeWidth
+      // Use actual DOM bounding rectangles to ensure continuous coverage without gaps
       
-      // Calculate the end position of the last span's selected portion
-      const lastSelectedText = lastSpan.textNode.textContent.substring(lastSpan.startOffset, lastSpan.endOffset)
-      const lastTextBefore = lastSpan.textNode.textContent.substring(0, lastSpan.startOffset)
-      const lastTextBeforeWidth = measureTextWidth(lastTextBefore, lastSpan.fontFamily, lastSpan.fontSize)
-      const lastSelectedWidth = measureTextWidth(lastSelectedText, lastSpan.fontFamily, lastSpan.fontSize)
-      const lastEndX = lastSpan.spanLeft + lastTextBeforeWidth + lastSelectedWidth
+      // Get actual DOM positions for all spans
+      const firstSpanRect = firstSpan.span.getBoundingClientRect()
+      const lastSpanRect = lastSpan.span.getBoundingClientRect()
       
-      // For all spans in the group, calculate their full end positions to find the maximum
-      // This ensures we include spaces and any gaps between spans
+      // Calculate the start position of the first span's selected portion using actual DOM
+      // Use Range API to get precise positions instead of text measurement which can be inaccurate
+      let firstStartX
+      if (firstSpan.startOffset === 0) {
+        // Selection starts at the beginning of the span, use actual left position
+        firstStartX = firstSpanRect.left - textLayerRect.left
+      } else {
+        // Selection starts within the span - use Range API to get exact position
+        const startRange = document.createRange()
+        startRange.setStart(firstSpan.textNode, 0)
+        startRange.setEnd(firstSpan.textNode, firstSpan.startOffset)
+        const startRangeRect = startRange.getBoundingClientRect()
+        firstStartX = startRangeRect.right - textLayerRect.left
+      }
+      
+      // Calculate the end position of the last span's selected portion using actual DOM
+      // Use Range API to get precise positions instead of text measurement which can be inaccurate
+      // endOffset is the position AFTER the last selected character
+      let lastEndX
+      const lastSpanTextLength = lastSpan.textNode.textContent.length
+      if (lastSpan.endOffset === lastSpanTextLength) {
+        // Selection ends at the end of the span, use actual right position
+        lastEndX = lastSpanRect.right - textLayerRect.left
+      } else if (lastSpan.endOffset === 0) {
+        // Selection ends at the start of the span (shouldn't happen, but handle it)
+        lastEndX = lastSpanRect.left - textLayerRect.left
+      } else {
+        // Selection ends within the span - use Range API to get exact position at endOffset
+        const endRange = document.createRange()
+        endRange.setStart(lastSpan.textNode, 0)
+        endRange.setEnd(lastSpan.textNode, lastSpan.endOffset)
+        const endRangeRect = endRange.getBoundingClientRect()
+        lastEndX = endRangeRect.right - textLayerRect.left
+      }
+      
+      // For multiple spans, we need to bridge gaps between them
+      // But for single span, just use the calculated selected portion
+      let minStartX = firstStartX
       let maxEndX = lastEndX
       
-      spanGroup.forEach(spanInfo => {
-        // Calculate the end position of this span's selected portion
-        const selectedText = spanInfo.textNode.textContent.substring(spanInfo.startOffset, spanInfo.endOffset)
-        const textBefore = spanInfo.textNode.textContent.substring(0, spanInfo.startOffset)
-        const textBeforeWidth = measureTextWidth(textBefore, spanInfo.fontFamily, spanInfo.fontSize)
-        const selectedWidth = measureTextWidth(selectedText, spanInfo.fontFamily, spanInfo.fontSize)
-        const spanEndX = spanInfo.spanLeft + textBeforeWidth + selectedWidth
+      if (spanGroup.length > 1) {
+        // Multiple spans - ensure we bridge gaps between them
+        spanGroup.forEach((spanInfo, index) => {
+          // Calculate the selected portion of this span
+          const selectedText = spanInfo.textNode.textContent.substring(spanInfo.startOffset, spanInfo.endOffset)
+          const textBefore = spanInfo.textNode.textContent.substring(0, spanInfo.startOffset)
+          const textBeforeWidth = measureTextWidth(textBefore, spanInfo.fontFamily, spanInfo.fontSize)
+          const selectedWidth = measureTextWidth(selectedText, spanInfo.fontFamily, spanInfo.fontSize)
+          
+          // Calculate the start and end of the selected portion
+          const spanStartX = spanInfo.spanLeft + textBeforeWidth
+          const spanEndX = spanStartX + selectedWidth
+          
+          // For the first span, we already have firstStartX
+          // For the last span, we already have lastEndX
+          // For spans in between, extend to bridge gaps
+          if (index > 0 && index < spanGroup.length - 1) {
+            // Middle spans - extend to cover their selected portion and bridge gaps
+            if (spanStartX < minStartX) {
+              minStartX = spanStartX
+            }
+            if (spanEndX > maxEndX) {
+              maxEndX = spanEndX
+            }
+          }
+        })
         
-        if (spanEndX > maxEndX) {
-          maxEndX = spanEndX
+        // For multiple spans, also check if we need to bridge gaps between first and last
+        // by looking at the actual DOM positions of spans in between
+        for (let i = 1; i < spanGroup.length - 1; i++) {
+          const prevSpan = spanGroup[i - 1]
+          const currSpan = spanGroup[i]
+          
+          // Get actual DOM positions to bridge gaps
+          const prevSpanRect = prevSpan.span.getBoundingClientRect()
+          const currSpanRect = currSpan.span.getBoundingClientRect()
+          const prevSpanRight = prevSpanRect.right - textLayerRect.left
+          const currSpanLeft = currSpanRect.left - textLayerRect.left
+          
+          // If there's a gap, ensure our rectangle covers it
+          if (currSpanLeft > prevSpanRight) {
+            // There's a gap - the rectangle merging logic will handle this
+            // But we should ensure minStartX and maxEndX account for the full range
+          }
         }
-      })
+      }
+      // For single span, minStartX and maxEndX are already set correctly above
       
       // The total width is from the start of the first selection to the end of the last
-      const totalWidth = maxEndX - firstStartX
+      // This ensures continuous coverage including any spaces between spans
+      const totalWidth = maxEndX - minStartX
       
       // Use the maximum fontSize from the group
       const maxFontSize = Math.max(...spanGroup.map(s => s.fontSize))
       
-      return {
-        x: firstStartX,
+      const result = {
+        x: minStartX,
         y: firstSpan.spanTop,
         width: totalWidth,
         height: maxFontSize
       }
+      
+      return result
     }
     
     // Sort selected spans by their position (top, then column, then left)
@@ -9122,6 +9190,56 @@ function Home() {
       }
     }
     
+    // Merge rectangles on the same line that are close together or overlapping
+    // This ensures continuous highlighting without gaps
+    if (rects.length > 1) {
+      const mergedRects = []
+      const lineTolerance = 2 // Pixels tolerance for same line
+      const gapTolerance = 5 // Pixels - if rectangles are this close, merge them
+      
+      // Sort rectangles by Y position, then by X position
+      rects.sort((a, b) => {
+        const yDiff = a.y - b.y
+        if (Math.abs(yDiff) > lineTolerance) return yDiff
+        return a.x - b.x
+      })
+      
+      let currentMerged = null
+      
+      rects.forEach((rect, index) => {
+        if (currentMerged === null) {
+          // Start a new merged rectangle
+          currentMerged = { ...rect }
+        } else {
+          // Check if this rectangle is on the same line and close enough to merge
+          const isSameLine = Math.abs(rect.y - currentMerged.y) <= lineTolerance
+          const gap = rect.x - (currentMerged.x + currentMerged.width)
+          const isCloseEnough = gap <= gapTolerance
+          
+          if (isSameLine && (gap <= 0 || isCloseEnough)) {
+            // Merge: extend the current rectangle to include this one
+            const newRight = Math.max(
+              currentMerged.x + currentMerged.width,
+              rect.x + rect.width
+            )
+            currentMerged.width = newRight - currentMerged.x
+            currentMerged.height = Math.max(currentMerged.height, rect.height)
+          } else {
+            // Can't merge - save current and start new
+            mergedRects.push(currentMerged)
+            currentMerged = { ...rect }
+          }
+        }
+      })
+      
+      // Don't forget the last merged rectangle
+      if (currentMerged !== null) {
+        mergedRects.push(currentMerged)
+      }
+      
+      return mergedRects.length > 0 ? mergedRects : null
+    }
+    
     return rects.length > 0 ? rects : null
   }
 
@@ -9158,7 +9276,7 @@ function Home() {
 
       // Get highlight color
       const highlightBgColor = getHighlightColor(highlightColor)
-
+      
       // Render each rectangle
       rectangles.forEach((rect, index) => {
         // Apply the same height padding as final highlights to maintain consistent height
@@ -9955,6 +10073,7 @@ function Home() {
                                     selectionRange.startOffset > range.endOffset
             
             selectionRange.setEnd(range.endContainer, range.endOffset)
+            
             // Only update last valid range if the selection is NOT collapsed AFTER setEnd
             // This ensures we only track valid selections, not cursor positions
             // Check both collapsed property AND explicit offset comparison (in case collapsed property is incorrect)
