@@ -3769,6 +3769,11 @@
   color: black !important;
 }
 
+/* Set cursor to pointer when in read mode and text is visible */
+.textLayer.text-layer-visible span {
+  cursor: pointer !important;
+}
+
 /* Hide native browser selection in highlight mode - we use custom overlay instead */
 .text-layer span::selection,
 .textLayer span::selection {

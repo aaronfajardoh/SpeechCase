@@ -69,11 +69,6 @@ let activeRenderTasks = new Map() // Store active render tasks by page number to
 let activeThumbnailTasks = new Map() // Store active thumbnail render tasks by page number
 
 function Home() {
-  // #region agent log
-  if (typeof window !== 'undefined') {
-    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:71',message:'Home component render',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-  }
-  // #endregion
   const { currentUser } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -84,16 +79,10 @@ function Home() {
   
   // Track pdfDoc state changes
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:pdfDoc-effect',message:'pdfDoc state changed',data:{hasPdfDoc:!!pdfDoc,numPages:pdfDoc?.numPages},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
   }, [pdfDoc])
   
   // Track pdfFile state changes
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:pdfFile-effect',message:'pdfFile state changed',data:{hasPdfFile:!!pdfFile,pdfFileName:pdfFile?.name},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
   }, [pdfFile])
   const [extractedText, setExtractedText] = useState('')
   const [textItems, setTextItems] = useState([]) // Store text items with positions for mapping
@@ -178,6 +167,7 @@ function Home() {
   const playbackStartPositionRef = useRef(0) // Track position when playback started
   const lastBoundaryPositionRef = useRef(0) // Track last known position from boundary events
   const isPlayingRef = useRef(false) // Track playing state for Media Session handlers
+  const playbackInProgressRef = useRef(false) // Guard to prevent multiple simultaneous playback attempts
   const extractedTextRef = useRef('') // Track extracted text for Media Session handlers
   const startPositionRef = useRef(0) // Track start position for Media Session handlers
   const pdfFileRef = useRef(null) // Track PDF file for Media Session metadata
@@ -226,34 +216,18 @@ function Home() {
 
   // Handle file upload/change - defined early so it's available for useEffects
   async function handleFileChange(event, existingDocumentId = null) {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:209',message:'handleFileChange entry',data:{hasEvent:!!event,hasFiles:!!event?.target?.files,fileCount:event?.target?.files?.length,existingDocumentId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     const file = event.target.files[0]
     if (!file) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:211',message:'handleFileChange early return - no file',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       return
     }
 
     if (file.type !== 'application/pdf') {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:214',message:'handleFileChange early return - wrong type',data:{fileType:file.type},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       setError('Please upload a PDF file.')
       return
     }
-
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:218',message:'handleFileChange - file validated',data:{fileName:file.name,fileSize:file.size,fileType:file.type,existingDocumentId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     setError('')
     if (typeof clearStartMarker === 'function') clearStartMarker()
     if (typeof clearReadingHighlight === 'function') clearReadingHighlight()
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:242',message:'handleFileChange - setting pdfFile',data:{fileName:file.name,fileSize:file.size,fileType:file.type},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
     setPdfFile(file)
     setIsLoading(true)
     setExtractedText('')
@@ -271,26 +245,11 @@ function Home() {
     }
 
     try {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:238',message:'handleFileChange - before arrayBuffer',data:{fileName:file.name},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
       const arrayBuffer = await file.arrayBuffer()
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:240',message:'handleFileChange - after arrayBuffer',data:{arrayBufferSize:arrayBuffer.byteLength},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
       // Clone the ArrayBuffer to prevent it from being detached when PDF.js uses it
       pdfArrayBufferRef.current = arrayBuffer.slice(0)
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:241',message:'handleFileChange - before PDF.js parse',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:242',message:'handleFileChange - after PDF.js parse',data:{numPages:pdf.numPages},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
       setPdfDoc(pdf)
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:243',message:'handleFileChange - setPdfDoc called',data:{numPages:pdf.numPages,pdfExists:!!pdf},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-      // #endregion
       setTotalPages(pdf.numPages)
       // Force a re-render check after state updates
       setTimeout(() => {}, 0);
@@ -312,13 +271,7 @@ function Home() {
 
       // Extract all text, filtering out headers and footers using repetition detection
       // First, build a map of text repetition across pages
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:262',message:'handleFileChange - before buildRepetitionMap',data:{buildRepetitionMapExists:typeof buildRepetitionMap==='function',filterHeadersAndFootersSyncExists:typeof filterHeadersAndFootersSync==='function',filterHeadersAndFootersWithLLMExists:typeof filterHeadersAndFootersWithLLM==='function',detectLanguageExists:typeof detectLanguage==='function',processPDFForAIExists:typeof processPDFForAI==='function'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       const { textToPages, pageTextItems } = await buildRepetitionMap(pdf, pdf.numPages)
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:263',message:'handleFileChange - after buildRepetitionMap',data:{textToPagesSize:Object.keys(textToPages||{}).length,pageTextItemsLength:pageTextItems?.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       
       // Initial extraction with sync version for immediate display
       // Build text consistently: trim items to avoid double spaces, join with single space
@@ -514,15 +467,9 @@ function Home() {
         console.log('Media Session metadata:', navigator.mediaSession.metadata)
       }
     } catch (err) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:catch',message:'handleFileChange - error caught',data:{errorMessage:err.message,errorName:err.name,errorStack:err.stack?.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       setError('Error reading PDF: ' + err.message)
       console.error(err)
     } finally {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:finally',message:'handleFileChange - finally block',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       setIsLoading(false)
     }
   }
@@ -552,34 +499,22 @@ function Home() {
   // Load document from URL params or location state
   useEffect(() => {
     const loadDocument = async () => {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:489',message:'loadDocument entry',data:{documentIdFromUrl,hasLocationState:!!location.state,locationStateDocId:location.state?.documentId,hasCurrentUser:!!currentUser,hasPdfDoc:!!pdfDoc,currentDocumentId:documentId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-      // #endregion
       // Priority: URL params > location state
       const docId = documentIdFromUrl || location.state?.documentId
       
       if (!currentUser) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:494',message:'loadDocument early return - no currentUser',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
         return // Wait for auth
       }
       
       // If we already have this document loaded, don't reload
       // Use docId directly since state updates are async
       if (pdfDoc && (documentId === docId || documentIdFromUrl === docId)) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:499',message:'loadDocument early return - already loaded',data:{pdfDocExists:!!pdfDoc,documentId,docId,documentIdFromUrl},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
         return
       }
       
       // Prevent duplicate loading - use a ref to track loading state per docId
       const loadingKey = `loading_${docId}`
       if (processingFileRef.current === loadingKey) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:560',message:'loadDocument early return - already loading',data:{isLoading,processingFileRef:processingFileRef.current,loadingKey,docId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
         return
       }
       
@@ -730,22 +665,13 @@ function Home() {
                 setDocumentId(docId)
               }
               const event = { target: { files: [file] } }
-              // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:710',message:'loadDocument - calling handleFileChange from storage',data:{docId,fileName:file.name,fileSize:file.size,handleFileChangeExists:typeof handleFileChange==='function',currentDocumentId:documentId,loadingKey},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-              // #endregion
               await handleFileChange(event, docId)
-              // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:711',message:'loadDocument - handleFileChange completed',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-              // #endregion
               
               // Clear loading flag after successful load
               if (processingFileRef.current === loadingKey) {
                 processingFileRef.current = null
               }
             } catch (fetchError) {
-              // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:720',message:'loadDocument - storage error caught',data:{errorMessage:fetchError.message,errorName:fetchError.name},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-              // #endregion
               console.error('Error loading PDF from storage:', fetchError)
               setError(`Error loading PDF: ${fetchError.message}. If this is a CORS error, check Firebase Storage CORS configuration.`)
               setIsLoading(false)
@@ -1042,15 +968,6 @@ function Home() {
   }, [updateDocumentField])
   
   // Render check - moved earlier to ensure it executes
-  // #region agent log
-  const renderCheckData = {hasPdfDoc:!!pdfDoc,hasPdfFile:!!pdfFile,pdfFileName:pdfFile?.name,isLoading,hasFileInState:!!location.state?.file,hasDocumentInState:!!location.state?.documentId,documentIdFromUrl,totalPages};
-  // Test: Try to execute late render check code here too
-  try {
-    const renderCheckDataLate = {hasPdfDoc:!!pdfDoc,hasPdfFile:!!pdfFile,pdfFileName:pdfFile?.name,isLoading,hasFileInState:!!location.state?.file,hasDocumentInState:!!location.state?.documentId,documentIdFromUrl,totalPages};
-  } catch(e) {
-    console.error('Render check error (early):', e);
-  }
-  // #endregion
   
   // Determine what to render based on state (do this early so we can use it)
   const shouldRenderPDFReader = !!pdfDoc && !!pdfFile && !isLoading;
@@ -4209,11 +4126,6 @@ function Home() {
         span.style.pointerEvents = 'auto'
         span.style.cursor = interactionMode === 'read' ? 'pointer' : 'text'
         span.addEventListener('click', (e) => {
-          // #region agent log
-          if (typeof window !== 'undefined') {
-            fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H4',location:'Home.jsx:span-click',message:'Text span clicked',data:{interactionMode,charIndex:textItem.charIndex,word,textLayerVisible},timestamp:Date.now()})}).catch(()=>{})
-          }
-          // #endregion
           if (interactionMode === 'read') {
             e.preventDefault()
             e.stopPropagation()
@@ -4272,49 +4184,266 @@ function Home() {
   }
 
   // Helper function to find all spans that belong to the current word
-  const findWordSpans = (position) => {
+  const findWordSpans = (position, element = null) => {
+    // CRITICAL: Always use position parameter to find word boundaries, not element.dataset.charIndex
+    // The element might be a span containing multiple words, so we need the exact word position
     if (!extractedText || position < 0 || position >= extractedText.length) {
+      // If element provided, return it as fallback
+      if (element && element.isConnected) {
+        return [element]
+      }
       return []
     }
-
-    // Find word boundaries
+    
+    // Find word boundaries using position (this is the reliable word position)
     let wordStart = position
     let wordEnd = position
-
+    
     // Find start of word
     while (wordStart > 0 && /\S/.test(extractedText[wordStart - 1])) {
       wordStart--
     }
-
+    
     // Find end of word
     while (wordEnd < extractedText.length && /\S/.test(extractedText[wordEnd])) {
       wordEnd++
     }
-
-    // Get all text items that overlap with this word
-    const currentTextItems = textItemsRef.current
-    if (!currentTextItems || currentTextItems.length === 0) {
+    
+    // Get the word text from extractedText
+    const wordText = extractedText.substring(wordStart, wordEnd).trim()
+    if (!wordText) {
+      // Fallback: if element provided, return it
+      if (element && element.isConnected) {
+        return [element]
+      }
       return []
     }
-
+    
+    // Normalize word for matching (remove punctuation, lowercase)
+    const normalizeWord = (str) => str.trim().toLowerCase().replace(/[^\w]/g, '')
+    const wordTextNormalized = normalizeWord(wordText)
+    
+    // If element is provided, use its text layer as a starting point
+    const textLayersToSearch = element && element.isConnected
+      ? [element.closest('.textLayer')].filter(Boolean)
+      : Object.values(textLayerRefs.current).filter(Boolean)
+    
+    // Also search document directly for all text layers if refs are incomplete
+    if (textLayersToSearch.length === 0) {
+      const allTextLayersInDoc = document.querySelectorAll('.textLayer, .text-layer')
+      allTextLayersInDoc.forEach(layer => textLayersToSearch.push(layer))
+    }
+    
     const wordSpans = []
-    currentTextItems.forEach(item => {
-      if (!item.element || !item.element.isConnected) return
-      
-      const itemStart = item.charIndex
-      const itemEnd = item.charIndex + item.str.length
-      
-      // Check if this item overlaps with the word
-      if (itemStart < wordEnd && itemEnd > wordStart) {
-        wordSpans.push(item.element)
-      }
+    
+    // Search all relevant text layers for spans that contain this word
+    // Strategy 1: Try to find spans with data-char-index that overlap with word position
+    textLayersToSearch.forEach(textLayer => {
+      if (!textLayer) return
+      const spansWithCharIndex = textLayer.querySelectorAll('span[data-char-index]')
+      spansWithCharIndex.forEach(span => {
+        const spanCharIndex = parseInt(span.dataset.charIndex, 10)
+        if (!isNaN(spanCharIndex)) {
+          const spanText = span.textContent || ''
+          const spanEnd = spanCharIndex + spanText.length
+          
+          // Check if this span overlaps with the word (span contains part of the word)
+          if (spanCharIndex < wordEnd && spanEnd > wordStart) {
+            wordSpans.push(span)
+          }
+        }
+      })
     })
+    
+    // Strategy 2: If no spans found with data-char-index, search all spans by text content
+    // CRITICAL: Only find spans that are near the expected position to avoid random matches
+    if (wordSpans.length === 0) {
+      // Calculate approximate position range - allow spans within 200 characters of the expected position
+      // This prevents finding all occurrences of common words like "the" throughout the document
+      const positionTolerance = 200
+      const minPosition = Math.max(0, wordStart - positionTolerance)
+      const maxPosition = wordEnd + positionTolerance
+      
+      // Track spans with their estimated positions for sorting
+      const candidateSpans = []
+      
+      textLayersToSearch.forEach(textLayer => {
+        if (!textLayer) return
+        const allSpans = textLayer.querySelectorAll('span')
+        allSpans.forEach(span => {
+          const spanText = span.textContent || ''
+          if (spanText.trim().length > 0) {
+            // Check if span contains the word (normalized match)
+            const spanTextNormalized = normalizeWord(spanText)
+            // Check if the word appears in this span's text
+            if (spanTextNormalized.includes(wordTextNormalized) || wordTextNormalized.includes(spanTextNormalized)) {
+              // More precise: check if the exact word (with word boundaries) appears
+              const wordRegex = new RegExp(`\\b${wordTextNormalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+              if (wordRegex.test(spanText)) {
+                // Try to estimate this span's position in extractedText
+                // Strategy: Find the span's text in extractedText near the expected position
+                let estimatedPosition = null
+                
+                // Search for this span's text in extractedText within the tolerance range
+                const searchStart = Math.max(0, minPosition - 100)
+                const searchEnd = Math.min(extractedText.length, maxPosition + 100)
+                const searchText = extractedText.substring(searchStart, searchEnd)
+                const spanTextInExtracted = searchText.indexOf(spanText)
+                
+                if (spanTextInExtracted >= 0) {
+                  estimatedPosition = searchStart + spanTextInExtracted
+                  // Check if this estimated position is within tolerance
+                  if (estimatedPosition >= minPosition && estimatedPosition <= maxPosition) {
+                    candidateSpans.push({
+                      span,
+                      estimatedPosition,
+                      distance: Math.abs(estimatedPosition - wordStart)
+                    })
+                  }
+                } else {
+                  // If we can't find the exact text, still add it but with lower priority
+                  // Only if we have very few candidates
+                  candidateSpans.push({
+                    span,
+                    estimatedPosition: wordStart, // Use expected position as fallback
+                    distance: positionTolerance + 1 // Lower priority
+                  })
+                }
+              }
+            }
+          }
+        })
+      })
+      
+      // Sort by distance from expected position and take the closest matches
+      candidateSpans.sort((a, b) => a.distance - b.distance)
+      
+      // Only take spans that are reasonably close (within tolerance)
+      // For very common words, limit to top 5 closest matches
+      const maxMatches = wordTextNormalized.length <= 3 ? 3 : 5 // Shorter words are more common
+      const closeMatches = candidateSpans
+        .filter(c => c.distance <= positionTolerance)
+        .slice(0, maxMatches)
+      
+      if (closeMatches.length > 0) {
+        wordSpans.push(...closeMatches.map(c => c.span))
+      }
+    }
+    
+    // If we found spans, return them
+    if (wordSpans.length > 0) {
+      return wordSpans
+    }
+    
+    // Fallback: if element provided, return it
+    if (element && element.isConnected) {
+      return [element]
+    }
+    
+    return []
+  }
 
-    return wordSpans
+  // Helper function to get bounding box of a specific word within a span using Range API
+  const getWordBoundingBoxInSpan = (span, wordStart, wordEnd, extractedText) => {
+    if (!span || !span.isConnected || !extractedText) return null
+    
+    const spanText = span.textContent || ''
+    if (!spanText) return null
+    
+    // Get the word text from extractedText
+    const wordText = extractedText.substring(wordStart, wordEnd).trim()
+    if (!wordText) return null
+    
+    // Normalize for matching
+    const normalizeWord = (str) => str.trim().toLowerCase().replace(/[^\w]/g, '')
+    const wordTextNormalized = normalizeWord(wordText)
+    
+    // Strategy 1: If span has data-char-index, use it for precise calculation
+    const spanCharIndex = parseInt(span.dataset.charIndex, 10)
+    if (!isNaN(spanCharIndex)) {
+      const spanEnd = spanCharIndex + spanText.length
+      
+      // Check if word is within this span
+      if (wordStart < spanCharIndex || wordEnd > spanEnd) return null
+      
+      // Calculate the offset of the word within the span
+      const wordStartInSpan = wordStart - spanCharIndex
+      const wordEndInSpan = wordEnd - spanCharIndex
+      
+      // Get the text node within the span
+      const textNode = Array.from(span.childNodes).find(node => node.nodeType === Node.TEXT_NODE)
+      if (!textNode) return null
+      
+      // Create a range for just the word portion
+      const range = document.createRange()
+      try {
+        range.setStart(textNode, Math.max(0, wordStartInSpan))
+        range.setEnd(textNode, Math.min(textNode.textContent.length, wordEndInSpan))
+        
+        const rangeRect = range.getBoundingClientRect()
+        if (rangeRect.width === 0 && rangeRect.height === 0) return null
+        
+        // Get container for relative positioning
+        const container = span.closest('.textLayer') || span.closest('.text-layer') || span.closest('.pdf-canvas-wrapper') || span.closest('.pdf-page-wrapper')
+        if (!container) return null
+        
+        const containerRect = container.getBoundingClientRect()
+        
+        return {
+          x: rangeRect.left - containerRect.left,
+          y: rangeRect.top - containerRect.top,
+          width: rangeRect.width,
+          height: rangeRect.height,
+          container: container
+        }
+      } catch (e) {
+        return null
+      }
+    }
+    
+    // Strategy 2: If span doesn't have data-char-index, find the word within the span's text using Range API
+    // Find the position of the word in the span's text
+    const wordRegex = new RegExp(`\\b${wordTextNormalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+    const match = spanText.match(wordRegex)
+    if (!match || match.index === undefined) return null
+    
+    // Get the text node within the span
+    const textNode = Array.from(span.childNodes).find(node => node.nodeType === Node.TEXT_NODE)
+    if (!textNode) return null
+    
+    // Create a range for just the word portion
+    const range = document.createRange()
+    try {
+      const wordStartInSpan = match.index
+      const wordEndInSpan = match.index + match[0].length
+      
+      range.setStart(textNode, Math.max(0, wordStartInSpan))
+      range.setEnd(textNode, Math.min(textNode.textContent.length, wordEndInSpan))
+      
+      const rangeRect = range.getBoundingClientRect()
+      if (rangeRect.width === 0 && rangeRect.height === 0) return null
+      
+      // Get container for relative positioning
+      const container = span.closest('.textLayer') || span.closest('.text-layer') || span.closest('.pdf-canvas-wrapper') || span.closest('.pdf-page-wrapper')
+      if (!container) return null
+      
+      const containerRect = container.getBoundingClientRect()
+      
+      return {
+        x: rangeRect.left - containerRect.left,
+        y: rangeRect.top - containerRect.top,
+        width: rangeRect.width,
+        height: rangeRect.height,
+        container: container
+      }
+    } catch (e) {
+      return null
+    }
   }
 
   // Helper function to get bounding box for multiple elements relative to their container
-  const getCombinedBoundingBox = (elements) => {
+  // If wordPosition is provided and we have a single span, try to get word-specific bounding box
+  const getCombinedBoundingBox = (elements, wordPosition = null) => {
     if (elements.length === 0) return null
 
     // Find the common container (text layer or page wrapper)
@@ -4324,13 +4453,71 @@ function Home() {
     const container = firstElement.closest('.textLayer') || firstElement.closest('.text-layer') || firstElement.closest('.pdf-canvas-wrapper') || firstElement.closest('.pdf-page-wrapper')
     if (!container) return null
 
+    // CRITICAL: If multiple spans are found, prefer the one closest to the expected position
+    // This prevents huge bounding boxes when common words appear multiple times
+    let elementsToUse = elements
+    if (elements.length > 1 && wordPosition !== null && extractedText) {
+      // Find word boundaries
+      let wordStart = wordPosition
+      let wordEnd = wordPosition
+      while (wordStart > 0 && /\S/.test(extractedText[wordStart - 1])) wordStart--
+      while (wordEnd < extractedText.length && /\S/.test(extractedText[wordEnd])) wordEnd++
+      
+      // Calculate distance from each span to the expected position
+      const spansWithDistance = elements.map(span => {
+        const spanText = span.textContent || ''
+        const spanCharIndex = parseInt(span.dataset.charIndex, 10)
+        
+        let distance = Infinity
+        if (!isNaN(spanCharIndex)) {
+          // Use charIndex if available
+          const spanCenter = spanCharIndex + spanText.length / 2
+          distance = Math.abs(spanCenter - wordPosition)
+        } else {
+          // Estimate position by finding span text in extractedText near expected position
+          const searchStart = Math.max(0, wordStart - 100)
+          const searchEnd = Math.min(extractedText.length, wordEnd + 100)
+          const searchText = extractedText.substring(searchStart, searchEnd)
+          const spanTextInExtracted = searchText.indexOf(spanText)
+          
+          if (spanTextInExtracted >= 0) {
+            const estimatedPosition = searchStart + spanTextInExtracted + spanText.length / 2
+            distance = Math.abs(estimatedPosition - wordPosition)
+          }
+        }
+        
+        return { span, distance }
+      })
+      
+      // Sort by distance and take the closest one
+      spansWithDistance.sort((a, b) => a.distance - b.distance)
+      elementsToUse = [spansWithDistance[0].span]
+    }
+
+    // If we have a single span and wordPosition, try to get word-specific bounding box
+    // This works even if the span doesn't have data-char-index (getWordBoundingBoxInSpan handles both cases)
+    if (elementsToUse.length === 1 && wordPosition !== null && extractedText) {
+      const span = elementsToUse[0]
+      
+      // Find word boundaries
+      let wordStart = wordPosition
+      let wordEnd = wordPosition
+      while (wordStart > 0 && /\S/.test(extractedText[wordStart - 1])) wordStart--
+      while (wordEnd < extractedText.length && /\S/.test(extractedText[wordEnd])) wordEnd++
+      
+      const wordBoundingBox = getWordBoundingBoxInSpan(span, wordStart, wordEnd, extractedText)
+      if (wordBoundingBox) {
+        return wordBoundingBox
+      }
+    }
+
     const containerRect = container.getBoundingClientRect()
     let minX = Infinity
     let minY = Infinity
     let maxX = -Infinity
     let maxY = -Infinity
 
-    elements.forEach(element => {
+    elementsToUse.forEach(element => {
       if (!element.isConnected) return
       const rect = element.getBoundingClientRect()
       
@@ -4406,7 +4593,8 @@ function Home() {
   }
 
   // Helper function to apply reading highlight
-  const applyReadingHighlight = (element, isPageTransition = false) => {
+  const applyReadingHighlight = (element, isPageTransition = false, reliablePosition = null) => {
+    
     // Clear previous reading highlight (but preserve blue start marker if it's on a different element)
     const previousElement = currentReadingElementRef.current
     const previousPage = previousElement ? getElementPageNumber(previousElement) : null
@@ -4417,8 +4605,16 @@ function Home() {
       isPageTransition = elementPage !== null && elementPage !== previousPage
     }
     
-    // Get the character index of the current element
-    const charIndex = element.dataset.charIndex ? parseInt(element.dataset.charIndex) : null
+    // CRITICAL: Use reliablePosition if provided (the exact word position), otherwise fall back to element.dataset.charIndex
+    // reliablePosition is the precise character index of the word being spoken, which may be different from the span's start
+    let charIndex = null
+    if (reliablePosition !== null && reliablePosition >= 0) {
+      charIndex = reliablePosition
+    } else {
+      // Fallback to element's charIndex if reliablePosition not provided
+      charIndex = element.dataset.charIndex ? parseInt(element.dataset.charIndex, 10) : null
+    }
+    
     if (charIndex === null) {
       // Fallback to old behavior if no charIndex
       clearReadingHighlight()
@@ -4429,7 +4625,10 @@ function Home() {
     }
 
     // Find all spans that belong to the current word
-    const wordSpans = findWordSpans(charIndex)
+    // CRITICAL: Use charIndex (which is reliablePosition if provided), not element.dataset.charIndex
+    // The element might be a span containing multiple words, so we need to use the exact word position
+    // Pass the element directly so findWordSpans can use it even if textItemsRef is empty
+    const wordSpans = findWordSpans(charIndex, element)
     
     // Clear previous highlight with fade transition
     clearReadingHighlight()
@@ -4443,7 +4642,8 @@ function Home() {
 
     // Create organic haze overlay for the word
     if (wordSpans.length > 0) {
-      const boundingBox = getCombinedBoundingBox(wordSpans)
+      // Pass charIndex (reliablePosition) to get word-specific bounding box when we have a single span
+      const boundingBox = getCombinedBoundingBox(wordSpans, charIndex)
       if (boundingBox && boundingBox.container) {
         // Get the page number to find the correct highlight layer
         const elementPage = getElementPageNumber(element)
@@ -4739,19 +4939,9 @@ function Home() {
 
   // Highlight the element currently being read - ensure exact match with TTS position
   const highlightCurrentReading = (position) => {
-    // #region agent log
-    if (typeof window !== 'undefined') {
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H1',location:'Home.jsx:highlightCurrentReading',message:'highlightCurrentReading entry',data:{position,hasText:!!extractedText,textLength:extractedText?.length ?? 0},timestamp:Date.now()})}).catch(()=>{})
-    }
-    // #endregion
     
     // Validate position is within bounds
     if (!extractedText || position < 0 || position > extractedText.length) {
-      // #region agent log
-      if (typeof window !== 'undefined') {
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H2',location:'Home.jsx:highlightCurrentReading',message:'highlightCurrentReading out of bounds',data:{position,hasText:!!extractedText,textLength:extractedText?.length ?? 0},timestamp:Date.now()})}).catch(()=>{})
-      }
-      // #endregion
       return
     }
 
@@ -4812,12 +5002,6 @@ function Home() {
       return item.charIndex <= position && 
              item.charIndex + item.str.length > position
     })
-
-    // #region agent log
-    if (typeof window !== 'undefined') {
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H3',location:'Home.jsx:highlightCurrentReading',message:'highlightCurrentReading matches',data:{position,matchingCount:matchingItems.length,firstPage:matchingItems[0]?getElementPageNumber(matchingItems[0].element):null},timestamp:Date.now()})}).catch(()=>{})
-    }
-    // #endregion
 
     if (matchingItems.length === 0) {
       // No items found at this position - might be transitioning to next page
@@ -7197,7 +7381,24 @@ function Home() {
 
   // Helper function to start playback from a specific position
   const startPlaybackFromPosition = async (position) => {
+    
     if (!extractedText) return false
+    
+    // Prevent multiple simultaneous playback attempts using a ref guard
+    if (playbackInProgressRef.current) {
+      return false // Reject duplicate calls
+    }
+    
+    // Set guard immediately to prevent race conditions
+    playbackInProgressRef.current = true
+    
+    // Cancel any existing playback first
+    if (synthRef.current) {
+      synthRef.current.cancel()
+      utteranceRef.current = null
+    }
+    // Wait a bit for cancellation to complete
+    await new Promise(resolve => setTimeout(resolve, 100))
 
     // Update the current playback position ref
     currentPlaybackPositionRef.current = position
@@ -7218,6 +7419,60 @@ function Home() {
       return false
     }
 
+    // Capture textItems state in closure for use in boundary handler
+    // Use textItems state if available, otherwise try to build from DOM as fallback
+    let textItemsState = textItems || []
+    
+    // If textItems state is empty, try to build from DOM (pages might not be fully rendered yet)
+    if (textItemsState.length === 0) {
+      const allTextLayers = Object.values(textLayerRefs.current).filter(Boolean)
+      const domTextItems = []
+      allTextLayers.forEach(textLayer => {
+        const spans = textLayer.querySelectorAll('span[data-char-index]')
+        spans.forEach(span => {
+          const charIndex = parseInt(span.dataset.charIndex, 10)
+          if (!isNaN(charIndex) && charIndex >= 0) {
+            const text = span.textContent || ''
+            if (text.trim().length > 0) {
+              // Split text into words
+              const words = []
+              let currentWord = ''
+              for (let i = 0; i < text.length; i++) {
+                const char = text[i]
+                if (/\w/.test(char)) {
+                  currentWord += char
+                } else {
+                  if (currentWord.length > 0) {
+                    words.push(currentWord)
+                    currentWord = ''
+                  }
+                  words.push(char)
+                }
+              }
+              if (currentWord.length > 0) {
+                words.push(currentWord)
+              }
+              
+              let wordOffset = 0
+              words.forEach(word => {
+                const wordCharIndex = charIndex + wordOffset
+                domTextItems.push({
+                  str: word,
+                  page: parseInt(span.dataset.page || '1', 10),
+                  charIndex: wordCharIndex,
+                  element: span
+                })
+                wordOffset += word.length
+              })
+            }
+          }
+        })
+      })
+      if (domTextItems.length > 0) {
+        textItemsState = domTextItems.sort((a, b) => a.charIndex - b.charIndex)
+      }
+    }
+
     // Use browser TTS for all languages
     console.log('Starting playback, language:', langToUse, 'text length:', textToRead.length)
     console.log('Using browser TTS for', langToUse === 'es' ? 'Spanish' : 'English', 'text')
@@ -7226,12 +7481,21 @@ function Home() {
         return false
       }
 
-      // Reset speech synthesis state to fix Chrome issues
+      // Reset speech synthesis state to fix Chrome issues FIRST
+      // This prevents multiple simultaneous playback attempts
       await resetSpeechSynthesis()
+      
+      // Set playing state immediately AFTER reset (don't wait for utterance.onstart)
+      // This ensures the pause button appears immediately
+      setIsPlaying(true)
+      isPlayingRef.current = true
       
       // Check if speech synthesis is ready
       if (!isSpeechSynthesisReady()) {
         setError('Speech synthesis is not ready. Please try again.')
+        setIsPlaying(false)
+        isPlayingRef.current = false
+        playbackInProgressRef.current = false // Clear guard
         return false
       }
 
@@ -7251,6 +7515,7 @@ function Home() {
       
       // Function to speak next segment
       const speakNextSegment = () => {
+        
         if (currentSegmentIndex >= segments.length) {
           // All segments done
           setIsPlaying(false)
@@ -7283,6 +7548,7 @@ function Home() {
         // Track position using boundary events (fires when speaking each word)
         utterance.onboundary = (event) => {
           if (event.name === 'word' || event.name === 'sentence') {
+            
             // ELEGANT SOLUTION: Don't trust TTS position data - use it only to identify the word being spoken
             // Then find the next matching word in our sequential textItems array
             
@@ -7310,8 +7576,16 @@ function Home() {
             }
             
             // Find the next matching word in our textItems array (forward from last highlighted)
-            const textItems = textItemsRef.current
+            // CRITICAL: Use textItemsRef if available, otherwise use textItemsState from closure
+            // If both are empty, we'll use a direct DOM search by text content (fallback below)
+            let textItems = textItemsRef.current
             if (!textItems || textItems.length === 0) {
+              // Use textItemsState from closure - this was captured at playback start
+              textItems = textItemsState || []
+            }
+            
+            if (!textItems || textItems.length === 0) {
+              // Still empty after fallback - can't highlight
               return
             }
             
@@ -7402,14 +7676,56 @@ function Home() {
             .sort((a, b) => a.charIndex - b.charIndex)
           
           if (allForwardWordItems.length === 0) {
+            
             // Log for debugging
-            console.log('[TTS Boundary] No forward word items found', {
+            console.log('[TTS Boundary] No forward word items found in textItems, trying direct DOM search', {
               startCharIndex,
               currentPage,
               isAtPageBoundary,
               lastHighlightedCharIndex: lastHighlightedCharIndexRef.current
             })
-            return // No forward word items (end of text or end of page)
+            
+            // FALLBACK: Try to find the word directly in the DOM using reliablePosition
+            // Calculate reliablePosition: position (start of textToRead) + segmentStartInText (offset of segment) + event.charIndex (offset within segment)
+            // segmentStartInText is already calculated above and is in scope
+            const reliablePosition = position + segmentStartInText + event.charIndex
+            
+            // Find word boundaries at reliablePosition
+            if (extractedText && reliablePosition >= 0 && reliablePosition < extractedText.length) {
+              let wordStart = reliablePosition
+              let wordEnd = reliablePosition
+              while (wordStart > 0 && /\S/.test(extractedText[wordStart - 1])) wordStart--
+              while (wordEnd < extractedText.length && /\S/.test(extractedText[wordEnd])) wordEnd++
+              
+              // Use findWordSpans to find spans containing this word (it searches by text content as fallback)
+              const wordSpans = findWordSpans(reliablePosition, null)
+              
+              if (wordSpans.length > 0) {
+                // Found spans - highlight directly using reliablePosition
+                const firstSpan = wordSpans[0]
+                const elementPage = getElementPageNumber(firstSpan)
+                
+                // Update tracking refs
+                currentPlaybackPositionRef.current = reliablePosition
+                lastBoundaryPositionRef.current = reliablePosition
+                previousBoundaryPositionRef.current = reliablePosition
+                if (elementPage !== null) {
+                  currentReadingPageRef.current = elementPage
+                }
+                lastValidHighlightPositionRef.current = reliablePosition
+                lastHighlightedCharIndexRef.current = reliablePosition
+                lastHighlightedElementRef.current = firstSpan
+                
+                // Apply highlight directly
+                applyReadingHighlight(firstSpan, false, reliablePosition)
+                return // Successfully highlighted using DOM fallback
+              } else {
+              }
+            } else {
+            }
+            
+            // If DOM fallback also failed, return (can't highlight)
+            return
           }
           
           // Find the word that TTS is speaking RIGHT NOW
@@ -7519,8 +7835,70 @@ function Home() {
             lastHighlightedCharIndexRef.current = reliablePosition
             lastHighlightedElementRef.current = targetItem.element
             
-            // Directly highlight the element that TTS identified
-            applyReadingHighlight(targetItem.element, isPageTransition)
+            // CRITICAL: Find the exact element that contains reliablePosition, not just targetItem.element
+            // targetItem.element might be a span containing multiple words, so we need to find the specific word
+            // Strategy: Find the word boundaries at reliablePosition, then find the span that starts at or closest to wordStart
+            let exactElement = targetItem.element
+            let foundExactMatch = false
+            
+            if (extractedText && reliablePosition >= 0 && reliablePosition < extractedText.length) {
+              // Find word boundaries at reliablePosition
+              let wordStart = reliablePosition
+              let wordEnd = reliablePosition
+              
+              // Find start of word
+              while (wordStart > 0 && /\S/.test(extractedText[wordStart - 1])) {
+                wordStart--
+              }
+              
+              // Find end of word
+              while (wordEnd < extractedText.length && /\S/.test(extractedText[wordEnd])) {
+                wordEnd++
+              }
+              
+              // Now search for a span that starts at wordStart (or is closest to it)
+              let bestSpan = null
+              let bestDistance = Infinity
+              
+              Object.values(textLayerRefs.current).forEach(textLayer => {
+                if (!textLayer || foundExactMatch) return
+                const allSpans = textLayer.querySelectorAll('span[data-char-index]')
+                for (const span of allSpans) {
+                  const spanCharIndex = parseInt(span.dataset.charIndex, 10)
+                  if (!isNaN(spanCharIndex)) {
+                    // Prefer spans that start exactly at wordStart
+                    if (spanCharIndex === wordStart) {
+                      exactElement = span
+                      foundExactMatch = true
+                      break
+                    }
+                    // Otherwise, find the span closest to wordStart that contains wordStart
+                    if (spanCharIndex <= wordStart) {
+                      const spanText = span.textContent || ''
+                      const spanEnd = spanCharIndex + spanText.length
+                      if (wordStart < spanEnd) {
+                        const distance = wordStart - spanCharIndex
+                        if (distance < bestDistance) {
+                          bestSpan = span
+                          bestDistance = distance
+                        }
+                      }
+                    }
+                  }
+                }
+              })
+              
+              // If we found a best match but not an exact match, use it
+              if (!foundExactMatch && bestSpan) {
+                exactElement = bestSpan
+                foundExactMatch = true
+              }
+            }
+            
+            // Directly highlight the exact element that contains reliablePosition
+            // CRITICAL: Pass reliablePosition so applyReadingHighlight uses the exact word position, not the span's start
+            applyReadingHighlight(exactElement, isPageTransition, reliablePosition)
+          } else {
           }
         }
       }
@@ -7532,9 +7910,10 @@ function Home() {
             utteranceStartTimeout = null
           }
           
-          // Only set playing state and initialize on first segment
+          // Initialize tracking on first segment (playing state already set above)
           if (currentSegmentIndex === 0) {
-            setIsPlaying(true)
+            // Playing state already set when startPlaybackFromPosition was called
+            // Just update position tracking
             currentPlaybackPositionRef.current = position
             playbackStartPositionRef.current = position
             playbackStartTimeRef.current = Date.now()
@@ -7592,6 +7971,8 @@ function Home() {
         // Ignore "interrupted" errors - these are expected when pausing/cancelling speech
         if (event.error === 'interrupted') {
           setIsPlaying(false)
+          isPlayingRef.current = false
+          playbackInProgressRef.current = false // Clear guard
           playbackStartTimeRef.current = null
           
           // Clear the reading highlight
@@ -7609,6 +7990,8 @@ function Home() {
         // Only show errors for actual problems
         setError('Error during speech: ' + event.error)
         setIsPlaying(false)
+        isPlayingRef.current = false
+        playbackInProgressRef.current = false // Clear guard
         playbackStartTimeRef.current = null
         
         // Clear the reading highlight
@@ -7634,6 +8017,8 @@ function Home() {
               console.warn('Utterance may have been rejected by browser (Chrome issue)')
               setError('Speech synthesis failed to start. This can happen in Chrome. Try refreshing the page or using a different browser.')
               setIsPlaying(false)
+              isPlayingRef.current = false
+              playbackInProgressRef.current = false // Clear guard
               utteranceRef.current = null
               clearReadingHighlight()
             }
@@ -7643,6 +8028,8 @@ function Home() {
           setError('Error starting speech: ' + error.message)
           utteranceRef.current = null
           setIsPlaying(false)
+          isPlayingRef.current = false
+          playbackInProgressRef.current = false // Clear guard
           return false
         }
       }
@@ -7678,12 +8065,17 @@ function Home() {
       
       // Handle browser TTS
       if (synthRef.current) {
+        // Cancel all pending utterances
         synthRef.current.cancel()
-        utteranceRef.current = null
+        // Also clear the utterance ref to prevent any pending callbacks
+        if (utteranceRef.current) {
+          utteranceRef.current = null
+        }
       }
       
       setIsPlaying(false)
       isPlayingRef.current = false
+      playbackInProgressRef.current = false // Clear playback guard
       clearReadingHighlight()
       
       if ('mediaSession' in navigator) {
@@ -8306,12 +8698,6 @@ function Home() {
         
         // Get font size - try inline style first, then computed style, then bounding rect height
         let spanHeight = parseFloat(span.style.fontSize)
-        
-        // #region agent log
-        if (typeof window !== 'undefined' && selectedSpans.length === 0) {
-          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H5',location:'Home.jsx:calculatePreciseRectangles',message:'First span coordinates',data:{spanLeft,spanTop,textLayerRect:{left:textLayerRect.left,top:textLayerRect.top,width:textLayerRect.width,height:textLayerRect.height},spanRect:{left:spanRect.left,top:spanRect.top,width:spanRect.width,height:spanRect.height},inlineStyles:{left:span.style.left,top:span.style.top}},timestamp:Date.now()})}).catch(()=>{})
-        }
-        // #endregion
         
         // Get height from bounding rect if fontSize is not available
         if (isNaN(spanHeight) || span.style.fontSize === '') {
@@ -10108,11 +10494,6 @@ function Home() {
       }
 
       let rectangles = calculatePreciseRectangles(selectionRange, textLayerDiv)
-      // #region agent log
-      if (typeof window !== 'undefined' && rectangles && rectangles.length > 0) {
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H6',location:'Home.jsx:handleSelectionEnd',message:'Highlight rectangles calculated',data:{rectCount:rectangles.length,firstRect:rectangles[0],textLayerRect:{width:textLayerDiv.getBoundingClientRect().width,height:textLayerDiv.getBoundingClientRect().height}},timestamp:Date.now()})}).catch(()=>{})
-      }
-      // #endregion
       
       
       // If rectangles calculation failed, try fallback using getClientRects
@@ -11372,11 +11753,6 @@ function Home() {
     Object.values(textLayerRefs.current).forEach((textLayer, pageIndex) => {
       if (textLayer) {
         const spans = textLayer.querySelectorAll('span')
-        // #region agent log
-        if (typeof window !== 'undefined') {
-          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H8',location:'Home.jsx:textLayerVisibility',message:'Toggling text visibility',data:{textLayerVisible,interactionMode,spanCount:spans.length},timestamp:Date.now()})}).catch(()=>{})
-        }
-        // #endregion
         spans.forEach(span => {
           if (textLayerVisible) {
             // Show text by removing transparent color (let CSS handle it, or set to black)
@@ -11388,11 +11764,11 @@ function Home() {
           }
           // Ensure pointer events are enabled for clicks (especially important when text is visible)
           span.style.pointerEvents = 'auto'
-          // Set cursor based on interaction mode
+          // Set cursor based on interaction mode (use !important to override CSS)
           if (interactionMode === 'read') {
-            span.style.cursor = 'pointer'
+            span.style.setProperty('cursor', 'pointer', 'important')
           } else {
-            span.style.cursor = 'text'
+            span.style.setProperty('cursor', 'text', 'important')
           }
         })
         
@@ -11403,27 +11779,179 @@ function Home() {
           const clickedSpan = e.target.closest('span')
           if (!clickedSpan || clickedSpan.closest('.textLayer') !== textLayer) return
           
-          // #region agent log
-          if (typeof window !== 'undefined') {
-            fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H10',location:'Home.jsx:textLayerClick',message:'Text layer click detected',data:{interactionMode,clickedTag:clickedSpan.tagName,hasTextItem:!!textItemsRef.current.find(item => item.element === clickedSpan)},timestamp:Date.now()})}).catch(()=>{})
-          }
-          // #endregion
-          
           if (interactionMode === 'read') {
-            // Find the textItem for this span
-            const textItems = textItemsRef.current.length > 0 ? textItemsRef.current : []
-            const textItem = textItems.find(item => item.element === clickedSpan)
+            // Get charIndex from data attribute (more reliable than element reference)
+            let charIndexAttr = clickedSpan.dataset.charIndex
+            let charIndex = charIndexAttr ? parseInt(charIndexAttr, 10) : null
             
-            if (textItem) {
+            // Fallback: if data attribute is missing, use span position relative to other spans
+            if ((charIndex === null || isNaN(charIndex)) && extractedText) {
+              const spanText = clickedSpan.textContent || ''
+              const textItems = textItemsRef.current.length > 0 ? textItemsRef.current : []
+              
+              // Try to find a textItem whose element matches this span
+              const matchingItem = textItems.find(item => item.element === clickedSpan)
+              if (matchingItem && matchingItem.charIndex >= 0) {
+                charIndex = matchingItem.charIndex
+                clickedSpan.dataset.charIndex = charIndex.toString()
+              } else {
+                // Fallback: use span's position relative to other spans on the same page
+                // Get all spans on the same page and find this span's index
+                const textLayer = clickedSpan.closest('.textLayer')
+                if (textLayer) {
+                  const allSpansOnPage = Array.from(textLayer.querySelectorAll('span'))
+                  const spanIndex = allSpansOnPage.indexOf(clickedSpan)
+                  
+                  if (spanIndex >= 0) {
+                    // Strategy: Find spans with known charIndex before and after this span
+                    // Use them to estimate this span's charIndex
+                    let prevCharIndex = null
+                    let nextCharIndex = null
+                    
+                    // Look backwards for a span with charIndex (find the closest one)
+                    for (let i = spanIndex - 1; i >= 0 && i >= spanIndex - 50; i--) {
+                      const prevSpan = allSpansOnPage[i]
+                      // Check both data attribute and textItems
+                      let prevCharIndexValue = null
+                      const prevCharIndexAttr = prevSpan.dataset.charIndex
+                      if (prevCharIndexAttr) {
+                        prevCharIndexValue = parseInt(prevCharIndexAttr, 10)
+                      } else {
+                        // Try textItems
+                        const prevItem = textItems.find(item => item.element === prevSpan)
+                        if (prevItem && prevItem.charIndex >= 0) {
+                          prevCharIndexValue = prevItem.charIndex + (prevItem.str?.length || 0)
+                        }
+                      }
+                      
+                      if (prevCharIndexValue !== null && prevCharIndexValue >= 0) {
+                        prevCharIndex = prevCharIndexValue
+                        // Add the length of all spans between prevSpan and clickedSpan
+                        let totalLength = 0
+                        for (let j = i + 1; j < spanIndex; j++) {
+                          totalLength += (allSpansOnPage[j].textContent || '').length
+                        }
+                        charIndex = prevCharIndex + totalLength
+                        clickedSpan.dataset.charIndex = charIndex.toString()
+                        break
+                      }
+                    }
+                    
+                    // If we still don't have charIndex, look forward
+                    if (charIndex === null || isNaN(charIndex)) {
+                      for (let i = spanIndex + 1; i < allSpansOnPage.length && i <= spanIndex + 50; i++) {
+                        const nextSpan = allSpansOnPage[i]
+                        // Check both data attribute and textItems
+                        let nextCharIndexValue = null
+                        const nextCharIndexAttr = nextSpan.dataset.charIndex
+                        if (nextCharIndexAttr) {
+                          nextCharIndexValue = parseInt(nextCharIndexAttr, 10)
+                        } else {
+                          // Try textItems
+                          const nextItem = textItems.find(item => item.element === nextSpan)
+                          if (nextItem && nextItem.charIndex >= 0) {
+                            nextCharIndexValue = nextItem.charIndex
+                          }
+                        }
+                        
+                        if (nextCharIndexValue !== null && nextCharIndexValue >= 0) {
+                          nextCharIndex = nextCharIndexValue
+                          // Subtract the length of all spans between clickedSpan and nextSpan
+                          let totalLength = 0
+                          for (let j = spanIndex + 1; j < i; j++) {
+                            totalLength += (allSpansOnPage[j].textContent || '').length
+                          }
+                          charIndex = nextCharIndex - totalLength - spanText.length
+                          if (charIndex >= 0) {
+                            clickedSpan.dataset.charIndex = charIndex.toString()
+                          } else {
+                            charIndex = null
+                          }
+                          break
+                        }
+                      }
+                    }
+                    
+                    // Last resort: search extractedText directly for the span's text
+                    if ((charIndex === null || isNaN(charIndex)) && extractedText) {
+                      
+                      // Try to find the span's text in extractedText
+                      // First, try exact match of the span text
+                      const normalizedSpanText = spanText.trim()
+                      if (normalizedSpanText.length > 0) {
+                        // Try to find a unique occurrence by searching from different positions
+                        // Start from a reasonable position based on page number
+                        const pageNumAttr = textLayer.dataset.page
+                        let searchStart = 0
+                        
+                        if (pageNumAttr && totalPages > 0) {
+                          // Estimate page start: assume average page length
+                          const estimatedPageLength = extractedText.length / totalPages
+                          searchStart = Math.max(0, (parseInt(pageNumAttr, 10) - 1) * estimatedPageLength)
+                        }
+                        
+                        // Search for the span text, starting from estimated page position
+                        let foundIndex = extractedText.indexOf(normalizedSpanText, searchStart)
+                        
+                        // If not found, try searching from the beginning
+                        if (foundIndex < 0) {
+                          foundIndex = extractedText.indexOf(normalizedSpanText, 0)
+                        }
+                        
+                        // If still not found, try searching for the first word
+                        if (foundIndex < 0) {
+                          const words = normalizedSpanText.split(/\s+/).filter(w => w.length > 0)
+                          if (words.length > 0) {
+                            const firstWord = words[0]
+                            foundIndex = extractedText.indexOf(firstWord, searchStart)
+                            if (foundIndex < 0) {
+                              foundIndex = extractedText.indexOf(firstWord, 0)
+                            }
+                          }
+                        }
+                        
+                        if (foundIndex >= 0) {
+                          charIndex = foundIndex
+                          clickedSpan.dataset.charIndex = charIndex.toString()
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            
+            if (charIndex !== null && charIndex >= 0 && extractedText && charIndex < extractedText.length) {
               e.preventDefault()
               e.stopPropagation()
-              const word = textItem.str
-              if (/\S/.test(word)) {
-                handleWordClick(textItem.charIndex, word, clickedSpan)
-              } else {
-                const nextWordStart = findWordStart(extractedText, textItem.charIndex + word.length)
-                handleWordClick(nextWordStart, word)
+              
+              // Get exact click position within the span for more precise word detection
+              const exactCharIndex = getExactCharIndexFromClick(e, clickedSpan, charIndex)
+              
+              // Find the word at this exact charIndex
+              const wordStart = findWordStart(extractedText, exactCharIndex)
+              // Extract word by finding the end (next whitespace or end of text)
+              let wordEnd = wordStart
+              while (wordEnd < extractedText.length && /\S/.test(extractedText[wordEnd])) {
+                wordEnd++
               }
+              const word = extractedText.substring(wordStart, wordEnd)
+              
+              if (word && /\S/.test(word)) {
+                handleWordClick(wordStart, word, clickedSpan)
+              } else {
+                // If clicked on whitespace, find next word
+                const nextWordStart = findWordStart(extractedText, charIndex + 1)
+                let nextWordEnd = nextWordStart
+                while (nextWordEnd < extractedText.length && /\S/.test(extractedText[nextWordEnd])) {
+                  nextWordEnd++
+                }
+                const nextWord = extractedText.substring(nextWordStart, nextWordEnd)
+                if (nextWord) {
+                  handleWordClick(nextWordStart, nextWord, clickedSpan)
+                }
+              }
+            } else {
             }
           }
         }
@@ -11623,11 +12151,6 @@ function Home() {
       const x = rect.x * scaleRatio
       const y = rect.y * scaleRatioY
       const width = rect.width * scaleRatio
-      // #region agent log
-      if (typeof window !== 'undefined' && index === 0) {
-        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H7',location:'Home.jsx:renderHighlight',message:'Rendering highlight rect',data:{rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},calculated:{x,y,width},scaleRatio,scaleRatioY,creationTextLayerWidth,creationTextLayerHeight,currentCanvasDisplayedWidth,currentCanvasDisplayedHeight},timestamp:Date.now()})}).catch(()=>{})
-      }
-      // #endregion
       // Height calculation: scale the stored height, then add padding for better alignment
       // The stored height is the font size, but we need more to cover descenders and line spacing
       // Use a percentage-based padding that scales with font size (larger fonts need more padding)
@@ -12914,20 +13437,7 @@ function Home() {
     }
   }
 
-  // #region agent log
-  // #endregion
-
   // Render loading state or redirect to dashboard (when no PDF is loaded)
-  // #region agent log
-  try {
-    const renderCheckDataLate = {hasPdfDoc:!!pdfDoc,hasPdfFile:!!pdfFile,pdfFileName:pdfFile?.name,isLoading,hasFileInState:!!location.state?.file,hasDocumentInState:!!location.state?.documentId,documentIdFromUrl,totalPages};
-    if (typeof window !== 'undefined') {
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:13140',message:'Render check - pdfDoc state',data:renderCheckDataLate,timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch((e)=>{console.error('Render log fetch error:',e);});
-    }
-  } catch(e) {
-    console.error('Render check error (late):', e);
-  }
-  // #endregion
   
   // Use the early render decision to determine what to return
   // Since execution doesn't reach here, use the early decision instead
@@ -13029,11 +13539,6 @@ function Home() {
   // Render PDF reader mode (when PDF is loaded)
   // Use the early render decision
   if (shouldRenderPDFReader) {
-    // #region agent log
-  if (typeof window !== 'undefined') {
-    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:13185',message:'Rendering PDF reader',data:{hasPdfDoc:!!pdfDoc,hasPdfFile:!!pdfFile,pdfFileName:pdfFile?.name,totalPages},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch((e)=>{console.error('PDF reader log fetch error:',e);});
-  }
-  // #endregion
   return (
     <div className="app app-reader">
       {/* Top Toolbar */}
