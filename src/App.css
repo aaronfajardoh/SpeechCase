@@ -3358,44 +3358,80 @@
 .mode-toggle {
   display: flex;
   gap: 0;
+  align-items: center;
   background: #3d3d3d;
   padding: 0.25rem;
-  border-radius: 8px;
+  border-radius: 9999px;
   border: 1px solid #5f6368;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .mode-btn {
-  padding: 0.5rem 1rem;
-  font-size: 0.8125rem;
-  font-weight: 500;
+  padding: 0.5rem;
   border: none;
-  border-radius: 6px;
   background: transparent;
   color: #9aa0a6;
   cursor: pointer;
   transition: all 0.2s ease;
-  white-space: nowrap;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  justify-content: center;
   /* Prevent zoom on mode buttons */
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  min-width: 32px;
+  height: 32px;
+}
+
+.mode-btn svg {
+  flex-shrink: 0;
+  transition: color 0.2s ease;
+}
+
+.mode-btn:hover {
+  color: #e8eaed;
+}
+
+.mode-btn.active svg {
+  color: #4285f4;
+}
+
+.mode-btn-separator {
+  width: 1px;
+  height: 20px;
+  background: #5f6368;
+  margin: 0 0.125rem;
+}
+
+.snip-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid #5f6368;
+  background: #3d3d3d;
+  color: #9aa0a6;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.5rem;
+  /* Prevent zoom on snip button */
   touch-action: manipulation;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
 
-.mode-btn svg {
-  flex-shrink: 0;
-}
-
-.mode-btn:hover {
+.snip-btn:hover {
   background: #4d4d4d;
+  border-color: #9aa0a6;
   color: #e8eaed;
 }
 
-.mode-btn.active {
+.snip-btn.active {
   background: #4285f4;
+  border-color: #4285f4;
   color: white;
   box-shadow: 0 1px 3px rgba(66, 133, 244, 0.4);
 }
@@ -3800,6 +3836,15 @@
   left: 0;
   overflow: visible;
   pointer-events: none;
+}
+
+.snip-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: auto;
+  cursor: crosshair;
   z-index: 3;
   /* Dimensions will be set by JavaScript to match canvas display size */
   transform-origin: 0 0;

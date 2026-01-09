@@ -716,8 +716,25 @@ ${htmlContent}
                               className="highlight-item-content"
                               onDoubleClick={() => handleDoubleClick(item)}
                             >
-                              {item.color === 'blue' && <span className="bullet-point">•</span>}
-                              {item.text}
+                              {item.isSnip && item.image ? (
+                                <img 
+                                  src={item.image} 
+                                  alt="Snip highlight" 
+                                  style={{ 
+                                    maxWidth: '100%', 
+                                    height: 'auto',
+                                    display: 'block',
+                                    margin: '4px 0',
+                                    borderRadius: '4px',
+                                    border: '1px solid #ddd'
+                                  }} 
+                                />
+                              ) : (
+                                <>
+                                  {item.color === 'blue' && <span className="bullet-point">•</span>}
+                                  {item.text}
+                                </>
+                              )}
                             </span>
                           )}
                           

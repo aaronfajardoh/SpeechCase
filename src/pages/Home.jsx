@@ -42,7 +42,8 @@ import {
   IconExpandTimeline,
   IconMinimizeTimeline,
   IconEye,
-  IconEyeOff
+  IconEyeOff,
+  IconScissors
 } from '../components/Icons.jsx'
 import ProportionalTimeline from '../components/ProportionalTimeline.jsx'
 import PagesSidebar from '../components/PagesSidebar.jsx'
@@ -103,8 +104,13 @@ function Home() {
   const isInitialLoadRef = useRef(true) // Track if we're in initial load phase to prevent auto-save
   const [highlightHistory, setHighlightHistory] = useState([[]]) // History stack for undo/redo
   const [historyIndex, setHistoryIndex] = useState(0) // Current position in history
-  const [interactionMode, setInteractionMode] = useState('read') // 'read' or 'highlight'
+  const [interactionMode, setInteractionMode] = useState('select') // 'select', 'read', or 'highlight'
   const [highlightColor, setHighlightColor] = useState('yellow') // 'yellow', 'green', 'blue'
+  const [isSnippingMode, setIsSnippingMode] = useState(false) // Track if snipping tool is active
+  const [snipSelection, setSnipSelection] = useState(null) // Track snip selection: { startX, startY, endX, endY, page }
+  const [isSnipDragging, setIsSnipDragging] = useState(false) // Track if user is dragging to create snip selection
+  const isSnipDraggingRef = useRef(false) // Ref to track dragging state synchronously
+  const snipSelectionRef = useRef(null) // Ref to track selection state synchronously
   const [hoveredHighlightId, setHoveredHighlightId] = useState(null) // Track which highlight is being hovered
   const [connectingFrom, setConnectingFrom] = useState(null) // Track connection start: { highlightId, dot: 'left' | 'right' }
   const connectionLayerRefs = useRef({}) // Store connection layer refs by page number
@@ -121,10 +127,12 @@ function Home() {
   const textLayerRefs = useRef({}) // Store text layer refs by page number
   const highlightLayerRefs = useRef({}) // Store highlight layer refs by page number
   const selectionLayerRefs = useRef({}) // Store selection overlay layer refs by page number
+  const snipLayerRefs = useRef({}) // Store snip selection layer refs by page number
   const thumbnailRefs = useRef({}) // Store thumbnail canvas refs by page number
   const isDraggingSelectionRef = useRef(false) // Track if user is dragging to select
   const selectionStartRangeRef = useRef(null) // Store the start of selection range
   const lastValidRangeRef = useRef(null) // Track last valid range during mouse move (for whitespace handling)
+  const persistentSelectionRangeRef = useRef(null) // Store persistent selection range for select mode
   const [renderedThumbnails, setRenderedThumbnails] = useState([]) // Track which thumbnails are rendered
   const [sidebarView, setSidebarView] = useState('pages') // 'pages', 'timeline', 'characters', 'chat', 'highlights', 'exhibits'
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false) // Sidebar collapsed state
@@ -9271,11 +9279,15 @@ function Home() {
 
   // Handle text selection to create highlights (only in highlight mode)
   useEffect(() => {
-    if (interactionMode !== 'highlight') {
-      // Clear selection overlay when not in highlight mode
+    if (interactionMode !== 'highlight' && interactionMode !== 'select') {
+      // Clear selection overlay when not in highlight or select mode
       Object.values(selectionLayerRefs.current).forEach(layer => {
         if (layer) layer.innerHTML = ''
       })
+      // Clear persistent selection and native selection
+      persistentSelectionRangeRef.current = null
+      const nativeSelection = window.getSelection()
+      nativeSelection.removeAllRanges()
       return
     }
 
@@ -9300,8 +9312,10 @@ function Home() {
       const rectangles = calculatePreciseRectangles(range, textLayerDiv)
       if (!rectangles || rectangles.length === 0) return
 
-      // Get highlight color
-      const highlightBgColor = getHighlightColor(highlightColor)
+      // Get highlight color - use light blue for select mode
+      const highlightBgColor = interactionMode === 'select' 
+        ? 'rgba(173, 216, 230, 0.4)' // Light blue for select mode
+        : getHighlightColor(highlightColor)
       
       // Render each rectangle
       rectangles.forEach((rect, index) => {
@@ -9933,6 +9947,36 @@ function Home() {
     }
 
     const handleMouseDown = (e) => {
+      // Don't handle if in snipping mode (let snipping tool handle it)
+      if (isSnippingMode) {
+        return
+      }
+      
+      // In select mode, clear persistent selection if clicking away from text
+      if (interactionMode === 'select') {
+        const clickedElement = e.target
+        const isOnText = clickedElement.classList.contains('text-layer') || 
+                        clickedElement.closest('.textLayer span') || 
+                        clickedElement.closest('.text-layer span')
+        
+        // If clicking away from text, clear the persistent selection
+        if (!isOnText && !clickedElement.closest('.selection-rect')) {
+          // Clear persistent selection
+          persistentSelectionRangeRef.current = null
+          Object.values(selectionLayerRefs.current).forEach(layer => {
+            if (layer) layer.innerHTML = ''
+          })
+          // Clear native selection
+          const nativeSelection = window.getSelection()
+          nativeSelection.removeAllRanges()
+        }
+      }
+      
+      // Only handle selection in highlight or select mode
+      if (interactionMode !== 'highlight' && interactionMode !== 'select') {
+        return
+      }
+      
       // Don't handle if clicking on a highlight (let highlights handle their own events)
       if (e.target.closest('.highlight-rect, .highlight-connection-dot')) {
         return
@@ -9961,6 +10005,14 @@ function Home() {
       }
 
       if (!pageNum) return
+      
+      // Clear previous persistent selection when starting a new selection
+      if (interactionMode === 'select') {
+        persistentSelectionRangeRef.current = null
+        // Clear native selection when starting new selection
+        const nativeSelection = window.getSelection()
+        nativeSelection.removeAllRanges()
+      }
 
       // Don't prevent default - allow native selection to work so we can capture what user sees
       // We'll still use custom overlay for visual feedback
@@ -10890,9 +10942,6 @@ function Home() {
         selectedText = extractTextFromRange(selectionRange).trim()
       }
       
-      // Clear native selection after capturing (we use custom overlay for display)
-      nativeSelection.removeAllRanges()
-      
       if (selectedText.length === 0) {
         // Clear selection overlay
         Object.values(selectionLayerRefs.current).forEach(layer => {
@@ -10900,8 +10949,51 @@ function Home() {
         })
         isDraggingSelectionRef.current = false
         selectionStartRangeRef.current = null
+        persistentSelectionRangeRef.current = null
+        // Clear native selection
+        nativeSelection.removeAllRanges()
         return
       }
+      
+      // In select mode, persist the selection so user can copy it
+      if (interactionMode === 'select') {
+        // Store the selection range for persistence
+        persistentSelectionRangeRef.current = selectionRange.cloneRange()
+        
+        // Set the native browser selection so Cmd+C/Ctrl+C works
+        try {
+          nativeSelection.removeAllRanges()
+          nativeSelection.addRange(selectionRange)
+        } catch (e) {
+          // If addRange fails (e.g., range is detached), try to recreate it
+          console.warn('Failed to set native selection, trying to recreate range:', e)
+          try {
+            const newRange = document.createRange()
+            newRange.setStart(selectionRange.startContainer, selectionRange.startOffset)
+            newRange.setEnd(selectionRange.endContainer, selectionRange.endOffset)
+            nativeSelection.removeAllRanges()
+            nativeSelection.addRange(newRange)
+          } catch (e2) {
+            console.warn('Failed to recreate and set native selection:', e2)
+          }
+        }
+        
+        // Keep the selection overlay visible (it's already rendered)
+        // Don't clear it - it will persist until user clicks away
+        
+        // Reset dragging state but keep the selection
+        isDraggingSelectionRef.current = false
+        selectionStartRangeRef.current = null
+        lastValidRangeRef.current = null
+        
+        // Re-render the selection overlay to ensure it's visible
+        renderSelectionOverlay(selectionRange, pageNum)
+        
+        return
+      }
+      
+      // Clear native selection after capturing (we use custom overlay for display)
+      nativeSelection.removeAllRanges()
       
       if (rectangles && rectangles.length > 0) {
         // Get page info to store scale and text layer dimensions
@@ -10983,27 +11075,164 @@ function Home() {
         })
       }
 
-      // Clear selection overlay and reset state
-      Object.values(selectionLayerRefs.current).forEach(layer => {
-        if (layer) layer.innerHTML = ''
-      })
+      // Clear selection overlay and reset state (but keep persistent selection in select mode)
+      if (interactionMode !== 'select' || !persistentSelectionRangeRef.current) {
+        Object.values(selectionLayerRefs.current).forEach(layer => {
+          if (layer) layer.innerHTML = ''
+        })
+      }
 
       isDraggingSelectionRef.current = false
       selectionStartRangeRef.current = null
       lastValidRangeRef.current = null
+    }
+    
+    // Handle clicks to clear persistent selection when clicking away
+    const handleDocumentClick = (e) => {
+      if (interactionMode !== 'select' || !persistentSelectionRangeRef.current) {
+        return
+      }
+      
+      // Check if click is on text or selection overlay
+      const clickedElement = e.target
+      const isOnText = clickedElement.classList.contains('text-layer') || 
+                      clickedElement.closest('.textLayer span') || 
+                      clickedElement.closest('.text-layer span') ||
+                      clickedElement.closest('.selection-rect')
+      
+      // If clicking away from text and selection, clear persistent selection
+      if (!isOnText && !clickedElement.closest('.reader-toolbar') && 
+          !clickedElement.closest('.reader-controls-panel') && 
+          !clickedElement.closest('.sidebar')) {
+        persistentSelectionRangeRef.current = null
+        Object.values(selectionLayerRefs.current).forEach(layer => {
+          if (layer) layer.innerHTML = ''
+        })
+        // Clear native selection
+        const nativeSelection = window.getSelection()
+        nativeSelection.removeAllRanges()
+      }
     }
 
     // Add event listeners
     document.addEventListener('mousedown', handleMouseDown)
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
+    document.addEventListener('click', handleDocumentClick)
 
     return () => {
       document.removeEventListener('mousedown', handleMouseDown)
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
+      document.removeEventListener('click', handleDocumentClick)
     }
-  }, [textItems, pageData, pageScale, interactionMode, highlightColor])
+  }, [textItems, pageData, pageScale, interactionMode, highlightColor, isSnippingMode])
+
+  // Keep persistent selection visible in select mode
+  useEffect(() => {
+    if (interactionMode !== 'select' || !persistentSelectionRangeRef.current) {
+      return
+    }
+
+    // Find which page the selection is on
+    const range = persistentSelectionRangeRef.current
+    const commonAncestor = range.commonAncestorContainer
+    const ancestorElement = commonAncestor.nodeType === Node.TEXT_NODE 
+      ? commonAncestor.parentElement 
+      : commonAncestor
+    const textLayer = ancestorElement?.closest('.textLayer') || ancestorElement?.closest('.text-layer')
+    
+    if (!textLayer) return
+
+    // Find page number
+    let pageNum = null
+    for (const [page, layer] of Object.entries(textLayerRefs.current)) {
+      if (layer === textLayer) {
+        pageNum = parseInt(page)
+        break
+      }
+    }
+
+    if (!pageNum) return
+
+    // Re-render the selection overlay
+    const textLayerDiv = textLayerRefs.current[pageNum]
+    const selectionLayer = selectionLayerRefs.current[pageNum]
+    if (!selectionLayer || !textLayerDiv) return
+
+    // Clear previous overlay
+    selectionLayer.innerHTML = ''
+
+    // Calculate precise rectangles
+    const calculatePreciseRectangles = (range, textLayerDiv) => {
+      if (!range || range.collapsed) return []
+      
+      const rects = []
+      const walker = document.createTreeWalker(
+        range.commonAncestorContainer,
+        NodeFilter.SHOW_TEXT,
+        {
+          acceptNode: (node) => {
+            if (!range.intersectsNode(node)) {
+              return NodeFilter.FILTER_REJECT
+            }
+            return NodeFilter.FILTER_ACCEPT
+          }
+        }
+      )
+
+      let node
+      while (node = walker.nextNode()) {
+        const nodeRange = document.createRange()
+        nodeRange.selectNodeContents(node)
+        
+        if (range.startContainer === node && range.startOffset > 0) {
+          nodeRange.setStart(node, range.startOffset)
+        }
+        if (range.endContainer === node && range.endOffset < node.textContent.length) {
+          nodeRange.setEnd(node, range.endOffset)
+        }
+        
+        const rect = nodeRange.getBoundingClientRect()
+        const textLayerRect = textLayerDiv.getBoundingClientRect()
+        
+        if (rect.width > 0 && rect.height > 0) {
+          rects.push({
+            x: rect.left - textLayerRect.left,
+            y: rect.top - textLayerRect.top,
+            width: rect.width,
+            height: rect.height
+          })
+        }
+      }
+      
+      return rects
+    }
+
+    const rectangles = calculatePreciseRectangles(range, textLayerDiv)
+    if (!rectangles || rectangles.length === 0) return
+
+    // Render each rectangle with light blue color
+    rectangles.forEach((rect) => {
+      const baseHeight = rect.height
+      const paddingRatio = Math.max(0.15, Math.min(0.20, 0.15 + (baseHeight / 100) * 0.05))
+      const height = baseHeight * (1 + paddingRatio)
+      
+      const div = document.createElement('div')
+      div.className = 'selection-rect'
+      div.style.position = 'absolute'
+      div.style.left = rect.x + 'px'
+      div.style.top = rect.y + 'px'
+      div.style.width = rect.width + 'px'
+      div.style.height = height + 'px'
+      div.style.backgroundColor = 'rgba(173, 216, 230, 0.4)'
+      div.style.pointerEvents = 'none'
+      div.style.zIndex = '3'
+      div.style.borderRadius = '2px'
+      
+      selectionLayer.appendChild(div)
+    })
+  }, [interactionMode, pageScale, textLayerRefs, selectionLayerRefs])
 
   // Render highlights on pages
   useEffect(() => {
@@ -11386,6 +11615,346 @@ function Home() {
       }
     }
   }, [connectingFrom])
+
+  // Snipping tool functionality
+  useEffect(() => {
+    if (!isSnippingMode) {
+      // Clear snip selection when exiting snipping mode
+      setSnipSelection(null)
+      snipSelectionRef.current = null
+      isSnipDraggingRef.current = false
+      setIsSnipDragging(false)
+      // Clear all snip layers
+      Object.values(snipLayerRefs.current).forEach(layer => {
+        if (layer) layer.innerHTML = ''
+      })
+      return
+    }
+
+    const renderSnipSelection = (selection, pageNum) => {
+      if (!selection || !pageNum) {
+        // Clear all snip layers
+        Object.values(snipLayerRefs.current).forEach(layer => {
+          if (layer) layer.innerHTML = ''
+        })
+        return
+      }
+
+      const snipLayer = snipLayerRefs.current[pageNum]
+      if (!snipLayer) {
+        return
+      }
+
+      // Clear previous selection
+      snipLayer.innerHTML = ''
+
+      const { startX, startY, endX, endY } = selection
+      const left = Math.min(startX, endX)
+      const top = Math.min(startY, endY)
+      const width = Math.abs(endX - startX)
+      const height = Math.abs(endY - startY)
+
+      // Only render if there's a meaningful selection
+      if (width > 5 && height > 5) {
+        const rect = document.createElement('div')
+        rect.style.position = 'absolute'
+        rect.style.left = left + 'px'
+        rect.style.top = top + 'px'
+        rect.style.width = width + 'px'
+        rect.style.height = height + 'px'
+        rect.style.border = '2px dashed #4285f4'
+        rect.style.backgroundColor = 'rgba(66, 133, 244, 0.1)'
+        rect.style.pointerEvents = 'none'
+        rect.style.boxSizing = 'border-box'
+        snipLayer.appendChild(rect)
+        
+      }
+    }
+
+    const handleSnipMouseDown = (e) => {
+      // Only handle if in snipping mode
+      if (!isSnippingMode) {
+        console.log('Snip mode not active')
+        return
+      }
+
+      // Don't handle if clicking on UI elements (buttons, toolbars, etc.)
+      if (e.target.closest('.reader-toolbar, .mode-toggle, .btn, button, .sidebar')) {
+        console.log('Clicked on UI element, ignoring')
+        return
+      }
+
+      console.log('Snip mousedown event:', e.target, e.clientX, e.clientY)
+
+      // Find which page we're clicking on by checking all canvases
+      let pageNum = null
+      let canvas = null
+      let canvasRect = null
+
+      for (const [page, canvasRef] of Object.entries(canvasRefs.current)) {
+        if (canvasRef) {
+          const rect = canvasRef.getBoundingClientRect()
+          if (e.clientX >= rect.left && e.clientX <= rect.right &&
+              e.clientY >= rect.top && e.clientY <= rect.bottom) {
+            pageNum = parseInt(page)
+            canvas = canvasRef
+            canvasRect = rect
+            console.log('Found canvas for page:', pageNum)
+            break
+          }
+        }
+      }
+
+      if (!pageNum || !canvas || !canvasRect) {
+        console.log('No canvas found at click position')
+        return
+      }
+
+      // Calculate position relative to canvas
+      const startX = e.clientX - canvasRect.left
+      const startY = e.clientY - canvasRect.top
+
+      console.log('Starting snip selection:', { startX, startY, page: pageNum })
+
+
+      // Set refs immediately (synchronous) before state update (asynchronous)
+      const selection = {
+        startX,
+        startY,
+        endX: startX,
+        endY: startY,
+        page: pageNum
+      }
+      isSnipDraggingRef.current = true
+      snipSelectionRef.current = selection
+      setIsSnipDragging(true)
+      setSnipSelection(selection)
+
+
+      e.preventDefault()
+      e.stopPropagation()
+    }
+
+    const handleSnipMouseMove = (e) => {
+      
+      if (!isSnippingMode) {
+        return
+      }
+      
+      if (!isSnipDraggingRef.current) {
+        return
+      }
+
+      // Use a ref to track current selection to avoid stale closure
+      setSnipSelection(prev => {
+        
+        if (!prev) {
+          return prev
+        }
+
+        const pageNum = prev.page
+        const canvas = canvasRefs.current[pageNum]
+        if (!canvas) {
+          return prev
+        }
+
+        const canvasRect = canvas.getBoundingClientRect()
+        const endX = e.clientX - canvasRect.left
+        const endY = e.clientY - canvasRect.top
+
+        const updated = {
+          ...prev,
+          endX,
+          endY
+        }
+
+        // Update ref synchronously
+        snipSelectionRef.current = updated
+
+
+        // Render selection rectangle with updated values
+        renderSnipSelection({
+          startX: prev.startX,
+          startY: prev.startY,
+          endX,
+          endY
+        }, pageNum)
+
+        return updated
+      })
+    }
+
+    const handleSnipMouseUp = async (e) => {
+      
+      if (!isSnippingMode || !isSnipDraggingRef.current) {
+        isSnipDraggingRef.current = false
+        setIsSnipDragging(false)
+        return
+      }
+
+      // Get current selection from ref to avoid stale closure
+      const currentSelection = snipSelectionRef.current
+      
+
+      // Reset dragging state
+      isSnipDraggingRef.current = false
+      setIsSnipDragging(false)
+      
+      if (!currentSelection) {
+        setSnipSelection(null)
+        snipSelectionRef.current = null
+        return
+      }
+
+      const { startX, startY, endX, endY, page: pageNum } = currentSelection
+      const canvas = canvasRefs.current[pageNum]
+
+      if (!canvas) {
+        setSnipSelection(null)
+        snipSelectionRef.current = null
+        return
+      }
+
+      const left = Math.min(startX, endX)
+      const top = Math.min(startY, endY)
+      const width = Math.abs(endX - startX)
+      const height = Math.abs(endY - startY)
+
+
+      // Only capture if selection is meaningful
+      if (width > 5 && height > 5) {
+        // Capture the snip asynchronously
+        (async () => {
+          try {
+
+            // Create a temporary canvas to capture the selected area
+            const tempCanvas = document.createElement('canvas')
+            tempCanvas.width = width
+            tempCanvas.height = height
+            const tempCtx = tempCanvas.getContext('2d')
+
+            // Draw the selected portion of the PDF canvas to the temp canvas
+            tempCtx.drawImage(
+              canvas,
+              left, top, width, height,  // Source rectangle
+              0, 0, width, height         // Destination rectangle
+            )
+
+            // Convert to image data URL
+            const imageDataUrl = tempCanvas.toDataURL('image/png')
+
+
+            // Create highlight item ID first (needed for both state updates)
+            const highlightItemId = Date.now() + Math.random()
+            
+            // Add to highlight items - create item inside callback to use correct order
+            // Use setHighlightItemsWithSave to ensure Firestore persistence
+            setHighlightItemsWithSave(prev => {
+              // Create highlight item with correct order from prev state
+              const highlightItem = {
+                id: highlightItemId,
+                text: '', // Empty text for image snips
+                color: highlightColor,
+                order: prev.length,
+                image: imageDataUrl, // Store the image data
+                isSnip: true, // Mark as a snip highlight
+                page: pageNum,
+                snipRect: { left, top, width, height } // Store original position for reference
+              }
+              
+              const newItems = [...prev, highlightItem]
+              return newItems
+            })
+
+            // Also add to highlights array for consistency
+            setHighlights(prev => {
+              const newHighlights = [...prev, {
+                id: highlightItemId,
+                page: pageNum,
+                rects: [{
+                  x: left,
+                  y: top,
+                  width: width,
+                  height: height
+                }],
+                text: '',
+                color: highlightColor,
+                scale: pageScale,
+                isSnip: true,
+                image: imageDataUrl
+              }]
+              
+              // Update history
+              setHighlightHistory(hist => {
+                const currentIdx = historyIndexRef.current
+                const newHistory = hist.slice(0, currentIdx + 1)
+                newHistory.push(newHighlights)
+                const newIdx = newHistory.length - 1
+                historyIndexRef.current = newIdx
+                setHistoryIndex(newIdx)
+                return newHistory
+              })
+
+              // Auto-save highlights to Firestore immediately (skip during initial load)
+              if (!isInitialLoadRef.current) {
+                updateDocumentField('highlights', newHighlights).catch(err => {
+                  console.error('Failed to save highlights:', err)
+                })
+              }
+
+              return newHighlights
+            })
+            
+            // Deactivate snip mode after successful capture
+            setIsSnippingMode(false)
+            
+          } catch (error) {
+            console.error('Error capturing snip:', error)
+            alert('Failed to capture snip. Please try again.')
+          }
+        })()
+      } else {
+      }
+
+      // Clear selection
+      Object.values(snipLayerRefs.current).forEach(layer => {
+        if (layer) layer.innerHTML = ''
+      })
+      setSnipSelection(null)
+      snipSelectionRef.current = null
+
+      e.preventDefault()
+      e.stopPropagation()
+    }
+
+    // Add event listeners to document level for better coverage
+    // Use capture phase to catch events before other handlers
+    const handleDocumentMouseDown = (e) => {
+      // Only handle if clicking on or near a PDF page
+      const pdfContainer = document.querySelector('.pdf-pages-container')
+      if (!pdfContainer) return
+      
+      const containerRect = pdfContainer.getBoundingClientRect()
+      if (e.clientX >= containerRect.left && e.clientX <= containerRect.right &&
+          e.clientY >= containerRect.top && e.clientY <= containerRect.bottom) {
+        handleSnipMouseDown(e)
+      }
+    }
+
+    // Only add listeners when in snipping mode
+    if (isSnippingMode) {
+      document.addEventListener('mousedown', handleDocumentMouseDown, true) // Use capture phase
+      document.addEventListener('mousemove', handleSnipMouseMove)
+      document.addEventListener('mouseup', handleSnipMouseUp)
+    } else {
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleDocumentMouseDown, true)
+      document.removeEventListener('mousemove', handleSnipMouseMove)
+      document.removeEventListener('mouseup', handleSnipMouseUp)
+    }
+  }, [isSnippingMode, highlightColor, highlightItems.length, pageScale, updateDocumentField, setHighlightItemsWithSave])
 
   // Render connection lines - only show when hovering/clicking on dots or connected highlights
   useEffect(() => {
@@ -11985,6 +12554,10 @@ function Home() {
             }
           }
           // Preserve text from existing item, but use sorted order
+          // For snip items, preserve all properties (isSnip, image, etc.)
+          if (existingByMergedId.isSnip) {
+            return { ...mergedItem, ...existingByMergedId, order: mergedItem.order }
+          }
           return { ...mergedItem, text: existingByMergedId.text, order: mergedItem.order }
         }
         
@@ -12005,13 +12578,22 @@ function Home() {
               return { ...mergedItem, text: combinedText, order: mergedItem.order }
             }
             // Single existing item - preserve text, use sorted order
-            const existingText = existingItems[0].text
+            // For snip items, preserve all properties (isSnip, image, etc.)
+            const existingItem = existingItems[0]
+            if (existingItem.isSnip) {
+              return { ...mergedItem, ...existingItem, order: mergedItem.order }
+            }
+            const existingText = existingItem.text
             return { ...mergedItem, text: existingText, order: mergedItem.order }
           }
         } else {
           // For non-merged items, preserve existing text, use sorted order
           const existing = prev.find(item => item.id === mergedItem.id)
           if (existing) {
+            // Preserve all properties from existing item (especially isSnip and image for snip highlights)
+            if (existing.isSnip) {
+              return { ...mergedItem, ...existing, order: mergedItem.order }
+            }
             return { ...mergedItem, text: existing.text, order: mergedItem.order }
           }
         }
@@ -12052,6 +12634,15 @@ function Home() {
         const hasChanges = finalItems.some(item => {
           const prevItem = prevMap.get(item.id)
           if (!prevItem) return true
+          // For snip items, also check image property
+          if (item.isSnip || prevItem.isSnip) {
+            return prevItem.order !== item.order || 
+                   prevItem.text !== item.text || 
+                   prevItem.color !== item.color ||
+                   prevItem.inline !== item.inline ||
+                   prevItem.isSnip !== item.isSnip ||
+                   prevItem.image !== item.image
+          }
           return prevItem.order !== item.order || 
                  prevItem.text !== item.text || 
                  prevItem.color !== item.color ||
@@ -12060,6 +12651,12 @@ function Home() {
         if (!hasChanges) {
           return prev
         }
+      }
+      
+      // Preserve snip items that might not be in mergedItems (they come from highlights but mergeConnectedHighlights might not handle them)
+      const snipItemsFromPrev = prev.filter(item => item.isSnip && !finalItems.find(fi => fi.id === item.id))
+      if (snipItemsFromPrev.length > 0) {
+        return [...finalItems, ...snipItemsFromPrev].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
       }
       
       return finalItems
@@ -12520,10 +13117,17 @@ function Home() {
       // Height calculation: scale the stored height, then add padding for better alignment
       // The stored height is the font size, but we need more to cover descenders and line spacing
       // Use a percentage-based padding that scales with font size (larger fonts need more padding)
+      // For snip highlights, use exact height without padding
       const baseHeight = rect.height * scaleRatioY
-      // Add 15-20% padding, with a minimum of 2px for small fonts and scaling for larger fonts
-      const paddingRatio = Math.max(0.15, Math.min(0.20, 0.15 + (baseHeight / 100) * 0.05))
-      const height = baseHeight * (1 + paddingRatio)
+      let height
+      if (highlight.isSnip) {
+        // For snip highlights, use exact height without padding to match the selected area
+        height = baseHeight
+      } else {
+        // Add 15-20% padding, with a minimum of 0.15 for small fonts and scaling for larger fonts
+        const paddingRatio = Math.max(0.15, Math.min(0.20, 0.15 + (baseHeight / 100) * 0.05))
+        height = baseHeight * (1 + paddingRatio)
+      }
 
       const div = document.createElement('div')
       div.className = 'highlight-rect'
@@ -13925,23 +14529,41 @@ function Home() {
         
         <div className="toolbar-center">
           <div className="mode-toggle">
+          <button
+              onClick={() => setInteractionMode('select')}
+              className={`mode-btn ${interactionMode === 'select' ? 'active' : ''}`}
+              title="Select text (temporary highlight)"
+            >
+              <IconCursor size={18} />
+            </button>
+            <div className="mode-btn-separator"></div>
             <button
               onClick={() => setInteractionMode('read')}
               className={`mode-btn ${interactionMode === 'read' ? 'active' : ''}`}
               title="Click words to set reading start position"
             >
-              <IconSpeaker size={14} />
-              <span>Set Start</span>
+              <IconSpeaker size={18} />
             </button>
+            <div className="mode-btn-separator"></div>
             <button
               onClick={() => setInteractionMode('highlight')}
               className={`mode-btn ${interactionMode === 'highlight' ? 'active' : ''}`}
               title="Select text to create highlights"
             >
-              <IconHighlighter size={14} />
-              <span>Highlight</span>
+              <IconHighlighter size={18} />
             </button>
+            
+            
           </div>
+          {interactionMode === 'highlight' && (
+            <button
+              onClick={() => setIsSnippingMode(!isSnippingMode)}
+              className={`snip-btn ${isSnippingMode ? 'active' : ''}`}
+              title="Snip screenshot from PDF"
+            >
+              <IconScissors size={18} />
+            </button>
+          )}
           {interactionMode === 'highlight' && (
             <div className="undo-redo-toolbar">
               <button
@@ -14460,6 +15082,21 @@ function Home() {
                       }}
                       className="selection-layer"
                     />
+                    <div
+                      ref={(el) => {
+                        if (el) snipLayerRefs.current[pageInfo.pageNum] = el
+                      }}
+                      className="snip-layer"
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        pointerEvents: isSnippingMode ? 'auto' : 'none',
+                        zIndex: 200
+                      }}
+                    />
                   </div>
                 </div>
               )
@@ -14726,9 +15363,9 @@ function Home() {
             </div>
           )}
 
-          {extractedText && interactionMode === 'read' && startPosition === 0 && (
+          {extractedText && interactionMode === 'read' && (
             <div className="controls-panel-hint">
-              Click any word in the PDF to set reading start position
+              Click on anywhere in the text to start reading aloud
             </div>
           )}
 
