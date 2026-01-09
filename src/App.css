@@ -3726,7 +3726,9 @@
   pointer-events: auto;
 }
 
-.text-layer {
+/* Support both .text-layer (old) and .textLayer (PDF.js standard) */
+.text-layer,
+.textLayer {
   position: absolute;
   top: 0;
   left: 0;
@@ -3743,7 +3745,8 @@
   will-change: transform;
 }
 
-.text-layer span {
+.text-layer span,
+.textLayer span {
   position: absolute;
   white-space: pre;
   cursor: text;
@@ -3756,15 +3759,25 @@
   /* Allow pointer events - but highlights with higher z-index will be on top */
   pointer-events: auto;
   z-index: 1;
+  /* Make text transparent (invisible) but keep it selectable */
+  color: transparent !important;
+}
+
+/* Show text when text layer is visible */
+.text-layer-visible span,
+.textLayer.text-layer-visible span {
+  color: black !important;
 }
 
 /* Hide native browser selection in highlight mode - we use custom overlay instead */
-.text-layer span::selection {
+.text-layer span::selection,
+.textLayer span::selection {
   background: transparent !important;
   color: transparent;
 }
 
-.text-layer span::-moz-selection {
+.text-layer span::-moz-selection,
+.textLayer span::-moz-selection {
   background: transparent !important;
   color: transparent;
 }

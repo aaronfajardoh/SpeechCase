@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { useNavigate, useLocation, useParams } from 'react-router-dom'
 import * as pdfjsLib from 'pdfjs-dist'
+import { renderTextLayer } from 'pdfjs-dist/build/pdf'
 import { PDFDocument, rgb } from 'pdf-lib'
 import { httpsCallable } from 'firebase/functions'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
@@ -8,6 +9,7 @@ import { doc, getDoc, onSnapshot, collection, query, orderBy, updateDoc, setDoc 
 import { functions, storage, db } from '../firebase'
 import { useAuth } from '../contexts/AuthContext'
 import '../App.css'
+import 'pdfjs-dist/web/pdf_viewer.css'
 
 import {
   IconUpload,
@@ -67,6 +69,11 @@ let activeRenderTasks = new Map() // Store active render tasks by page number to
 let activeThumbnailTasks = new Map() // Store active thumbnail render tasks by page number
 
 function Home() {
+  // #region agent log
+  if (typeof window !== 'undefined') {
+    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:71',message:'Home component render',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+  }
+  // #endregion
   const { currentUser } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -74,6 +81,20 @@ function Home() {
   const documentIdFromUrl = params.documentId // Get documentId from URL params
   const [pdfFile, setPdfFile] = useState(null)
   const [pdfDoc, setPdfDoc] = useState(null)
+  
+  // Track pdfDoc state changes
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:pdfDoc-effect',message:'pdfDoc state changed',data:{hasPdfDoc:!!pdfDoc,numPages:pdfDoc?.numPages},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+  }, [pdfDoc])
+  
+  // Track pdfFile state changes
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:pdfFile-effect',message:'pdfFile state changed',data:{hasPdfFile:!!pdfFile,pdfFileName:pdfFile?.name},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+  }, [pdfFile])
   const [extractedText, setExtractedText] = useState('')
   const [textItems, setTextItems] = useState([]) // Store text items with positions for mapping
   const [isLoading, setIsLoading] = useState(false)
@@ -203,6 +224,309 @@ function Home() {
   const [exhibits, setExhibits] = useState([]) // Store detected exhibits
   const exhibitsRef = useRef([]) // Ref for exhibits to avoid stale closures
 
+  // Handle file upload/change - defined early so it's available for useEffects
+  async function handleFileChange(event, existingDocumentId = null) {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:209',message:'handleFileChange entry',data:{hasEvent:!!event,hasFiles:!!event?.target?.files,fileCount:event?.target?.files?.length,existingDocumentId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    const file = event.target.files[0]
+    if (!file) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:211',message:'handleFileChange early return - no file',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      return
+    }
+
+    if (file.type !== 'application/pdf') {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:214',message:'handleFileChange early return - wrong type',data:{fileType:file.type},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      setError('Please upload a PDF file.')
+      return
+    }
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:218',message:'handleFileChange - file validated',data:{fileName:file.name,fileSize:file.size,fileType:file.type,existingDocumentId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    setError('')
+    if (typeof clearStartMarker === 'function') clearStartMarker()
+    if (typeof clearReadingHighlight === 'function') clearReadingHighlight()
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:242',message:'handleFileChange - setting pdfFile',data:{fileName:file.name,fileSize:file.size,fileType:file.type},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+    setPdfFile(file)
+    setIsLoading(true)
+    setExtractedText('')
+    setTextItems([])
+    setCurrentPage(1)
+    setTotalPages(0)
+    setStartPosition(0)
+    
+    // Only clear highlights/highlightItems if this is a NEW document (not loading existing)
+    const isNewDocument = !existingDocumentId && !documentId
+    if (isNewDocument) {
+      setHighlights([])
+      setHighlightItems([])
+      setHighlightColor('yellow') // Reset to yellow when uploading a new PDF
+    }
+
+    try {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:238',message:'handleFileChange - before arrayBuffer',data:{fileName:file.name},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
+      const arrayBuffer = await file.arrayBuffer()
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:240',message:'handleFileChange - after arrayBuffer',data:{arrayBufferSize:arrayBuffer.byteLength},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
+      // Clone the ArrayBuffer to prevent it from being detached when PDF.js uses it
+      pdfArrayBufferRef.current = arrayBuffer.slice(0)
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:241',message:'handleFileChange - before PDF.js parse',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:242',message:'handleFileChange - after PDF.js parse',data:{numPages:pdf.numPages},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
+      setPdfDoc(pdf)
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:243',message:'handleFileChange - setPdfDoc called',data:{numPages:pdf.numPages,pdfExists:!!pdf},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
+      setTotalPages(pdf.numPages)
+      // Force a re-render check after state updates
+      setTimeout(() => {}, 0);
+      
+      // Mark initial load as complete - now user actions should be saved
+      // This must happen before any user interaction (like creating highlights)
+      isInitialLoadRef.current = false
+      
+      // Only clear highlights when loading a NEW PDF (not when reopening existing)
+      if (isNewDocument) {
+        setHighlights([]) // Clear highlights when loading new PDF
+        setHighlightItems([]) // Clear highlight items when loading new PDF
+      }
+      setHighlightHistory([[]]) // Reset history
+      setHistoryIndex(0)
+      historyIndexRef.current = 0
+      highlightHistoryRef.current = [[]]
+      highlightsRef.current = []
+
+      // Extract all text, filtering out headers and footers using repetition detection
+      // First, build a map of text repetition across pages
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:262',message:'handleFileChange - before buildRepetitionMap',data:{buildRepetitionMapExists:typeof buildRepetitionMap==='function',filterHeadersAndFootersSyncExists:typeof filterHeadersAndFootersSync==='function',filterHeadersAndFootersWithLLMExists:typeof filterHeadersAndFootersWithLLM==='function',detectLanguageExists:typeof detectLanguage==='function',processPDFForAIExists:typeof processPDFForAI==='function'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      const { textToPages, pageTextItems } = await buildRepetitionMap(pdf, pdf.numPages)
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:263',message:'handleFileChange - after buildRepetitionMap',data:{textToPagesSize:Object.keys(textToPages||{}).length,pageTextItemsLength:pageTextItems?.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      
+      // Initial extraction with sync version for immediate display
+      // Build text consistently: trim items to avoid double spaces, join with single space
+      let fullText = ''
+      for (const pageData of pageTextItems) {
+        const filteredItems = filterHeadersAndFootersSync(pageData, textToPages)
+        // Trim each item to remove leading/trailing spaces, then join with single space
+        // This ensures consistent spacing that matches textItems construction
+        const pageText = filteredItems.map(item => item.str.trim()).filter(str => str.length > 0).join(' ')
+        if (pageText.length > 0) {
+          if (fullText.length > 0) {
+            fullText += '\n\n' // Add page break before this page's text
+          }
+          fullText += pageText
+        }
+      }
+
+      const initialText = fullText
+      setExtractedText(initialText)
+      
+      // Background: Re-process with enhanced filtering (non-blocking)
+      // This updates the text seamlessly without interrupting TTS
+      setTimeout(async () => {
+        try {
+          console.log('Starting background footer filtering...')
+          let enhancedText = ''
+          
+          for (const pageData of pageTextItems) {
+            // Apply repetition-based filtering
+            const filteredItems = await filterHeadersAndFootersWithLLM(pageData, textToPages)
+            // Trim each item to remove leading/trailing spaces, then join with single space
+            // This ensures consistent spacing that matches textItems construction
+            const pageText = filteredItems.map(item => item.str.trim()).filter(str => str.length > 0).join(' ')
+            if (pageText.length > 0) {
+              if (enhancedText.length > 0) {
+                enhancedText += '\n\n' // Add page break before this page's text
+              }
+              enhancedText += pageText
+            }
+          }
+          
+          const finalText = enhancedText
+          
+          // Only update if text changed (to avoid unnecessary re-renders)
+          if (finalText !== initialText) {
+            setExtractedText(finalText)
+            console.log('Footer classification completed - text updated in background')
+          } else {
+            console.log('Footer classification completed - no changes detected')
+          }
+        } catch (error) {
+          console.warn('Background footer classification failed:', error)
+          // Keep using initial text - no interruption
+        }
+      }, 100) // Small delay to ensure initial render completes
+      
+      // Auto-detect language
+      if (language === 'auto' && initialText) {
+        const detected = detectLanguage(initialText)
+        console.log('Detected language:', detected, 'for text length:', initialText.length)
+        setDetectedLanguage(detected)
+      }
+
+      // Upload PDF to Storage and process for AI features
+      if (initialText && initialText.length > 0 && currentUser) {
+        // Use existing documentId if provided, otherwise create a new one
+        const finalDocumentId = existingDocumentId || documentId || `${file.name}-${Date.now()}`
+        
+        // Only create new documentId if we don't have one
+        if (!existingDocumentId && !documentId) {
+          setDocumentId(finalDocumentId)
+        } else {
+          // Ensure documentId state is set even if we're reusing
+          if (finalDocumentId !== documentId) {
+            setDocumentId(finalDocumentId)
+          }
+        }
+        
+        // Upload PDF to Storage first (only if new document, otherwise reuse existing storage)
+        let storageUrl = null
+        const isNewDocument = !existingDocumentId && !documentId
+        
+        // Only clear timeline if this is a NEW document (not loading existing)
+        if (isNewDocument) {
+          setTimeline(null) // Clear previous timeline
+          setTimelineError(null)
+          setTimelineIcons({}) // Clear previous icons
+        }
+        
+        // Check if document already exists and has been processed
+        let documentAlreadyProcessed = false
+        if (!isNewDocument) {
+          try {
+            const docRef = doc(db, 'users', currentUser.uid, 'documents', finalDocumentId)
+            const docSnap = await getDoc(docRef)
+            if (docSnap.exists()) {
+              const docData = docSnap.data()
+              // Check if document has been processed (has chunks or other AI processing indicators)
+              documentAlreadyProcessed = !!(docData.storageUrl || docData.processedAt || docData.chunks)
+              if (docData.storageUrl) {
+                storageUrl = docData.storageUrl
+                console.log('Using existing Storage URL:', storageUrl)
+              }
+            }
+          } catch (error) {
+            console.warn('Error checking existing document:', error)
+          }
+        }
+        
+        // Only set isPDFProcessing for new documents or if document hasn't been processed yet
+        if (isNewDocument || !documentAlreadyProcessed) {
+          setIsPDFProcessing(true)
+        } else {
+          setIsPDFProcessing(false)
+          // Mark initial load as complete - now user actions should be saved
+          isInitialLoadRef.current = false
+        }
+        
+        if (isNewDocument) {
+          // New document - upload to storage
+          try {
+            const storageRef = ref(storage, `users/${currentUser.uid}/uploads/${finalDocumentId}.pdf`)
+            await uploadBytes(storageRef, file)
+            storageUrl = await getDownloadURL(storageRef)
+            console.log('PDF uploaded to Storage:', storageUrl)
+          } catch (storageError) {
+            console.error('Error uploading PDF to Storage:', storageError)
+            // Continue processing even if storage upload fails
+          }
+          
+          // Create document in Firestore immediately so highlights can be saved
+          // This must happen before processPDFForAI to ensure document exists
+          try {
+            const docRef = doc(db, 'users', currentUser.uid, 'documents', finalDocumentId)
+            const now = new Date().toISOString()
+            await setDoc(docRef, {
+              fileName: file.name,
+              pageCount: pdf.numPages,
+              textLength: initialText.length,
+              storageUrl: storageUrl,
+              fileSize: file.size,
+              uploadedAt: now,
+              createdAt: now,
+              processedAt: now, // Set initial processedAt so document shows in dashboard
+              processingStatus: 'pending'
+            }, { merge: true })
+            console.log('Document created in Firestore:', finalDocumentId)
+          } catch (docError) {
+            console.error('Error creating document in Firestore:', docError)
+            // Continue even if document creation fails - processPDFForAI will try again
+          }
+        }
+        
+        // Process PDF in background (don't block UI) - only if needed
+        if (isNewDocument || !documentAlreadyProcessed) {
+          processPDFForAI(finalDocumentId, initialText, {
+            fileName: file.name,
+            pageCount: pdf.numPages,
+            textLength: initialText.length,
+            storageUrl: storageUrl,
+            fileSize: file.size,
+            uploadedAt: new Date().toISOString()
+          }).then(() => {
+            setIsPDFProcessing(false)
+            // Redirect to document route after new upload completes
+            if (isNewDocument && finalDocumentId) {
+              navigate(`/document/${finalDocumentId}`, { replace: true })
+            }
+          }).catch(err => {
+            console.error('Error processing PDF for AI:', err)
+            setIsPDFProcessing(false)
+            // Don't show error to user - AI features will just be unavailable
+            // Still redirect even if processing fails
+            if (isNewDocument && finalDocumentId) {
+              navigate(`/document/${finalDocumentId}`, { replace: true })
+            }
+          })
+        }
+      }
+      
+      // Initialize Media Session metadata so macOS recognizes this as a media source
+      if ('mediaSession' in navigator) {
+        console.log('Initializing Media Session metadata for PDF:', file.name)
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: file.name,
+          artist: 'Text-to-Speech',
+          album: 'PDF Reader'
+        })
+        // Set to 'paused' initially so macOS recognizes this as an active media source
+        // This helps macOS route media keys to the browser
+        navigator.mediaSession.playbackState = 'paused'
+        console.log('Media Session initialized. PlaybackState:', navigator.mediaSession.playbackState)
+        console.log('Media Session metadata:', navigator.mediaSession.metadata)
+      }
+    } catch (err) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:catch',message:'handleFileChange - error caught',data:{errorMessage:err.message,errorName:err.name,errorStack:err.stack?.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      setError('Error reading PDF: ' + err.message)
+      console.error(err)
+    } finally {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:finally',message:'handleFileChange - finally block',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      setIsLoading(false)
+    }
+  }
+
   // Extract exhibits when text is loaded
   useEffect(() => {
     if (extractedText && extractedText.length > 0 && !isPDFProcessing) {
@@ -228,17 +552,39 @@ function Home() {
   // Load document from URL params or location state
   useEffect(() => {
     const loadDocument = async () => {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:489',message:'loadDocument entry',data:{documentIdFromUrl,hasLocationState:!!location.state,locationStateDocId:location.state?.documentId,hasCurrentUser:!!currentUser,hasPdfDoc:!!pdfDoc,currentDocumentId:documentId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
       // Priority: URL params > location state
       const docId = documentIdFromUrl || location.state?.documentId
       
       if (!currentUser) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:494',message:'loadDocument early return - no currentUser',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
         return // Wait for auth
       }
       
       // If we already have this document loaded, don't reload
-      if (pdfDoc && documentId === docId) {
+      // Use docId directly since state updates are async
+      if (pdfDoc && (documentId === docId || documentIdFromUrl === docId)) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:499',message:'loadDocument early return - already loaded',data:{pdfDocExists:!!pdfDoc,documentId,docId,documentIdFromUrl},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
         return
       }
+      
+      // Prevent duplicate loading - use a ref to track loading state per docId
+      const loadingKey = `loading_${docId}`
+      if (processingFileRef.current === loadingKey) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:560',message:'loadDocument early return - already loading',data:{isLoading,processingFileRef:processingFileRef.current,loadingKey,docId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        return
+      }
+      
+      // Mark as loading
+      processingFileRef.current = loadingKey
       
       // Handle file upload from location state (new upload)
       if (location.state?.file && !docId) {
@@ -327,18 +673,94 @@ function Home() {
           
           // Load PDF from Storage
           if (docData.storageUrl) {
-            const response = await fetch(docData.storageUrl)
-            const arrayBuffer = await response.arrayBuffer()
-            const blob = new Blob([arrayBuffer], { type: 'application/pdf' })
-            const fileName = docData.fileName || `${docId}.pdf`
-            const file = new File([blob], fileName, { type: 'application/pdf' })
-            
-            // Process the file like a normal upload, passing the existing documentId
-            const event = { target: { files: [file] } }
-            await handleFileChange(event, docId)
+            try {
+              // Try using Firebase Storage SDK first to avoid CORS issues
+              const storagePath = `users/${currentUser.uid}/uploads/${docId}.pdf`
+              let arrayBuffer
+              
+              try {
+                const { ref: storageRef, getBytes } = await import('firebase/storage')
+                const fileRef = storageRef(storage, storagePath)
+                const bytes = await getBytes(fileRef)
+                
+                // getBytes can return either ArrayBuffer or Uint8Array depending on Firebase SDK version
+                if (bytes instanceof ArrayBuffer) {
+                  arrayBuffer = bytes
+                } else if (bytes instanceof Uint8Array) {
+                  // Create a new ArrayBuffer to avoid shared buffer issues
+                  arrayBuffer = new ArrayBuffer(bytes.length)
+                  new Uint8Array(arrayBuffer).set(bytes)
+                } else {
+                  throw new Error(`getBytes returned unexpected type: ${bytes?.constructor?.name}`)
+                }
+              } catch (sdkError) {
+                console.warn('Firebase SDK getBytes failed, trying fetch:', sdkError)
+                
+                // Fallback to fetch if SDK fails
+                const response = await fetch(docData.storageUrl, {
+                  mode: 'cors',
+                  cache: 'default'
+                })
+                
+                if (!response.ok) {
+                  throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}. This may be a CORS issue - check Firebase Storage CORS configuration.`)
+                }
+                
+                // Check if response is actually a PDF
+                const contentType = response.headers.get('content-type')
+                if (contentType && !contentType.includes('application/pdf')) {
+                  throw new Error(`Expected PDF but got ${contentType}. The file may be corrupted or the URL is invalid.`)
+                }
+                
+                arrayBuffer = await response.arrayBuffer()
+                
+                // Validate that we got actual data
+                if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+                  throw new Error('Received empty PDF data from storage')
+                }
+              }
+              
+              const blob = new Blob([arrayBuffer], { type: 'application/pdf' })
+              const fileName = docData.fileName || `${docId}.pdf`
+              const file = new File([blob], fileName, { type: 'application/pdf' })
+              
+              // Process the file like a normal upload, passing the existing documentId
+              // Set documentId state BEFORE calling handleFileChange to prevent reload
+              if (docId && docId !== documentId) {
+                setDocumentId(docId)
+              }
+              const event = { target: { files: [file] } }
+              // #region agent log
+              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:710',message:'loadDocument - calling handleFileChange from storage',data:{docId,fileName:file.name,fileSize:file.size,handleFileChangeExists:typeof handleFileChange==='function',currentDocumentId:documentId,loadingKey},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+              // #endregion
+              await handleFileChange(event, docId)
+              // #region agent log
+              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:711',message:'loadDocument - handleFileChange completed',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+              // #endregion
+              
+              // Clear loading flag after successful load
+              if (processingFileRef.current === loadingKey) {
+                processingFileRef.current = null
+              }
+            } catch (fetchError) {
+              // #region agent log
+              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:720',message:'loadDocument - storage error caught',data:{errorMessage:fetchError.message,errorName:fetchError.name},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+              // #endregion
+              console.error('Error loading PDF from storage:', fetchError)
+              setError(`Error loading PDF: ${fetchError.message}. If this is a CORS error, check Firebase Storage CORS configuration.`)
+              setIsLoading(false)
+              // Clear loading flag on error
+              if (processingFileRef.current === loadingKey) {
+                processingFileRef.current = null
+              }
+            }
           } else {
             setError('PDF file not found in storage')
             setIsLoading(false)
+            // Clear loading flag on error
+            if (processingFileRef.current === loadingKey) {
+              processingFileRef.current = null
+            }
           }
           
           // Clear location state to prevent re-loading
@@ -349,6 +771,10 @@ function Home() {
           console.error('Error loading document:', err)
           setError('Error loading document: ' + err.message)
           setIsLoading(false)
+          // Clear loading flag on error
+          if (processingFileRef.current === loadingKey) {
+            processingFileRef.current = null
+          }
         }
       }
     }
@@ -614,6 +1040,22 @@ function Home() {
       return newItems
     })
   }, [updateDocumentField])
+  
+  // Render check - moved earlier to ensure it executes
+  // #region agent log
+  const renderCheckData = {hasPdfDoc:!!pdfDoc,hasPdfFile:!!pdfFile,pdfFileName:pdfFile?.name,isLoading,hasFileInState:!!location.state?.file,hasDocumentInState:!!location.state?.documentId,documentIdFromUrl,totalPages};
+  // Test: Try to execute late render check code here too
+  try {
+    const renderCheckDataLate = {hasPdfDoc:!!pdfDoc,hasPdfFile:!!pdfFile,pdfFileName:pdfFile?.name,isLoading,hasFileInState:!!location.state?.file,hasDocumentInState:!!location.state?.documentId,documentIdFromUrl,totalPages};
+  } catch(e) {
+    console.error('Render check error (early):', e);
+  }
+  // #endregion
+  
+  // Determine what to render based on state (do this early so we can use it)
+  const shouldRenderPDFReader = !!pdfDoc && !!pdfFile && !isLoading;
+  const shouldRenderLoading = !pdfDoc && (isLoading || location.state?.file || location.state?.documentId);
+  const shouldRedirect = !pdfDoc && !isLoading && !location.state?.file && !documentIdFromUrl && !location.state?.documentId;
   
   // Redirect to dashboard if no PDF is loaded and not processing one
   useEffect(() => {
@@ -3499,7 +3941,6 @@ function Home() {
     // CRITICAL: extractedText is built from filteredItems in PDF.js extraction order,
     // but we render items in visual order (Y then X). We need to map each item to its
     // actual position in extractedText.
-    const pageTextItems = []
     
     // Get page info to find pageCharOffset
     const pageInfo = pageData.find(p => p.pageNum === pageNum)
@@ -3562,893 +4003,131 @@ function Home() {
       // If not found, this item was filtered out - no charIndex assigned
     })
     
-    let charIndex = 0
-    let isFirstItem = true
-
-    // Pre-process items to group by line and calculate line-level justification factors
-    // This handles cases where justification spans multiple items on the same line
-    // First, collect all items with their positions
-    const allItems = []
+    // Ensure text layer has the correct class for PDF.js CSS
+    textLayerDiv.className = 'textLayer'
+    // Ensure PDF.js text layer receives correct scale factor for positioning
+    if (viewport && viewport.scale) {
+      textLayerDiv.style.setProperty('--scale-factor', viewport.scale)
+    }
+    
+    // Use native PDF.js renderer to create text layer
+    const textDivs = []
+    try {
+      const renderFn = typeof renderTextLayer === 'function' ? renderTextLayer : pdfjsLib.renderTextLayer
+      if (!renderFn) {
+        throw new Error('renderTextLayer is not available from pdfjs-dist')
+      }
+      renderFn({
+        textContentSource: textContent,
+        container: textLayerDiv,
+        viewport: viewport,
+        textDivs: textDivs
+      })
+    } catch (error) {
+      console.error('Error rendering text layer with native renderer:', error)
+      throw error
+    }
+    
+    // Helper function to calculate column index from X position
+    // We'll detect column boundaries from the rendered spans
+    const getColumnIndexFromX = (x, textLayerWidth) => {
+      // Simple heuristic: divide text layer into columns based on width
+      // For most documents, assume 1-2 columns
+      // If X is in the left half, column 0; right half, column 1
+      const midPoint = textLayerWidth / 2
+      return x < midPoint ? 0 : 1
+    }
+    
+    // After native render, map spans back to textContent.items to rebuild textItems
+    // The native renderer creates one span per textContent item
+    const renderedSpans = Array.from(textLayerDiv.querySelectorAll('span'))
+    const pageTextItems = []
+    
+    // Create a map of item text to item index for matching
+    const itemTextToIndex = new Map()
     textContent.items.forEach((item, itemIndex) => {
-      // Only process items that will actually be rendered (non-empty after trimming)
-      const trimmedStr = item.str ? item.str.trim() : ''
-      if (trimmedStr.length === 0) {
-        return
+      if (!item.str || item.str.trim().length === 0) return
+      const normalized = normalizeText(item.str.trim())
+      // Use composite key: normalized text + original length to handle duplicates
+      const key = `${normalized}|${item.str.length}`
+      if (!itemTextToIndex.has(key)) {
+        itemTextToIndex.set(key, [])
       }
-      
-      const tx = pdfjsLib.Util.transform(viewport.transform, item.transform)
-      const fontHeight = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3])
-      const fontSize = fontHeight * scaleY
-      const itemWidth = measureTextWidth(trimmedStr, item.fontName, fontSize)
-      const baseY = tx[5] * scaleY
-      
-      allItems.push({ 
-        item, 
-        itemIndex, 
-        tx, 
-        baseX: tx[4] * scaleX,
-        baseY,
-        trimmedStr,
-        fontName: item.fontName,
-        fontSize,
-        itemWidth
-      })
+      itemTextToIndex.get(key).push({ itemIndex, item })
     })
     
-    // Helper function to detect if an item is a drop cap
-    // A drop cap is typically a single letter with dramatically larger font size
-    const isDropCap = (item, allItems) => {
-      const itemText = item.trimmedStr
+    // Match rendered spans to textContent.items
+    renderedSpans.forEach((span, spanIndex) => {
+      const spanText = span.textContent || ''
+      const normalizedSpanText = normalizeText(spanText)
       
-      // Check if item is a single character (or very short, like 1-2 chars)
-      // and is a letter (not punctuation or number)
-      if (itemText.length > 2 || !/[a-zA-ZÀ-ÿ]/.test(itemText)) {
-        return false
-      }
+      // Try to find matching item
+      let matchedItem = null
+      let matchedItemIndex = -1
       
-      // Calculate median font size of all items to compare
-      // This is more robust than average, as it's less affected by outliers
-      const fontSizes = allItems.map(i => i.fontSize).sort((a, b) => a - b)
-      const medianFontSize = fontSizes.length > 0 
-        ? fontSizes[Math.floor(fontSizes.length / 2)]
-        : item.fontSize
+      // First, try exact match by normalized text
+      const key = `${normalizedSpanText}|${spanText.length}`
+      const candidates = itemTextToIndex.get(key)
       
-      // Also check average of items excluding potential drop caps (items with font size > 2x median)
-      let sumFontSize = 0
-      let count = 0
-      for (const otherItem of allItems) {
-        // Only include items that are likely normal text (not other drop caps)
-        if (otherItem.fontSize <= medianFontSize * 2.5) {
-          sumFontSize += otherItem.fontSize
-          count++
-        }
-      }
-      
-      if (count === 0) return false
-      
-      const avgNormalFontSize = sumFontSize / count
-      
-      // If item's font size is at least 2x larger than average of normal text items,
-      // it's likely a drop cap
-      return item.fontSize >= avgNormalFontSize * 2
-    }
-    
-    // Detect and filter out drop caps (large first letters)
-    // Check all items to find drop caps anywhere in the text
-    const itemsToRemove = []
-    for (let i = 0; i < allItems.length; i++) {
-      if (isDropCap(allItems[i], allItems)) {
-        itemsToRemove.push(i)
-      }
-    }
-    
-    // Remove drop caps from allItems (iterate backwards to maintain indices)
-    for (let i = itemsToRemove.length - 1; i >= 0; i--) {
-      allItems.splice(itemsToRemove[i], 1)
-    }
-    
-    // First, cluster items by Y coordinate only
-    // Then split by columns (X position gaps) within each Y group
-    const itemsByY = new Map()
-    const lineTolerance = 5 * scaleY // Scale tolerance with display scale
-    
-    // Step 1: Group by Y coordinate
-    allItems.forEach(itemData => {
-      let assignedY = null
-      for (const [y, items] of itemsByY.entries()) {
-        if (Math.abs(y - itemData.baseY) < lineTolerance) {
-          assignedY = y
-          break
-        }
-      }
-      
-      if (assignedY === null) {
-        assignedY = itemData.baseY
-        itemsByY.set(assignedY, [])
-      }
-      itemsByY.get(assignedY).push(itemData)
-    })
-    
-    // Step 2: Split each Y group by columns (X position gaps)
-    // First pass: detect potential gaps on each line and record them
-    const lineGapData = [] // Array of { y, items, gaps } where gaps is array of { gapX, gapEndX }
-    const sortedYPositions = Array.from(itemsByY.keys()).sort((a, b) => a - b)
-    
-    sortedYPositions.forEach(y => {
-      const yItems = itemsByY.get(y)
-      // Sort items by X position
-      yItems.sort((a, b) => a.baseX - b.baseX)
-      
-      // Calculate line-specific font size metrics for threshold calculation
-      // This accounts for different font sizes within the same line (e.g., different columns)
-      const lineFontSizes = yItems.map(item => item.fontSize)
-      const lineMedianFontSize = lineFontSizes.length > 0
-        ? lineFontSizes.sort((a, b) => a - b)[Math.floor(lineFontSizes.length / 2)]
-        : 12 // fallback
-      
-      // Detect potential gaps on this line
-      const gaps = []
-      for (let i = 1; i < yItems.length; i++) {
-        const prevItem = yItems[i - 1]
-        const currentItem = yItems[i]
-        const prevItemEndX = prevItem.baseX + prevItem.itemWidth
-        const gap = currentItem.baseX - prevItemEndX
-        
-        // Calculate gap threshold based on font sizes of items around the gap
-        // CRITICAL: If font sizes differ significantly, this is a strong signal of different columns
-        // Use the font size of the item on the RIGHT (currentItem) for threshold when sizes differ
-        // This prevents large-font left columns from incorrectly grouping with small-font right columns
-        const prevFontSize = prevItem.fontSize
-        const currentFontSize = currentItem.fontSize
-        const fontSizeDiff = Math.abs(prevFontSize - currentFontSize)
-        const fontSizeRatio = Math.max(prevFontSize, currentFontSize) / Math.min(prevFontSize, currentFontSize)
-        
-        // If font sizes differ significantly (>30% or >3px), use the RIGHT column's font size for threshold
-        // This ensures we detect column boundaries even when the left column has much larger font
-        const isSignificantFontDiff = fontSizeRatio > 1.3 || fontSizeDiff > 3
-        
-        let thresholdBase
-        if (isSignificantFontDiff) {
-          // Use the RIGHT column's font size (currentItem) for threshold when sizes differ significantly
-          // This makes the threshold more sensitive to gaps when columns have different font sizes
-          thresholdBase = Math.max(lineMedianFontSize, currentFontSize)
-        } else {
-          // Font sizes are similar - use the maximum as before
-          const maxFontSizeAroundGap = Math.max(prevFontSize, currentFontSize)
-          thresholdBase = Math.max(lineMedianFontSize, maxFontSizeAroundGap)
-        }
-        
-        const columnGapThreshold = thresholdBase * 0.5
-        
-        // If font sizes differ significantly, also lower the threshold to be more sensitive
-        // This helps detect column boundaries even with smaller gaps
-        const adjustedThreshold = isSignificantFontDiff 
-          ? columnGapThreshold * 0.7  // 30% lower threshold when font sizes differ
-          : columnGapThreshold
-        
-        if (gap > adjustedThreshold) {
-          // Record this gap position (use the X position where the gap starts)
-          // Also store font size difference info for more lenient validation when sizes differ
-          gaps.push({ 
-            gapX: prevItemEndX, 
-            gapEndX: currentItem.baseX, 
-            gapSize: gap,
-            isSignificantFontDiff,
-            prevFontSize,
-            currentFontSize
-          })
-        }
-      }
-      
-      lineGapData.push({ y, items: yItems, gaps, lineMedianFontSize })
-    })
-    
-    // Second pass: Find gaps that appear consistently across 3+ consecutive lines
-    // A gap is considered consistent if it appears at a similar X position across lines
-    // This ensures column boundaries are only validated when they persist across multiple lines
-    const validatedGapBoundaries = [] // Array of { minX, maxX } representing validated column boundaries
-    
-    // Track consecutive lines with similar gap patterns
-    // A column boundary is only validated if it appears in at least 3 consecutive lines
-    for (let i = 0; i < lineGapData.length; i++) {
-      const currentLine = lineGapData[i]
-      
-      // For each gap on the current line, check if it appears in 3+ consecutive lines
-      // CRITICAL: If font sizes differ significantly, require only 2+ consecutive lines instead of 3+
-      currentLine.gaps.forEach(gap => {
-        let consecutiveCount = 1
-        let minGapX = gap.gapX
-        let maxGapX = gap.gapEndX
-        const linesWithGap = [i] // Track which lines have this gap
-        // Track the average gap position to prevent boundary drift
-        let avgGapX = gap.gapX
-        let gapCount = 1
-        // Check if this gap has significant font size difference (more lenient validation)
-        const hasSignificantFontDiff = gap.isSignificantFontDiff || false
-        const requiredConsecutiveLines = hasSignificantFontDiff ? 2 : 3
-        // For gaps with font size differences, track average END position (more stable than start)
-        let avgGapEndX = gap.gapEndX
-        
-        // Check forward to see how many consecutive lines have a similar gap
-        for (let j = i + 1; j < lineGapData.length; j++) {
-          const nextLine = lineGapData[j]
-          let foundSimilarGap = false
-          
-          // Calculate font-size-aware tolerance based on the font sizes of the lines being compared
-          // Use the larger of the two line's median font sizes
-          const toleranceBase = Math.max(currentLine.lineMedianFontSize || 12, nextLine.lineMedianFontSize || 12)
-          const gapTolerance = toleranceBase * 0.3 // 30% of font size for tolerance
-          
-          for (const nextGap of nextLine.gaps) {
-            // Check if this gap is at a similar X position (within font-size-aware tolerance)
-            // CRITICAL: Check against the AVERAGE gap position of all matching gaps so far
-            // This prevents boundaries from expanding too wide by keeping the reference point stable
-            const xDiff = Math.abs(nextGap.gapX - avgGapX)
-            const nextGapCenter = (nextGap.gapX + nextGap.gapEndX) / 2
-            const currentGapCenter = (minGapX + maxGapX) / 2
-            const centerDiff = Math.abs(nextGapCenter - currentGapCenter)
-            
-            // For gaps with significant font size differences, use wider tolerance
-            // This accounts for varying gap positions when columns have different font sizes
-            const effectiveTolerance = (hasSignificantFontDiff && nextGap.isSignificantFontDiff) 
-              ? gapTolerance * 2.0  // Double tolerance when both gaps have font size differences
-              : gapTolerance
-            
-            // CRITICAL: When font sizes differ significantly, also check if gaps END at similar positions
-            // This catches cases where gaps have different start positions but same end position
-            // (indicating they all lead to the same column boundary)
-            let endPositionMatch = false
-            if (hasSignificantFontDiff && nextGap.isSignificantFontDiff) {
-              const endXDiff = Math.abs(nextGap.gapEndX - avgGapEndX)
-              // If gaps end at roughly the same position (within tolerance), they're the same boundary
-              // Use a wider tolerance for end positions since they should be more consistent
-              const endTolerance = gapTolerance * 3.0
-              endPositionMatch = endXDiff < endTolerance
-            }
-            
-            // Gap matches if it's within tolerance of the average gap position OR ends at similar position
-            if (xDiff < effectiveTolerance || centerDiff < effectiveTolerance || endPositionMatch) {
-              consecutiveCount++
-              gapCount++
-              // Update average gap position (running average)
-              avgGapX = (avgGapX * (gapCount - 1) + nextGap.gapX) / gapCount
-              // Also update average end position for font-size-different gaps
-              if (hasSignificantFontDiff && nextGap.isSignificantFontDiff) {
-                avgGapEndX = (avgGapEndX * (gapCount - 1) + nextGap.gapEndX) / gapCount
-              }
-              // Only expand boundary if the gap is within a reasonable range
-              // Use a tighter expansion tolerance to prevent excessive widening
-              const expansionTolerance = gapTolerance * 2
-              if (nextGap.gapX >= avgGapX - expansionTolerance && nextGap.gapX <= avgGapX + expansionTolerance) {
-                minGapX = Math.min(minGapX, nextGap.gapX)
-                maxGapX = Math.max(maxGapX, nextGap.gapEndX)
-              }
-              linesWithGap.push(j)
-              foundSimilarGap = true
-              
-              break
-            }
-          }
-          
-          if (!foundSimilarGap) {
-            break // Gap pattern broken, stop checking consecutive lines
-          }
-        }
-        
-        // CRITICAL: For gaps with significant font size differences, use alternative validation
-        // Instead of requiring consecutive lines, validate if:
-        // 1. The gap is large enough (relative to the smaller font size)
-        // 2. There are other gaps with font size differences ending at similar positions
-        let shouldValidate = false
-        if (hasSignificantFontDiff && consecutiveCount < requiredConsecutiveLines) {
-          // Check if gap is large enough relative to the smaller font size
-          const smallerFontSize = Math.min(gap.prevFontSize || 12, gap.currentFontSize || 12)
-          const gapSizeThreshold = smallerFontSize * 2.0 // Gap should be at least 2x the smaller font size
-          
-          if (gap.gapSize >= gapSizeThreshold) {
-            // Also check if there are other gaps with font size differences ending at similar positions
-            // Look for gaps in nearby lines that end at similar X positions
-            let similarEndPositionCount = 1 // Count this gap
-            const endPositionTolerance = smallerFontSize * 1.5
-            
-            for (let k = 0; k < lineGapData.length; k++) {
-              if (k === i) continue // Skip current line
-              const otherLine = lineGapData[k]
-              for (const otherGap of otherLine.gaps) {
-                if (otherGap.isSignificantFontDiff) {
-                  const endXDiff = Math.abs(otherGap.gapEndX - gap.gapEndX)
-                  if (endXDiff < endPositionTolerance) {
-                    similarEndPositionCount++
-                  }
-                }
-              }
-            }
-            
-            // Validate if we found 2+ gaps with font size differences ending at similar positions
-            // OR if the gap is very large (3x smaller font size)
-            const isVeryLargeGap = gap.gapSize >= smallerFontSize * 3.0
-            shouldValidate = similarEndPositionCount >= 2 || isVeryLargeGap
-          }
-        }
-        
-        // Only add gap as column boundary if it appears in required consecutive lines
-        // OR if it passes alternative validation for font-size-different gaps
-        // Use 2+ lines for gaps with significant font size differences, 3+ otherwise
-        if (consecutiveCount >= requiredConsecutiveLines || shouldValidate) {
-          // Calculate font-size-aware tolerance for merging boundaries
-          // Use the median font size from the lines that have this gap
-          const gapLinesFontSizes = linesWithGap.map(idx => lineGapData[idx].lineMedianFontSize || 12)
-          const gapLinesMedianFont = gapLinesFontSizes.sort((a, b) => a - b)[Math.floor(gapLinesFontSizes.length / 2)]
-          const mergeTolerance = gapLinesMedianFont * 0.3
-          
-          // Check if this gap boundary already exists (merge if close)
-          let merged = false
-          for (const boundary of validatedGapBoundaries) {
-            if ((minGapX >= boundary.minX - mergeTolerance && minGapX <= boundary.maxX + mergeTolerance) ||
-                (maxGapX >= boundary.minX - mergeTolerance && maxGapX <= boundary.maxX + mergeTolerance) ||
-                (boundary.minX >= minGapX - mergeTolerance && boundary.minX <= maxGapX + mergeTolerance)) {
-              // Merge boundaries
-              boundary.minX = Math.min(boundary.minX, minGapX)
-              boundary.maxX = Math.max(boundary.maxX, maxGapX)
-              merged = true
-              break
-            }
-          }
-          
-          if (!merged) {
-            validatedGapBoundaries.push({ minX: minGapX, maxX: maxGapX })
-          }
-        }
-      })
-    }
-    
-    // Sort validated boundaries by X position
-    validatedGapBoundaries.sort((a, b) => a.minX - b.minX)
-    
-    // Third pass: Split items by validated column boundaries only
-    const itemsByLine = new Map()
-    const allColumnXPositions = [] // Collect X positions of all detected columns
-    
-    lineGapData.forEach(({ y, items, lineMedianFontSize }) => {
-      // Split items by validated gap boundaries
-      const columns = []
-      let currentColumn = [items[0]]
-      
-      // Calculate font-size-aware tolerance for this line
-      const lineTolerance = (lineMedianFontSize || 12) * 0.3
-      
-      for (let i = 1; i < items.length; i++) {
-        const prevItem = items[i - 1]
-        const currentItem = items[i]
-        const prevItemEndX = prevItem.baseX + prevItem.itemWidth
-        const gapStartX = prevItemEndX
-        const gapEndX = currentItem.baseX
-        
-        // Check if this gap matches any validated boundary
-        let isColumnBoundary = false
-        for (const boundary of validatedGapBoundaries) {
-          // Check if gap overlaps with validated boundary (using font-size-aware tolerance)
-          // A gap matches if:
-          // 1. The gap start is within the boundary range (with tolerance)
-          // 2. The gap end is within the boundary range (with tolerance)
-          // 3. The gap completely spans the boundary
-          // 4. The gap center is within the boundary range (for better matching of gaps that are close but not exact)
-          const gapCenter = (gapStartX + gapEndX) / 2
-          const boundaryCenter = (boundary.minX + boundary.maxX) / 2
-          
-          const startInBoundary = (gapStartX >= boundary.minX - lineTolerance && gapStartX <= boundary.maxX + lineTolerance)
-          const endInBoundary = (gapEndX >= boundary.minX - lineTolerance && gapEndX <= boundary.maxX + lineTolerance)
-          const spansBoundary = (gapStartX <= boundary.minX && gapEndX >= boundary.maxX)
-          const centerInBoundary = (gapCenter >= boundary.minX - lineTolerance && gapCenter <= boundary.maxX + lineTolerance)
-          
-          if (startInBoundary || endInBoundary || spansBoundary || centerInBoundary) {
-            isColumnBoundary = true
-            break
-          }
-        }
-        
-        if (isColumnBoundary) {
-          // Validated column boundary - start a new column
-          columns.push(currentColumn)
-          currentColumn = [currentItem]
-        } else {
-          // Not a validated boundary - same column
-          currentColumn.push(currentItem)
-        }
-      }
-      columns.push(currentColumn) // Don't forget the last column
-      
-      // Store columns temporarily and collect their X positions
-      columns.forEach((columnItems) => {
-        const firstItemX = columnItems[0]?.baseX
-        if (firstItemX !== undefined) {
-          allColumnXPositions.push(firstItemX)
-        }
-      })
-      
-      // Store columns with temporary local indices
-      columns.forEach((columnItems, localColumnIndex) => {
-        const lineKey = `${y}_${localColumnIndex}`
-        itemsByLine.set(lineKey, { items: columnItems, localIndex: localColumnIndex })
-      })
-    })
-    
-    // Determine global column boundaries by clustering X positions
-    // Sort all X positions and find natural clusters (columns)
-    allColumnXPositions.sort((a, b) => a - b)
-    const globalColumnBoundaries = []
-    const xTolerance = 50 // X positions within 50px are considered the same column
-    
-    allColumnXPositions.forEach(x => {
-      // Find if this X position belongs to an existing global column
-      let assignedToColumn = false
-      for (let i = 0; i < globalColumnBoundaries.length; i++) {
-        const boundary = globalColumnBoundaries[i]
-        // Check if X is within tolerance of this column's range
-        if (x >= boundary.minX - xTolerance && x <= boundary.maxX + xTolerance) {
-          // Update boundary to include this X
-          boundary.minX = Math.min(boundary.minX, x)
-          boundary.maxX = Math.max(boundary.maxX, x)
-          assignedToColumn = true
-          break
-        }
-      }
-      
-      if (!assignedToColumn) {
-        // Create new global column boundary
-        globalColumnBoundaries.push({ minX: x, maxX: x, globalIndex: globalColumnBoundaries.length })
-      }
-    })
-    
-    // Sort global columns by X position
-    globalColumnBoundaries.sort((a, b) => a.minX - b.minX)
-    // Reassign global indices based on sorted order
-    globalColumnBoundaries.forEach((boundary, index) => {
-      boundary.globalIndex = index
-    })
-    
-    // Helper function to find global column index for a given X position
-    const getGlobalColumnIndex = (x) => {
-      for (const boundary of globalColumnBoundaries) {
-        if (x >= boundary.minX - xTolerance && x <= boundary.maxX + xTolerance) {
-          return boundary.globalIndex
-        }
-      }
-      // Fallback: find closest column
-      let closestIndex = 0
-      let minDistance = Infinity
-      globalColumnBoundaries.forEach((boundary, index) => {
-        const distance = Math.min(Math.abs(x - boundary.minX), Math.abs(x - boundary.maxX))
-        if (distance < minDistance) {
-          minDistance = distance
-          closestIndex = index
-        }
-      })
-      return closestIndex
-    }
-    
-    // Second pass: update itemsByLine with global column indices
-    const itemsByLineWithGlobalColumns = new Map()
-    itemsByLine.forEach((value, lineKey) => {
-      const { items, localIndex } = value
-      const firstItemX = items[0]?.baseX
-      const globalColumnIndex = firstItemX !== undefined ? getGlobalColumnIndex(firstItemX) : 0
-      // Use composite key: Y_globalColumnIndex
-      const newLineKey = `${lineKey.split('_')[0]}_${globalColumnIndex}`
-      
-      // CRITICAL FIX: If multiple lines map to the same key, merge them instead of overwriting
-      // This happens when items at the same Y position are split into different columns
-      // but then map back to the same global column index
-      if (itemsByLineWithGlobalColumns.has(newLineKey)) {
-        // Merge with existing items (sort by X position to maintain order)
-        const existingItems = itemsByLineWithGlobalColumns.get(newLineKey)
-        const mergedItems = [...existingItems, ...items].sort((a, b) => a.baseX - b.baseX)
-        itemsByLineWithGlobalColumns.set(newLineKey, mergedItems)
+      if (candidates && candidates.length > 0) {
+        // Use the first unmatched candidate
+        const candidate = candidates[0]
+        matchedItem = candidate.item
+        matchedItemIndex = candidate.itemIndex
+        // Remove from candidates to handle duplicates
+        candidates.shift()
       } else {
-        itemsByLineWithGlobalColumns.set(newLineKey, items)
-      }
-    })
-    
-    // Replace itemsByLine with the version using global column indices
-    itemsByLine.clear()
-    itemsByLineWithGlobalColumns.forEach((items, key) => {
-      itemsByLine.set(key, items)
-    })
-    
-    
-    // Calculate spacing factors for each line
-    const lineSpacingFactors = new Map()
-    itemsByLine.forEach((lineItems, lineY) => {
-      // Sort items by X position to ensure correct order
-      lineItems.sort((a, b) => a.baseX - b.baseX)
-      
-      if (lineItems.length < 2) {
-        // Single item on line - still need to store line end in case item needs to stretch
-        const singleItem = lineItems[0]
-        const singleItemLineEnd = singleItem.baseX + singleItem.itemWidth
-        lineItems.forEach(({ itemIndex, itemWidth }) => {
-          lineSpacingFactors.set(itemIndex, 1.0)
-          lineSpacingFactors.set(`width_${itemIndex}`, itemWidth)
-          // Store line end for single-item lines too (in case item needs to stretch)
-          lineSpacingFactors.set(`end_${itemIndex}`, singleItemLineEnd)
-        })
-        return
-      }
-      
-      // Calculate total actual width (from leftmost item start to rightmost item end)
-      const leftmostItem = lineItems[0]
-      const rightmostItem = lineItems[lineItems.length - 1]
-      // Actual line width = rightmost item end - leftmost item start
-      const actualLineWidth = (rightmostItem.baseX + rightmostItem.itemWidth) - leftmostItem.baseX
-      
-      // Calculate total measured width of all items on the line
-      let totalMeasuredWidth = 0
-      lineItems.forEach(({ itemWidth }) => {
-        totalMeasuredWidth += itemWidth
-      })
-      
-      // Calculate gaps between items (Hypothesis A, E)
-      let totalGaps = 0
-      for (let i = 0; i < lineItems.length - 1; i++) {
-        const currentItem = lineItems[i]
-        const nextItem = lineItems[i + 1]
-        const gap = nextItem.baseX - (currentItem.baseX + currentItem.itemWidth)
-        totalGaps += gap
-      }
-      
-      // Calculate spacing factor for this line
-      // This factor will stretch all characters/spaces proportionally to match PDF justification
-      const spacingFactor = totalMeasuredWidth > 0 ? actualLineWidth / totalMeasuredWidth : 1.0
-      const lineRightmostEnd = rightmostItem.baseX + rightmostItem.itemWidth
-      
-      // Log line end calculation details to verify correctness
-      
-      
-      // Store both spacing factor and line end position for each item
-      // Also store the item's natural width (from line grouping calculation) for accurate spacing
-      // Store which line each item belongs to, and the next item on the same line
-      lineItems.forEach(({ itemIndex, itemWidth }, idx) => {
-        lineSpacingFactors.set(itemIndex, spacingFactor)
-        // Store item's natural width (calculated during line grouping) for accurate spacing calculation
-        lineSpacingFactors.set(`width_${itemIndex}`, itemWidth)
-        // Store line end position for the rightmost item (last on line)
-        if (idx === lineItems.length - 1) {
-          lineSpacingFactors.set(`end_${itemIndex}`, lineRightmostEnd)
-        }
-        // Store the next item on the same line (for accurate item end positioning)
-        if (idx < lineItems.length - 1) {
-          const nextItemOnLine = lineItems[idx + 1]
-          lineSpacingFactors.set(`next_${itemIndex}`, nextItemOnLine.itemIndex)
-        }
-      })
-    })
-
-    // Create canvas context for measuring text
-    const tempCanvas = document.createElement('canvas')
-    const tempContext = tempCanvas.getContext('2d')
-
-    // NEW APPROACH: Line-based rendering with justified spacing
-    // For each line, measure its width in the PDF and render all words with spacing to match
-    // Sort by Y position (first part of composite key), then by column index (second part)
-    const sortedLines = Array.from(itemsByLine.entries()).sort((a, b) => {
-      const [aY, aCol] = a[0].split('_').map(Number)
-      const [bY, bCol] = b[0].split('_').map(Number)
-      if (aY !== bY) return aY - bY // Sort by Y first
-      return aCol - bCol // Then by column index
-    })
-    
-    sortedLines.forEach(([lineY, lineItems], lineIndex) => {
-      // Sort items by X position to ensure correct order
-      lineItems.sort((a, b) => a.baseX - b.baseX)
-      
-      if (lineItems.length === 0) return
-      
-      // Calculate line width from PDF positions
-      const leftmostItem = lineItems[0]
-      const rightmostItem = lineItems[lineItems.length - 1]
-      const lineStartX = leftmostItem.baseX
-      
-      // Find the actual line end position
-      // For justified text, the PDF applies spacing, so measured width might not match actual end
-      // We need to find where the rightmost item actually ends in the PDF
-      let lineEndX = rightmostItem.baseX + rightmostItem.itemWidth // Fallback to measured width
-      
-      // For justified text, we can infer the right margin from the next line's start position
-      // if the next line starts at the same X as the current line (same left margin)
-      // IMPORTANT: Only compare with lines in the same column (same column index in key)
-      const [currentY, currentCol] = lineY.split('_').map(Number)
-      
-      if (lineIndex < sortedLines.length - 1) {
-        // Find the next line in the same column (not just the next line overall)
-        let nextLineInSameColumn = null
-        for (let i = lineIndex + 1; i < sortedLines.length; i++) {
-          const [nextLineKey, nextLineItems] = sortedLines[i]
-          const [nextY, nextCol] = nextLineKey.split('_').map(Number)
-          
-          // Check if it's in the same column
-          if (nextCol === currentCol) {
-            nextLineInSameColumn = { key: nextLineKey, items: nextLineItems }
-            break
+        // Fallback: try to match by position (spanIndex should roughly match itemIndex)
+        // Only match non-empty items
+        let itemIndex = spanIndex
+        while (itemIndex < textContent.items.length) {
+          const item = textContent.items[itemIndex]
+          if (item && item.str && item.str.trim().length > 0) {
+            const normalizedItemText = normalizeText(item.str.trim())
+            if (normalizedItemText === normalizedSpanText || 
+                normalizedItemText.includes(normalizedSpanText) ||
+                normalizedSpanText.includes(normalizedItemText)) {
+              matchedItem = item
+              matchedItemIndex = itemIndex
+              break
+            }
           }
-          
-          // If we've moved to a different Y position significantly, stop searching
-          if (nextY > currentY + lineTolerance * 2) {
-            break
-          }
+          itemIndex++
+        }
+      }
+      
+      if (matchedItem && matchedItemIndex >= 0) {
+        // Get charIndex from map
+        const charIndex = itemIndexToCharIndex.get(matchedItemIndex) ?? -1
+        
+        // Apply data attributes
+        if (charIndex >= 0) {
+          span.dataset.charIndex = charIndex
+        }
+        span.dataset.page = pageNum
+        
+        // Calculate column index from span position
+        const spanRect = span.getBoundingClientRect()
+        const textLayerRect = textLayerDiv.getBoundingClientRect()
+        const spanX = spanRect.left - textLayerRect.left
+        const columnIndex = getColumnIndexFromX(spanX, displayedWidth)
+        span.dataset.columnIndex = columnIndex
+        
+        // Make text transparent (invisible but selectable)
+        span.style.color = 'transparent'
+        
+        // Add text-space class for whitespace
+        if (!/\S/.test(spanText)) {
+          span.classList.add('text-space')
         }
         
-        if (nextLineInSameColumn && nextLineInSameColumn.items && nextLineInSameColumn.items.length > 0) {
-          const nextLineItems = nextLineInSameColumn.items
-          nextLineItems.sort((a, b) => a.baseX - b.baseX)
-          const nextLineFirstItem = nextLineItems[0]
-          const nextLineStartX = nextLineFirstItem.baseX
-          
-          // If next line starts at roughly the same X as current line (same left margin),
-          // then for justified text, the current line should end at the right margin
-          // The right margin can be inferred from the pattern: if lines are justified,
-          // they should all have the same width
-          // So we can use: rightMargin = leftMargin + (average line width from other lines)
-          // OR: we can look at the rightmost item's actual end by checking if there's
-          // a gap before the next line starts
-          
-          // Actually, a simpler approach: for justified text, find the maximum X position
-          // where any line's rightmost item ends, and use that as the right margin
-          // But for now, let's try using the next line's start as a hint
-          // If the next line starts at the same X, the current line should end at the right margin
-          // We can estimate the right margin by looking at the pattern of line widths
-          
-          // For now, let's try a different approach: measure the actual end of the rightmost item
-          // by looking at where the next item would be if it were on the same line
-          // But since it's the rightmost, we need to find the right margin
-          
-          // Actually, the simplest fix: for justified text, the line should extend to where
-          // the text would naturally end if it were stretched. We can calculate this by
-          // finding the maximum X position of all items on the line, then adding the
-          // measured width of the rightmost item, but accounting for justification spacing
-          
-          // Check if next line starts at same left margin (same paragraph/column)
-          const xDiff = Math.abs(nextLineStartX - lineStartX)
-          if (xDiff < 10) {
-            // Next line starts at same left margin - could be justified or left-aligned
-            // First, calculate the current line's measured width
-            const currentLineMeasuredWidth = rightmostItem.baseX + rightmostItem.itemWidth - lineStartX
-            
-            // Find the maximum line width by looking at nearby lines
-            let maxLineWidth = currentLineMeasuredWidth
-            
-            // Look at a few lines ahead to find the maximum line width
-            // IMPORTANT: Only consider lines in the same column
-            // CRITICAL: Also constrain maxLineWidth to the column's right boundary
-            let columnRightBoundary = Infinity // No boundary by default
-            
-            // Find the column's right boundary from validated gap boundaries
-            // The right boundary is the minX of the next validated boundary after this column's start
-            for (const boundary of validatedGapBoundaries) {
-              // If this boundary starts after the line start, it's the right boundary for this column
-              if (boundary.minX > lineStartX + 10) { // Add small tolerance
-                columnRightBoundary = Math.min(columnRightBoundary, boundary.minX)
-              }
-            }
-            
-            for (let i = lineIndex; i < Math.min(lineIndex + 10, sortedLines.length); i++) {
-              const [checkLineKey, checkLineItems] = sortedLines[i]
-              const [checkY, checkCol] = checkLineKey.split('_').map(Number)
-              
-              // Only consider lines in the same column
-              if (checkCol === currentCol && checkLineItems && checkLineItems.length > 0) {
-                checkLineItems.sort((a, b) => a.baseX - b.baseX)
-                const checkLeftmost = checkLineItems[0]
-                const checkRightmost = checkLineItems[checkLineItems.length - 1]
-                
-                // Only consider lines that start at roughly the same X (same left margin)
-                if (Math.abs(checkLeftmost.baseX - lineStartX) < 10) {
-                  const checkLineWidth = (checkRightmost.baseX + checkRightmost.itemWidth) - checkLeftmost.baseX
-                  // Constrain to column boundary if available
-                  const constrainedWidth = columnRightBoundary < Infinity 
-                    ? Math.min(checkLineWidth, columnRightBoundary - lineStartX)
-                    : checkLineWidth
-                  maxLineWidth = Math.max(maxLineWidth, constrainedWidth)
-                }
-              }
-            }
-            
-            // Also constrain maxLineWidth to column boundary
-            if (columnRightBoundary < Infinity) {
-              const originalMaxLineWidth = maxLineWidth
-              maxLineWidth = Math.min(maxLineWidth, columnRightBoundary - lineStartX)
-            }
-            
-            // Determine if this line is justified by checking:
-            // 1. Is the current line itself close to max width?
-            // 2. Is it part of a justified paragraph pattern?
-            // We prioritize individual line check to avoid stretching left-aligned lines
-            const widthDiff = maxLineWidth - currentLineMeasuredWidth
-            const widthRatio = maxLineWidth > 0 ? currentLineMeasuredWidth / maxLineWidth : 1.0
-            
-            // Primary check: Is the current line itself close to max width?
-            // Use stricter threshold: line must be within 92% of max OR within 15px
-            const isCurrentLineJustified = widthRatio >= 0.92 || widthDiff < 15
-            
-            // Secondary check: Is this part of a justified paragraph?
-            // Only use this if the current line is already close to max (to maintain consistency)
-            let isJustifiedParagraph = false
-            if (isCurrentLineJustified) {
-              // Only check paragraph pattern if current line is already close to max
-              // This prevents stretching isolated short lines
-              let justifiedLineCount = 0
-              let totalLineCount = 0
-              const justifiedThreshold = 0.92 // 92% of max width indicates justification
-              
-              // Analyze nearby lines to determine if this is a justified paragraph
-              // IMPORTANT: Only consider lines in the same column
-              for (let i = lineIndex; i < Math.min(lineIndex + 10, sortedLines.length); i++) {
-                const [checkLineKey, checkLineItems] = sortedLines[i]
-                const [checkY, checkCol] = checkLineKey.split('_').map(Number)
-                
-                // Only consider lines in the same column
-                if (checkCol === currentCol && checkLineItems && checkLineItems.length > 0) {
-                  checkLineItems.sort((a, b) => a.baseX - b.baseX)
-                  const checkLeftmost = checkLineItems[0]
-                  const checkRightmost = checkLineItems[checkLineItems.length - 1]
-                  
-                  // Only consider lines that start at roughly the same X (same left margin)
-                  if (Math.abs(checkLeftmost.baseX - lineStartX) < 10) {
-                    totalLineCount++
-                    const checkLineWidth = (checkRightmost.baseX + checkRightmost.itemWidth) - checkLeftmost.baseX
-                    const checkWidthRatio = maxLineWidth > 0 ? checkLineWidth / maxLineWidth : 1.0
-                    
-                    // If this line is close to max width, it's likely justified
-                    if (checkWidthRatio >= justifiedThreshold) {
-                      justifiedLineCount++
-                    }
-                  }
-                }
-              }
-              
-              // If most lines (>=60%) are close to max width, the paragraph is justified
-              // Use higher threshold (60% instead of 50%) to be more conservative
-              isJustifiedParagraph = totalLineCount > 0 && (justifiedLineCount / totalLineCount) >= 0.6
-            }
-            
-            if (isCurrentLineJustified && isJustifiedParagraph) {
-              // This line is close to max AND part of a justified paragraph - use maximum line end position
-              lineEndX = lineStartX + maxLineWidth
-            } else if (isCurrentLineJustified && widthRatio >= 0.95) {
-              // This line is very close to max (>=95%) even if not in a justified paragraph pattern
-              // Use max width to maintain consistency
-              lineEndX = lineStartX + maxLineWidth
-            } else {
-              // This line is significantly shorter (e.g., header, last line of paragraph)
-              // Use the actual measured end position
-              lineEndX = rightmostItem.baseX + rightmostItem.itemWidth
-            }
-          }
-        }
-      }
-      
-      const lineWidth = lineEndX - lineStartX
-      
-      // Apply final constraint to lineEndX if needed to respect column boundaries
-      let finalColumnRightBoundary = Infinity
-      for (const boundary of validatedGapBoundaries) {
-        if (boundary.minX > lineStartX + 10) {
-          finalColumnRightBoundary = Math.min(finalColumnRightBoundary, boundary.minX)
-        }
-      }
-      if (finalColumnRightBoundary < Infinity && lineEndX > finalColumnRightBoundary) {
-        lineEndX = finalColumnRightBoundary
-      }
-      
-      // Calculate final line width after column boundary constraint
-      const finalLineWidth = lineEndX - lineStartX
-      
-      // Log line width calculation for debugging
-      if (lineIndex < 5) { // Log first 5 lines
-      }
-      
-      // Get line Y position and font properties
-      // Skip drop caps when determining font size - use first non-drop-cap item
-      let firstItemData = null
-      let firstTx = null
-      
-      // Find first item that's not a drop cap
-      for (const itemData of lineItems) {
-        const itemText = itemData.trimmedStr
-        // Quick check: if it's a single letter and font size is much larger than others on the line, skip it
-        const isLikelyDropCap = itemText.length <= 2 && /[a-zA-ZÀ-ÿ]/.test(itemText)
-        if (isLikelyDropCap) {
-          // Calculate average font size of other items on this line
-          let sumFontSize = 0
-          let count = 0
-          for (const otherItem of lineItems) {
-            if (otherItem !== itemData) {
-              sumFontSize += otherItem.fontSize
-              count++
-            }
-          }
-          if (count > 0 && itemData.fontSize >= (sumFontSize / count) * 2) {
-            continue // Skip this drop cap
-          }
-        }
-        firstItemData = itemData
-        firstTx = itemData.tx
-        break
-      }
-      
-      // Fallback to first item if no non-drop-cap found
-      if (!firstItemData) {
-        firstItemData = lineItems[0]
-        firstTx = firstItemData.tx
-      }
-      
-      const angle = Math.atan2(firstTx[1], firstTx[0])
-      const fontHeight = Math.sqrt(firstTx[2] * firstTx[2] + firstTx[3] * firstTx[3])
-      const fontSize = fontHeight * scaleY
-      const fontFamily = firstItemData.fontName
-      const ascentRatio = 0.8
-      const baseY = (firstTx[5] - fontHeight * ascentRatio) * scaleY
-      
-      // Filter out drop caps from lineItems before processing words
-      const filteredLineItems = lineItems.filter(itemData => {
-        const itemText = itemData.trimmedStr
-        const isLikelyDropCap = itemText.length <= 2 && /[a-zA-ZÀ-ÿ]/.test(itemText)
-        if (isLikelyDropCap) {
-          // Calculate average font size of other items on this line
-          let sumFontSize = 0
-          let count = 0
-          for (const otherItem of lineItems) {
-            if (otherItem !== itemData) {
-              sumFontSize += otherItem.fontSize
-              count++
-            }
-          }
-          if (count > 0 && itemData.fontSize >= (sumFontSize / count) * 2) {
-            return false // Filter out this drop cap
-          }
-        }
-        return true // Keep this item
-      })
-      
-      // Collect all words from all items on this line (excluding drop caps)
-      const lineWords = []
-      let lineCharIndex = pageCharOffset + charIndex
-      
-      filteredLineItems.forEach((itemData, itemIdx) => {
-        const trimmedStr = itemData.trimmedStr
-        
-        // Look up the charIndex for this item from the map using its original index
-        // itemData.itemIndex is the index in textContent.items (unfiltered PDF.js order)
-        // If this item was filtered out, it won't have a charIndex in extractedText
-        let itemCharIndex = itemIndexToCharIndex.get(itemData.itemIndex)
-        if (itemCharIndex === undefined) {
-          // This item was filtered out - assign -1 to indicate it's not in extractedText
-          // It will still be rendered but won't be part of TTS/highlighting
-          itemCharIndex = -1
-        }
-        
-        lineCharIndex = itemCharIndex
-        
-        // Split item text into words and spaces
-        // CRITICAL: Don't split items that have spaces between characters - these are likely malformed PDF extractions
-        // Instead, treat the entire trimmed string as a single "word" to preserve the text
-        const words = []
-        
-        // Check if this item has spaces between characters (malformed PDF extraction)
-        // Pattern: if item has many single characters separated by spaces, don't split it
-        const hasSpacesBetweenChars = trimmedStr.length > 3 && /^(\S\s)+\S?$/.test(trimmedStr.trim())
-        
-        if (hasSpacesBetweenChars) {
-          // Malformed item with spaces between characters - treat as single word
-          // Remove internal spaces to normalize it
-          const normalizedWord = trimmedStr.replace(/\s+/g, '')
-          if (normalizedWord.length > 0) {
-            words.push(normalizedWord)
-          }
-        } else {
-          // Normal item - split into words and spaces as before
+        // Add to textItems if not filtered
+        if (charIndex >= 0) {
+          // Split span text into words for textItems (matching original behavior)
+          const words = []
           let currentWord = ''
-          for (let i = 0; i < trimmedStr.length; i++) {
-            const char = trimmedStr[i]
+          for (let i = 0; i < spanText.length; i++) {
+            const char = spanText[i]
             if (/\w/.test(char)) {
               currentWord += char
             } else {
@@ -4462,164 +4141,99 @@ function Home() {
           if (currentWord.length > 0) {
             words.push(currentWord)
           }
-        }
-        
-        // Add words to line words array with their char indices
-        // CRITICAL: extractedText is built by joining trimmed items with spaces, not words
-        // So words within an item should have charIndex based on the item's position in extractedText
-        // The item's position is at lineCharIndex, and words are substrings of the item
-        // If lineCharIndex is -1, this item was filtered out and won't have a charIndex in extractedText
-        const itemStartCharIndex = lineCharIndex
-        let wordOffsetInItem = 0
-        words.forEach(word => {
-          const wordCharIndex = itemStartCharIndex >= 0 ? itemStartCharIndex + wordOffsetInItem : -1
-          lineWords.push({
-            word,
-            charIndex: wordCharIndex,
-            itemIndex: itemData.itemIndex
-          })
-          wordOffsetInItem += word.length
-        })
-        
-        // charIndex is now calculated from the map, so we don't need to update it sequentially
-        // But we still track it for fallback cases
-        // The item's charIndex is already set in lineCharIndex from the map lookup above
-      })
-      
-      // Calculate natural width of all words (without spacing)
-      tempContext.font = `${fontSize}px ${fontFamily}`
-      let naturalWidth = 0
-      lineWords.forEach(({ word }) => {
-        naturalWidth += tempContext.measureText(word).width
-      })
-      
-      // Calculate spacing to match line width exactly
-      // For justified text, distribute extra space between words
-      const wordTokens = lineWords.filter(w => /\w/.test(w.word))
-      const wordCount = wordTokens.length
-      const spaceCount = wordCount > 1 ? wordCount - 1 : 0
-      // CRITICAL: Use finalLineWidth (constrained by column boundary) instead of lineWidth
-      // This prevents lines from extending beyond their column boundaries
-      const effectiveLineWidth = typeof finalLineWidth !== 'undefined' ? finalLineWidth : lineWidth
-      const extraWidth = effectiveLineWidth - naturalWidth
-      const spacingPerGap = spaceCount > 0 ? extraWidth / spaceCount : 0
-      
-      // Create container for the entire line
-      const lineContainer = document.createElement('span')
-      lineContainer.style.position = 'absolute'
-      lineContainer.style.left = lineStartX + 'px'
-      lineContainer.style.top = baseY + 'px'
-      lineContainer.style.fontSize = fontSize + 'px'
-      lineContainer.style.fontFamily = fontFamily
-      lineContainer.style.transform = `rotate(${angle}rad)`
-      lineContainer.style.whiteSpace = 'pre'
-      lineContainer.style.display = 'inline-block'
-      lineContainer.style.overflow = 'visible'
-      // Store column index on line container for column-aware highlighting
-      lineContainer.dataset.columnIndex = currentCol
-      
-      // Render all words in the line container with spacing
-      let wordTokenIndex = 0
-      lineWords.forEach(({ word, charIndex: wordCharIndex, itemIndex }, wordIdx) => {
-        const span = document.createElement('span')
-        span.textContent = word
-        span.style.position = 'relative'
-        span.style.display = 'inline'
-        span.style.color = 'rgba(255, 0, 0, 0.5)'
-        span.style.backgroundColor = 'rgba(255, 255, 0, 0.2)'
-        span.style.cursor = interactionMode === 'highlight' ? 'text' : 'pointer'
-        span.style.userSelect = interactionMode === 'highlight' ? 'text' : 'none'
-        span.style.pointerEvents = interactionMode === 'highlight' ? 'auto' : 'auto'
-        span.dataset.page = pageNum
-        // Only set charIndex if the item is in extractedText (not filtered)
-        // Items with charIndex -1 were filtered out and won't be part of TTS/highlighting
-        if (wordCharIndex >= 0) {
-          span.dataset.charIndex = wordCharIndex
-        }
-        // Store column index on span for column-aware highlighting
-        span.dataset.columnIndex = currentCol
-        
-        if (!/\S/.test(word)) {
-          span.classList.add('text-space')
-        }
-        
-        // Add spacing after word tokens (not after punctuation or spaces)
-        // This distributes the extra width between words for justification
-        if (/\w/.test(word) && wordTokenIndex < wordCount - 1 && spacingPerGap > 0) {
-          span.style.marginRight = spacingPerGap + 'px'
-          wordTokenIndex++
-        }
-        
-        // Only add to pageTextItems if the item is in extractedText (has valid charIndex >= 0)
-        // Filtered items are still rendered but not added to textItems for TTS/highlighting
-        if (wordCharIndex >= 0) {
-          const textItem = {
-            str: word,
-            page: pageNum,
-            charIndex: wordCharIndex,
-            element: span
-          }
-          pageTextItems.push(textItem)
           
-          // Check if this word is part of an exhibit name
-          const currentExhibits = exhibitsRef.current
-          if (currentExhibits && currentExhibits.length > 0) {
-            for (const exhibit of currentExhibits) {
-              const exhibitStart = exhibit.position
-              const exhibitEnd = exhibit.position + exhibit.fullText.length
-              // Check if this word overlaps with an exhibit
-              const wordStart = wordCharIndex
-              const wordEnd = wordCharIndex + word.length
-              if (wordStart < exhibitEnd && wordEnd > exhibitStart) {
-                span.classList.add('exhibit-highlight')
-                span.dataset.exhibitType = exhibit.type
-                span.dataset.exhibitNumber = exhibit.number
-                span.style.cursor = 'pointer'
-                
-                // Add click handler for exhibit
-                span.addEventListener('click', (e) => {
-                  if (interactionMode === 'read') {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    // Switch to exhibits sidebar
-                    setSidebarView('exhibits')
-                    // Dispatch event to select the exhibit in sidebar
-                    window.dispatchEvent(new CustomEvent('selectExhibit', {
-                      detail: { exhibit }
-                    }))
-                  }
-                })
-                
-                break // Only highlight once per exhibit
-              }
+          // Create textItem for each word
+          let wordOffset = 0
+          words.forEach(word => {
+            const wordCharIndex = charIndex + wordOffset
+            const textItem = {
+              str: word,
+              page: pageNum,
+              charIndex: wordCharIndex,
+              element: span // Use the same span for all words in this item
             }
-          }
-          
-          span.addEventListener('click', (e) => {
-            if (interactionMode === 'read' && !span.classList.contains('exhibit-highlight')) {
-              e.preventDefault()
-              if (/\S/.test(word)) {
-                handleWordClick(textItem.charIndex, word, textItem.element)
-              } else {
-                const nextWordStart = findWordStart(extractedText, textItem.charIndex + word.length)
-                handleWordClick(nextWordStart, word)
-              }
-            }
+            pageTextItems.push(textItem)
+            wordOffset += word.length
           })
         }
-        // Filtered items are still rendered visually but won't have click handlers for TTS
-        
-        lineContainer.appendChild(span)
-      })
-      
-      textLayerDiv.appendChild(lineContainer)
+      }
     })
-
+    
+    // Re-apply exhibit highlighting
+    const currentExhibits = exhibitsRef.current
+    if (currentExhibits && currentExhibits.length > 0) {
+      pageTextItems.forEach(textItem => {
+        if (textItem.charIndex < 0) return
+        
+        for (const exhibit of currentExhibits) {
+          const exhibitStart = exhibit.position
+          const exhibitEnd = exhibit.position + exhibit.fullText.length
+          const wordStart = textItem.charIndex
+          const wordEnd = textItem.charIndex + textItem.str.length
+          
+          if (wordStart < exhibitEnd && wordEnd > exhibitStart) {
+            const span = textItem.element
+            span.classList.add('exhibit-highlight')
+            span.dataset.exhibitType = exhibit.type
+            span.dataset.exhibitNumber = exhibit.number
+            span.style.cursor = 'pointer'
+            
+            // Add click handler for exhibit
+            span.addEventListener('click', (e) => {
+              if (interactionMode === 'read') {
+                e.preventDefault()
+                e.stopPropagation()
+                setSidebarView('exhibits')
+                window.dispatchEvent(new CustomEvent('selectExhibit', {
+                  detail: { exhibit }
+                }))
+              }
+            })
+            
+            break
+          }
+        }
+      })
+    }
+    
+    // Re-apply click handlers for TTS
+    pageTextItems.forEach(textItem => {
+      if (textItem.charIndex < 0) return
+      
+      const span = textItem.element
+      const word = textItem.str
+      
+      // Only add click handler if not already an exhibit
+      if (!span.classList.contains('exhibit-highlight')) {
+        // Ensure pointer events are enabled for clicks
+        span.style.pointerEvents = 'auto'
+        span.style.cursor = interactionMode === 'read' ? 'pointer' : 'text'
+        span.addEventListener('click', (e) => {
+          // #region agent log
+          if (typeof window !== 'undefined') {
+            fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H4',location:'Home.jsx:span-click',message:'Text span clicked',data:{interactionMode,charIndex:textItem.charIndex,word,textLayerVisible},timestamp:Date.now()})}).catch(()=>{})
+          }
+          // #endregion
+          if (interactionMode === 'read') {
+            e.preventDefault()
+            e.stopPropagation()
+            if (/\S/.test(word)) {
+              handleWordClick(textItem.charIndex, word, textItem.element)
+            } else {
+              const nextWordStart = findWordStart(extractedText, textItem.charIndex + word.length)
+              handleWordClick(nextWordStart, word)
+            }
+          }
+        })
+      }
+    })
+    
     // Update text items for this page
     setTextItems(prev => {
       const filtered = prev.filter(item => item.page !== pageNum)
       return [...filtered, ...pageTextItems]
     })
+    
   }
 
   // Clear the current start position marker
@@ -4707,7 +4321,7 @@ function Home() {
     const firstElement = elements[0]
     if (!firstElement || !firstElement.isConnected) return null
 
-    const container = firstElement.closest('.text-layer') || firstElement.closest('.pdf-canvas-wrapper') || firstElement.closest('.pdf-page-wrapper')
+    const container = firstElement.closest('.textLayer') || firstElement.closest('.text-layer') || firstElement.closest('.pdf-canvas-wrapper') || firstElement.closest('.pdf-page-wrapper')
     if (!container) return null
 
     const containerRect = container.getBoundingClientRect()
@@ -5125,9 +4739,19 @@ function Home() {
 
   // Highlight the element currently being read - ensure exact match with TTS position
   const highlightCurrentReading = (position) => {
+    // #region agent log
+    if (typeof window !== 'undefined') {
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H1',location:'Home.jsx:highlightCurrentReading',message:'highlightCurrentReading entry',data:{position,hasText:!!extractedText,textLength:extractedText?.length ?? 0},timestamp:Date.now()})}).catch(()=>{})
+    }
+    // #endregion
     
     // Validate position is within bounds
     if (!extractedText || position < 0 || position > extractedText.length) {
+      // #region agent log
+      if (typeof window !== 'undefined') {
+        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H2',location:'Home.jsx:highlightCurrentReading',message:'highlightCurrentReading out of bounds',data:{position,hasText:!!extractedText,textLength:extractedText?.length ?? 0},timestamp:Date.now()})}).catch(()=>{})
+      }
+      // #endregion
       return
     }
 
@@ -5188,6 +4812,12 @@ function Home() {
       return item.charIndex <= position && 
              item.charIndex + item.str.length > position
     })
+
+    // #region agent log
+    if (typeof window !== 'undefined') {
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H3',location:'Home.jsx:highlightCurrentReading',message:'highlightCurrentReading matches',data:{position,matchingCount:matchingItems.length,firstPage:matchingItems[0]?getElementPageNumber(matchingItems[0].element):null},timestamp:Date.now()})}).catch(()=>{})
+    }
+    // #endregion
 
     if (matchingItems.length === 0) {
       // No items found at this position - might be transitioning to next page
@@ -6544,262 +6174,6 @@ function Home() {
     // If we found a word, return its start position
     // (start is already at the beginning of the word after skipping whitespace)
     return start
-  }
-
-  const handleFileChange = async (event, existingDocumentId = null) => {
-    const file = event.target.files[0]
-    if (!file) return
-
-    if (file.type !== 'application/pdf') {
-      setError('Please upload a PDF file.')
-      return
-    }
-
-    setError('')
-    clearStartMarker()
-    clearReadingHighlight()
-    setPdfFile(file)
-    setIsLoading(true)
-    setExtractedText('')
-    setTextItems([])
-    setCurrentPage(1)
-    setTotalPages(0)
-    setStartPosition(0)
-    
-    // Only clear highlights/highlightItems if this is a NEW document (not loading existing)
-    const isNewDocument = !existingDocumentId && !documentId
-    if (isNewDocument) {
-      setHighlights([])
-      setHighlightItems([])
-      setHighlightColor('yellow') // Reset to yellow when uploading a new PDF
-    }
-
-    try {
-      const arrayBuffer = await file.arrayBuffer()
-      // Clone the ArrayBuffer to prevent it from being detached when PDF.js uses it
-      pdfArrayBufferRef.current = arrayBuffer.slice(0)
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
-      setPdfDoc(pdf)
-      setTotalPages(pdf.numPages)
-      
-      // Mark initial load as complete - now user actions should be saved
-      // This must happen before any user interaction (like creating highlights)
-      isInitialLoadRef.current = false
-      
-      // Only clear highlights when loading a NEW PDF (not when reopening existing)
-      if (isNewDocument) {
-        setHighlights([]) // Clear highlights when loading new PDF
-        setHighlightItems([]) // Clear highlight items when loading new PDF
-      }
-      setHighlightHistory([[]]) // Reset history
-      setHistoryIndex(0)
-      historyIndexRef.current = 0
-      highlightHistoryRef.current = [[]]
-      highlightsRef.current = []
-
-      // Extract all text, filtering out headers and footers using repetition detection
-      // First, build a map of text repetition across pages
-      const { textToPages, pageTextItems } = await buildRepetitionMap(pdf, pdf.numPages)
-      
-      // Initial extraction with sync version for immediate display
-      // Build text consistently: trim items to avoid double spaces, join with single space
-      let fullText = ''
-      for (const pageData of pageTextItems) {
-        const filteredItems = filterHeadersAndFootersSync(pageData, textToPages)
-        // Trim each item to remove leading/trailing spaces, then join with single space
-        // This ensures consistent spacing that matches textItems construction
-        const pageText = filteredItems.map(item => item.str.trim()).filter(str => str.length > 0).join(' ')
-        if (pageText.length > 0) {
-          if (fullText.length > 0) {
-            fullText += '\n\n' // Add page break before this page's text
-          }
-          fullText += pageText
-        }
-      }
-
-      const initialText = fullText
-      setExtractedText(initialText)
-      
-      // Background: Re-process with enhanced filtering (non-blocking)
-      // This updates the text seamlessly without interrupting TTS
-      setTimeout(async () => {
-        try {
-          console.log('Starting background footer filtering...')
-          let enhancedText = ''
-          
-          for (const pageData of pageTextItems) {
-            // Apply repetition-based filtering
-            const filteredItems = await filterHeadersAndFootersWithLLM(pageData, textToPages)
-            // Trim each item to remove leading/trailing spaces, then join with single space
-            // This ensures consistent spacing that matches textItems construction
-            const pageText = filteredItems.map(item => item.str.trim()).filter(str => str.length > 0).join(' ')
-            if (pageText.length > 0) {
-              if (enhancedText.length > 0) {
-                enhancedText += '\n\n' // Add page break before this page's text
-              }
-              enhancedText += pageText
-            }
-          }
-          
-          const finalText = enhancedText
-          
-          // Only update if text changed (to avoid unnecessary re-renders)
-          if (finalText !== initialText) {
-            setExtractedText(finalText)
-            console.log('Footer classification completed - text updated in background')
-          } else {
-            console.log('Footer classification completed - no changes detected')
-          }
-        } catch (error) {
-          console.warn('Background footer classification failed:', error)
-          // Keep using initial text - no interruption
-        }
-      }, 100) // Small delay to ensure initial render completes
-      
-      // Auto-detect language
-      if (language === 'auto' && initialText) {
-        const detected = detectLanguage(initialText)
-        console.log('Detected language:', detected, 'for text length:', initialText.length)
-        setDetectedLanguage(detected)
-      }
-
-      // Upload PDF to Storage and process for AI features
-      if (initialText && initialText.length > 0 && currentUser) {
-        // Use existing documentId if provided, otherwise create a new one
-        const finalDocumentId = existingDocumentId || documentId || `${file.name}-${Date.now()}`
-        
-        // Only create new documentId if we don't have one
-        if (!existingDocumentId && !documentId) {
-          setDocumentId(finalDocumentId)
-        } else {
-          // Ensure documentId state is set even if we're reusing
-          if (finalDocumentId !== documentId) {
-            setDocumentId(finalDocumentId)
-          }
-        }
-        
-        // Upload PDF to Storage first (only if new document, otherwise reuse existing storage)
-        let storageUrl = null
-        const isNewDocument = !existingDocumentId && !documentId
-        
-        // Only clear timeline if this is a NEW document (not loading existing)
-        if (isNewDocument) {
-          setTimeline(null) // Clear previous timeline
-          setTimelineError(null)
-          setTimelineIcons({}) // Clear previous icons
-        }
-        
-        // Check if document already exists and has been processed
-        let documentAlreadyProcessed = false
-        if (!isNewDocument) {
-          try {
-            const docRef = doc(db, 'users', currentUser.uid, 'documents', finalDocumentId)
-            const docSnap = await getDoc(docRef)
-            if (docSnap.exists()) {
-              const docData = docSnap.data()
-              // Check if document has been processed (has chunks or other AI processing indicators)
-              documentAlreadyProcessed = !!(docData.storageUrl || docData.processedAt || docData.chunks)
-              if (docData.storageUrl) {
-                storageUrl = docData.storageUrl
-                console.log('Using existing Storage URL:', storageUrl)
-              }
-            }
-          } catch (error) {
-            console.warn('Error checking existing document:', error)
-          }
-        }
-        
-        // Only set isPDFProcessing for new documents or if document hasn't been processed yet
-        if (isNewDocument || !documentAlreadyProcessed) {
-          setIsPDFProcessing(true)
-        } else {
-          setIsPDFProcessing(false)
-          // Mark initial load as complete - now user actions should be saved
-          isInitialLoadRef.current = false
-        }
-        
-        if (isNewDocument) {
-          // New document - upload to storage
-          try {
-            const storageRef = ref(storage, `users/${currentUser.uid}/uploads/${finalDocumentId}.pdf`)
-            await uploadBytes(storageRef, file)
-            storageUrl = await getDownloadURL(storageRef)
-            console.log('PDF uploaded to Storage:', storageUrl)
-          } catch (storageError) {
-            console.error('Error uploading PDF to Storage:', storageError)
-            // Continue processing even if storage upload fails
-          }
-          
-          // Create document in Firestore immediately so highlights can be saved
-          // This must happen before processPDFForAI to ensure document exists
-          try {
-            const docRef = doc(db, 'users', currentUser.uid, 'documents', finalDocumentId)
-            const now = new Date().toISOString()
-            await setDoc(docRef, {
-              fileName: file.name,
-              pageCount: pdf.numPages,
-              textLength: initialText.length,
-              storageUrl: storageUrl,
-              fileSize: file.size,
-              uploadedAt: now,
-              createdAt: now,
-              processedAt: now, // Set initial processedAt so document shows in dashboard
-              processingStatus: 'pending'
-            }, { merge: true })
-            console.log('Document created in Firestore:', finalDocumentId)
-          } catch (docError) {
-            console.error('Error creating document in Firestore:', docError)
-            // Continue even if document creation fails - processPDFForAI will try again
-          }
-        }
-        
-        // Process PDF in background (don't block UI) - only if needed
-        if (isNewDocument || !documentAlreadyProcessed) {
-          processPDFForAI(finalDocumentId, initialText, {
-            fileName: file.name,
-            pageCount: pdf.numPages,
-            textLength: initialText.length,
-            storageUrl: storageUrl,
-            fileSize: file.size,
-            uploadedAt: new Date().toISOString()
-          }).then(() => {
-            setIsPDFProcessing(false)
-            // Redirect to document route after new upload completes
-            if (isNewDocument && finalDocumentId) {
-              navigate(`/document/${finalDocumentId}`, { replace: true })
-            }
-          }).catch(err => {
-            console.error('Error processing PDF for AI:', err)
-            setIsPDFProcessing(false)
-            // Don't show error to user - AI features will just be unavailable
-            // Still redirect even if processing fails
-            if (isNewDocument && finalDocumentId) {
-              navigate(`/document/${finalDocumentId}`, { replace: true })
-            }
-          })
-        }
-      }
-      
-      // Initialize Media Session metadata so macOS recognizes this as a media source
-      if ('mediaSession' in navigator) {
-        console.log('Initializing Media Session metadata for PDF:', file.name)
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: file.name,
-          artist: 'Text-to-Speech',
-          album: 'PDF Reader'
-        })
-        // Set to 'paused' initially so macOS recognizes this as an active media source
-        // This helps macOS route media keys to the browser
-        navigator.mediaSession.playbackState = 'paused'
-        console.log('Media Session initialized. PlaybackState:', navigator.mediaSession.playbackState)
-        console.log('Media Session metadata:', navigator.mediaSession.metadata)
-      }
-    } catch (err) {
-      setError('Error reading PDF: ' + err.message)
-      console.error(err)
-    } finally {
-      setIsLoading(false)
-    }
   }
 
   // Process PDF for AI features (chunking and embeddings)
@@ -8924,23 +8298,24 @@ function Home() {
       
       // Only add if there's actually a selected portion
       if (startOffset < endOffset && startOffset >= 0 && endOffset <= textNode.textContent.length) {
-        // Get span position - use getBoundingClientRect if inline styles are not available
-        let spanLeft = parseFloat(span.style.left)
-        let spanTop = parseFloat(span.style.top)
+        // Always use getBoundingClientRect for accurate positioning regardless of text visibility
+        // This ensures coordinates are correct even when text color changes
+        const spanRect = span.getBoundingClientRect()
+        const spanLeft = spanRect.left - textLayerRect.left
+        const spanTop = spanRect.top - textLayerRect.top
         
         // Get font size - try inline style first, then computed style, then bounding rect height
         let spanHeight = parseFloat(span.style.fontSize)
-        let spanRect = null
         
-        // If inline styles are empty, use getBoundingClientRect to calculate relative position
-        if (isNaN(spanLeft) || isNaN(spanTop) || span.style.left === '' || span.style.top === '') {
-          spanRect = span.getBoundingClientRect()
-          spanLeft = spanRect.left - textLayerRect.left
-          spanTop = spanRect.top - textLayerRect.top
-          // Also get actual height from bounding rect if fontSize is not available
-          if (isNaN(spanHeight) || span.style.fontSize === '') {
-            spanHeight = spanRect.height
-          }
+        // #region agent log
+        if (typeof window !== 'undefined' && selectedSpans.length === 0) {
+          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H5',location:'Home.jsx:calculatePreciseRectangles',message:'First span coordinates',data:{spanLeft,spanTop,textLayerRect:{left:textLayerRect.left,top:textLayerRect.top,width:textLayerRect.width,height:textLayerRect.height},spanRect:{left:spanRect.left,top:spanRect.top,width:spanRect.width,height:spanRect.height},inlineStyles:{left:span.style.left,top:span.style.top}},timestamp:Date.now()})}).catch(()=>{})
+        }
+        // #endregion
+        
+        // Get height from bounding rect if fontSize is not available
+        if (isNaN(spanHeight) || span.style.fontSize === '') {
+          spanHeight = spanRect.height
         }
         
         // If fontSize is still not available, use computed style
@@ -9252,7 +8627,7 @@ function Home() {
         ? commonAncestor.parentElement 
         : commonAncestor
       
-      const textLayer = ancestorElement?.closest('.text-layer')
+      const textLayer = ancestorElement?.closest('.textLayer') || ancestorElement?.closest('.text-layer')
       
       if (!textLayer) {
         return range.toString()
@@ -9799,7 +9174,7 @@ function Home() {
         // Fallback: use elementFromPoint and find text node
         const element = document.elementFromPoint(x, y)
         if (element) {
-          const span = element.closest('.text-layer span')
+          const span = element.closest('.textLayer span') || element.closest('.text-layer span')
           if (span && span.firstChild && span.firstChild.nodeType === Node.TEXT_NODE) {
             range = document.createRange()
             range.setStart(span.firstChild, 0)
@@ -9850,7 +9225,7 @@ function Home() {
       // Only handle if clicking directly on a text span (not through a highlight)
       const clickedElement = e.target
       if (!clickedElement.classList.contains('text-layer') && 
-          !clickedElement.closest('.text-layer span')) {
+          !clickedElement.closest('.textLayer span') && !clickedElement.closest('.text-layer span')) {
         return
       }
       
@@ -10140,7 +9515,7 @@ function Home() {
       // If still not found, try to find page from selection start range
       if (!pageNum && selectionStartRangeRef.current) {
         const commonAncestor = selectionStartRangeRef.current.commonAncestorContainer
-        const textLayer = commonAncestor.closest('.text-layer')
+        const textLayer = commonAncestor.closest('.textLayer') || commonAncestor.closest('.text-layer')
         if (textLayer) {
           for (const [page, layer] of Object.entries(textLayerRefs.current)) {
             if (layer === textLayer) {
@@ -10154,7 +9529,7 @@ function Home() {
       // If still not found, try from last valid range
       if (!pageNum && lastValidRangeRef.current) {
         const commonAncestor = lastValidRangeRef.current.commonAncestorContainer
-        const textLayer = commonAncestor.closest('.text-layer')
+        const textLayer = commonAncestor.closest('.textLayer') || commonAncestor.closest('.text-layer')
         if (textLayer) {
           for (const [page, layer] of Object.entries(textLayerRefs.current)) {
             if (layer === textLayer) {
@@ -10733,6 +10108,11 @@ function Home() {
       }
 
       let rectangles = calculatePreciseRectangles(selectionRange, textLayerDiv)
+      // #region agent log
+      if (typeof window !== 'undefined' && rectangles && rectangles.length > 0) {
+        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H6',location:'Home.jsx:handleSelectionEnd',message:'Highlight rectangles calculated',data:{rectCount:rectangles.length,firstRect:rectangles[0],textLayerRect:{width:textLayerDiv.getBoundingClientRect().width,height:textLayerDiv.getBoundingClientRect().height}},timestamp:Date.now()})}).catch(()=>{})
+      }
+      // #endregion
       
       
       // If rectangles calculation failed, try fallback using getClientRects
@@ -11159,7 +10539,7 @@ function Home() {
     }
 
     // Also observe all text layer containers for changes
-    const textLayers = document.querySelectorAll('.text-layer')
+    const textLayers = document.querySelectorAll('.textLayer, .text-layer')
     textLayers.forEach(layer => {
       resizeObserver.observe(layer)
     })
@@ -11987,6 +11367,80 @@ function Home() {
     })
   }, [textLayerVisible, highlights])
 
+  // Toggle text layer visibility by updating span colors and ensure click handlers work
+  useEffect(() => {
+    Object.values(textLayerRefs.current).forEach((textLayer, pageIndex) => {
+      if (textLayer) {
+        const spans = textLayer.querySelectorAll('span')
+        // #region agent log
+        if (typeof window !== 'undefined') {
+          fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H8',location:'Home.jsx:textLayerVisibility',message:'Toggling text visibility',data:{textLayerVisible,interactionMode,spanCount:spans.length},timestamp:Date.now()})}).catch(()=>{})
+        }
+        // #endregion
+        spans.forEach(span => {
+          if (textLayerVisible) {
+            // Show text by removing transparent color (let CSS handle it, or set to black)
+            span.style.color = ''
+            span.style.setProperty('color', 'black', 'important')
+          } else {
+            // Hide text by making it transparent
+            span.style.setProperty('color', 'transparent', 'important')
+          }
+          // Ensure pointer events are enabled for clicks (especially important when text is visible)
+          span.style.pointerEvents = 'auto'
+          // Set cursor based on interaction mode
+          if (interactionMode === 'read') {
+            span.style.cursor = 'pointer'
+          } else {
+            span.style.cursor = 'text'
+          }
+        })
+        
+        // Add a delegated click handler on the text layer itself to catch all clicks
+        // This ensures clicks work even if individual span handlers are missing
+        const handleTextLayerClick = (e) => {
+          // Only handle if clicking directly on a span
+          const clickedSpan = e.target.closest('span')
+          if (!clickedSpan || clickedSpan.closest('.textLayer') !== textLayer) return
+          
+          // #region agent log
+          if (typeof window !== 'undefined') {
+            fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H10',location:'Home.jsx:textLayerClick',message:'Text layer click detected',data:{interactionMode,clickedTag:clickedSpan.tagName,hasTextItem:!!textItemsRef.current.find(item => item.element === clickedSpan)},timestamp:Date.now()})}).catch(()=>{})
+          }
+          // #endregion
+          
+          if (interactionMode === 'read') {
+            // Find the textItem for this span
+            const textItems = textItemsRef.current.length > 0 ? textItemsRef.current : []
+            const textItem = textItems.find(item => item.element === clickedSpan)
+            
+            if (textItem) {
+              e.preventDefault()
+              e.stopPropagation()
+              const word = textItem.str
+              if (/\S/.test(word)) {
+                handleWordClick(textItem.charIndex, word, clickedSpan)
+              } else {
+                const nextWordStart = findWordStart(extractedText, textItem.charIndex + word.length)
+                handleWordClick(nextWordStart, word)
+              }
+            }
+          }
+        }
+        
+        // Remove old handler if it exists
+        if (textLayer.dataset.hasClickHandler) {
+          textLayer.removeEventListener('click', textLayer._clickHandler)
+        }
+        
+        // Add new handler
+        textLayer._clickHandler = handleTextLayerClick
+        textLayer.addEventListener('click', handleTextLayerClick, { capture: true })
+        textLayer.dataset.hasClickHandler = 'true'
+      }
+    })
+  }, [textLayerVisible, renderedPages, interactionMode])
+
   // Undo/redo functions for highlights
   const handleUndoHighlight = useCallback(() => {
     // Get the current history and index from refs (most up-to-date values)
@@ -12169,6 +11623,11 @@ function Home() {
       const x = rect.x * scaleRatio
       const y = rect.y * scaleRatioY
       const width = rect.width * scaleRatio
+      // #region agent log
+      if (typeof window !== 'undefined' && index === 0) {
+        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'run1',hypothesisId:'H7',location:'Home.jsx:renderHighlight',message:'Rendering highlight rect',data:{rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},calculated:{x,y,width},scaleRatio,scaleRatioY,creationTextLayerWidth,creationTextLayerHeight,currentCanvasDisplayedWidth,currentCanvasDisplayedHeight},timestamp:Date.now()})}).catch(()=>{})
+      }
+      // #endregion
       // Height calculation: scale the stored height, then add padding for better alignment
       // The stored height is the font size, but we need more to cover descenders and line spacing
       // Use a percentage-based padding that scales with font size (larger fonts need more padding)
@@ -13455,8 +12914,71 @@ function Home() {
     }
   }
 
+  // #region agent log
+  // #endregion
+
   // Render loading state or redirect to dashboard (when no PDF is loaded)
+  // #region agent log
+  try {
+    const renderCheckDataLate = {hasPdfDoc:!!pdfDoc,hasPdfFile:!!pdfFile,pdfFileName:pdfFile?.name,isLoading,hasFileInState:!!location.state?.file,hasDocumentInState:!!location.state?.documentId,documentIdFromUrl,totalPages};
+    if (typeof window !== 'undefined') {
+      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:13140',message:'Render check - pdfDoc state',data:renderCheckDataLate,timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch((e)=>{console.error('Render log fetch error:',e);});
+    }
+  } catch(e) {
+    console.error('Render check error (late):', e);
+  }
+  // #endregion
+  
+  // Use the early render decision to determine what to return
+  // Since execution doesn't reach here, use the early decision instead
+  if (shouldRedirect) {
+    // Redirect will happen via useEffect, just show loading
+    return (
+      <div className="app app-upload">
+        <div className="container container-upload">
+          <div className="loading">
+            <div className="spinner"></div>
+            <p>Redirecting to dashboard...</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+  
+  if (shouldRenderLoading) {
+    return (
+      <div className="app app-upload">
+        <div className="container container-upload">
+          <header className="header">
+            <div className="header-logo">
+              <img src="/logo.png" alt="SpeechCase" className="logo" />
+            </div>
+            <h1>Casedive</h1>
+          </header>
+
+          <div className="upload-section">
+            <div className="loading">
+              <div className="spinner"></div>
+              <p>Loading PDF...</p>
+            </div>
+
+            {error && (
+              <div className="error-message">
+                {error}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+  
   if (!pdfDoc) {
+    try {
+      const renderCheckDataLate = {hasPdfDoc:!!pdfDoc,hasPdfFile:!!pdfFile,pdfFileName:pdfFile?.name,isLoading,hasFileInState:!!location.state?.file,hasDocumentInState:!!location.state?.documentId,documentIdFromUrl,totalPages};
+    } catch(e) {
+      console.error('Early return render check error:', e);
+    }
     // Check if we're loading a PDF from dashboard (file or documentId in state) or currently loading
     const hasFileInState = location.state?.file
     const hasDocumentInState = location.state?.documentId
@@ -13505,6 +13027,13 @@ function Home() {
   }
 
   // Render PDF reader mode (when PDF is loaded)
+  // Use the early render decision
+  if (shouldRenderPDFReader) {
+    // #region agent log
+  if (typeof window !== 'undefined') {
+    fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Home.jsx:13185',message:'Rendering PDF reader',data:{hasPdfDoc:!!pdfDoc,hasPdfFile:!!pdfFile,pdfFileName:pdfFile?.name,totalPages},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch((e)=>{console.error('PDF reader log fetch error:',e);});
+  }
+  // #endregion
   return (
     <div className="app app-reader">
       {/* Top Toolbar */}
@@ -14029,7 +13558,7 @@ function Home() {
                       ref={(el) => {
                         if (el) textLayerRefs.current[pageInfo.pageNum] = el
                       }}
-                      className="text-layer"
+                      className={`textLayer ${textLayerVisible ? 'text-layer-visible' : 'text-layer-hidden'}`}
                       style={{ opacity: textLayerVisible ? 1 : 0 }}
                     />
                     <div
@@ -14334,15 +13863,13 @@ function Home() {
               Select text to create highlights
             </div>
           )}
-        </div>
+          </div>
           )}
         </>
       )}
     </div>
   )
+  }
 }
 
 export default Home
-
-
-

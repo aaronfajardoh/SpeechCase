@@ -653,7 +653,7 @@ ${htmlContent}
                       onMouseLeave={(e) => {
                         // Check if we're moving to a child element (the item) or the tooltip
                         const relatedTarget = e.relatedTarget
-                        if (relatedTarget) {
+                        if (relatedTarget && relatedTarget instanceof Node) {
                           // If moving to a child element within the wrapper, don't hide
                           if (e.currentTarget.contains(relatedTarget)) {
                             isHoveringWrapperRef.current = true
@@ -757,7 +757,7 @@ ${htmlContent}
                             onMouseLeave={(e) => {
                               // Check if we're moving back to the wrapper/item
                               const relatedTarget = e.relatedTarget
-                              if (relatedTarget) {
+                              if (relatedTarget && relatedTarget instanceof Node) {
                                 const wrapper = relatedTarget.closest('.highlight-item-wrapper')
                                 if (wrapper) {
                                   // Mouse is moving back to wrapper/item, keep tooltip visible

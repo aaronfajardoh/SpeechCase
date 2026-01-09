@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { IconFileText, IconLoading, IconClose, IconChevronLeft } from './Icons.jsx'
-import { extractExhibits } from '../../services/chunking.js'
+import { extractExhibits, chunkText, addMetadataTags } from '../../services/chunking.js'
 import { validateExhibitName, parseExhibitName } from '../../services/exhibitValidation.js'
 
 // Sidebar tab: exhibits insights
@@ -24,6 +24,7 @@ const ExhibitsSidebar = ({
   const [validatingExhibits, setValidatingExhibits] = useState(false) // Track validation progress
   const [validationComplete, setValidationComplete] = useState(false) // Track if validation has completed
   const [rawExhibits, setRawExhibits] = useState([]) // Store raw exhibits before validation
+  const [chunksWithMetadata, setChunksWithMetadata] = useState([]) // Store chunks with exhibit metadata
   const selectedExhibitRef = useRef(null) // Ref to track selected exhibit for external selection
   
   // Zoom and pan state
@@ -36,6 +37,132 @@ const ExhibitsSidebar = ({
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 })
   const lastPinchDistanceRef = useRef(null)
   const lastPinchCenterRef = useRef(null)
+
+  // Helper function to map a chunk's startIndex to a page number
+  const getPageForChunk = (chunkStartIndex) => {
+    if (!pageData || pageData.length === 0) return null
+    
+    for (let i = 0; i < pageData.length; i++) {
+      const pageInfo = pageData[i]
+      const nextPageInfo = pageData[i + 1]
+      if (chunkStartIndex >= pageInfo.pageCharOffset) {
+        if (!nextPageInfo || chunkStartIndex < nextPageInfo.pageCharOffset) {
+          return pageInfo.pageNum
+        }
+      }
+    }
+    
+    // Fallback: check if it's on the last page
+    if (pageData.length > 0) {
+      const lastPage = pageData[pageData.length - 1]
+      if (chunkStartIndex >= lastPage.pageCharOffset) {
+        return lastPage.pageNum
+      }
+    }
+    
+    return null
+  }
+
+  // Helper function to get pages containing a specific exhibit using chunk metadata
+  // This is much more efficient than searching the full text
+  const getPagesWithExhibits = (specificExhibitName = null) => {
+    if (!pageData || !chunksWithMetadata.length) {
+      return new Set()
+    }
+    
+    const pagesWithExhibits = new Set()
+    
+    // If a specific exhibit name is provided, only find pages for that exhibit
+    // Otherwise, find pages for all exhibits
+    if (specificExhibitName) {
+      const exhibitNameLower = specificExhibitName.toLowerCase().trim()
+      
+      // Extract type and number from the exhibit name for better matching
+      // e.g., "Annex 8" -> type: "annex", number: "8"
+      const exhibitMatch = exhibitNameLower.match(/^(exhibit|anexo|prueba|evidencia|documento|figure|figura|appendix|annex|attachment|chart|table|tabla|diagram|diagrama|schedule)\s+(.+)$/i)
+      const targetType = exhibitMatch ? exhibitMatch[1].toLowerCase() : null
+      const targetNumber = exhibitMatch ? exhibitMatch[2].trim() : null
+      
+      // Find chunks that contain this specific exhibit
+      chunksWithMetadata.forEach(chunk => {
+        if (chunk.metadata?.exhibits && Array.isArray(chunk.metadata.exhibits)) {
+          // Check if any exhibit in this chunk matches the target exhibit
+          const hasTargetExhibit = chunk.metadata.exhibits.some(exhibit => {
+            const chunkExhibitName = (exhibit.fullText || '').toLowerCase().trim()
+            const chunkNumber = (exhibit.number || '').toLowerCase().trim()
+            
+            // Try exact match first (both normalized to lowercase)
+            if (chunkExhibitName === exhibitNameLower) {
+              return true
+            }
+            
+            // If we extracted type and number, try matching those
+            if (targetType && targetNumber) {
+              // Check if chunk exhibit name contains the target type and number
+              // The chunk might have "annex 8" and we're looking for "annex 8"
+              const hasType = chunkExhibitName.includes(targetType)
+              // Match number more flexibly - could be "8", " 8", "8.", etc.
+              const normalizeNumber = (num) => num.replace(/[.,;:]/g, '').trim()
+              const normalizedChunkNumber = normalizeNumber(chunkNumber)
+              const normalizedTargetNumber = normalizeNumber(targetNumber)
+              const hasNumber = normalizedChunkNumber === normalizedTargetNumber || 
+                               chunkExhibitName.includes(` ${targetNumber}`) || 
+                               chunkExhibitName.includes(targetNumber) ||
+                               chunkExhibitName.endsWith(targetNumber)
+              if (hasType && hasNumber) {
+                return true
+              }
+            }
+            
+            // Fallback: check if names overlap significantly
+            // Remove punctuation and normalize spacing for comparison
+            const normalizeForMatch = (str) => str.replace(/[.,;:]/g, '').replace(/\s+/g, ' ').trim()
+            const normalizedChunk = normalizeForMatch(chunkExhibitName)
+            const normalizedTarget = normalizeForMatch(exhibitNameLower)
+            
+            return normalizedChunk.includes(normalizedTarget) || 
+                   normalizedTarget.includes(normalizedChunk) ||
+                   (chunkNumber && chunkNumber === targetNumber && targetType && chunkExhibitName.includes(targetType))
+          })
+          
+          if (hasTargetExhibit) {
+            const pageNum = getPageForChunk(chunk.startIndex)
+            if (pageNum) {
+              pagesWithExhibits.add(pageNum)
+            }
+          }
+        }
+      })
+    } else {
+      // Find pages for all exhibits (for backward compatibility)
+      chunksWithMetadata.forEach(chunk => {
+        if (chunk.metadata?.exhibits && Array.isArray(chunk.metadata.exhibits) && chunk.metadata.exhibits.length > 0) {
+          const pageNum = getPageForChunk(chunk.startIndex)
+          if (pageNum) {
+            pagesWithExhibits.add(pageNum)
+          }
+        }
+      })
+    }
+    
+    return pagesWithExhibits
+  }
+
+  // Create chunks with metadata when text is available
+  useEffect(() => {
+    if (extractedText && extractedText.length > 0 && !isPDFProcessing) {
+      try {
+        const chunks = chunkText(extractedText, { chunkSize: 1000, chunkOverlap: 200 })
+        const chunksWithTags = addMetadataTags(chunks, extractedText)
+        setChunksWithMetadata(chunksWithTags)
+      } catch (error) {
+        console.error('Error creating chunks:', error)
+        setChunksWithMetadata([])
+      }
+    } else {
+      setChunksWithMetadata([])
+    }
+  }, [extractedText, isPDFProcessing])
 
   // Extract exhibits from text when text is available
   useEffect(() => {
@@ -186,10 +313,6 @@ const ExhibitsSidebar = ({
                 const lastMatch = allMatches[allMatches.length - 1]
                 const lastMatchPosition = lastMatch.position
                 
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ExhibitsSidebar.jsx:validateExhibits',message:'Last occurrence found',data:{exhibitName,totalMatches:allMatches.length,lastMatchPosition,firstPosition:exhibit.position,mentionPageNum},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'Q'})}).catch(()=>{});
-                // #endregion
-                
                 // Find which page contains the last occurrence
                 if (pageData && pageData.length > 0) {
                   for (let i = 0; i < pageData.length; i++) {
@@ -216,19 +339,27 @@ const ExhibitsSidebar = ({
                 }
               } else {
                 // Fallback: if no matches found, use mention page
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ExhibitsSidebar.jsx:validateExhibits',message:'No matches found, using mention page',data:{exhibitName,mentionPageNum},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'Q'})}).catch(()=>{});
-                // #endregion
               }
-              
-              // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ExhibitsSidebar.jsx:validateExhibits',message:'Page selected from last occurrence',data:{exhibitName,targetPageNum,mentionPageNum},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'Q'})}).catch(()=>{});
-              // #endregion
 
               // Verify with AI that the selected page actually contains this specific exhibit
               // This is important when multiple exhibits are on the same page
               let verifiedPageNum = targetPageNum
+              let pageContainsExhibit = false // Initialize outside try block to avoid scope issues
               try {
+                // Validate pdfDoc and page number before proceeding
+                if (!pdfDoc) {
+                  throw new Error(`PDF document is not loaded yet`)
+                }
+                
+                // Check if pdfDoc is in a valid state (not destroyed)
+                if (!pdfDoc.numPages || pdfDoc.numPages <= 0) {
+                  throw new Error(`PDF document is in an invalid state (numPages: ${pdfDoc.numPages})`)
+                }
+                
+                if (!targetPageNum || targetPageNum < 1 || targetPageNum > pdfDoc.numPages) {
+                  throw new Error(`Invalid page number: ${targetPageNum} (valid range: 1-${pdfDoc.numPages})`)
+                }
+                
                 const verifyPage = await pdfDoc.getPage(targetPageNum - 1)
                 const verifyScale = 1.0 // Lower scale for faster verification
                 const verifyViewport = verifyPage.getViewport({ scale: verifyScale })
@@ -245,10 +376,6 @@ const ExhibitsSidebar = ({
                 const verifyImageDataUrl = verifyCanvas.toDataURL('image/png')
                 const verifyResult = await validateExhibitName(verifyImageDataUrl, exhibitName)
                 
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ExhibitsSidebar.jsx:validateExhibits',message:'AI verification result',data:{exhibitName,targetPageNum,verified:verifyResult.validated,exhibitNameFound:verifyResult.exhibitName,matches:verifyResult.matches,confidence:verifyResult.confidence},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'R'})}).catch(()=>{});
-                // #endregion
-                
                 // Check if the found exhibit name contains our specific exhibit
                 const foundExhibitName = verifyResult.exhibitName ? verifyResult.exhibitName.toLowerCase() : ''
                 const searchExhibitName = exhibitName.toLowerCase()
@@ -256,21 +383,64 @@ const ExhibitsSidebar = ({
                 const exactMatch = exactNamePattern.test(foundExhibitName)
                 
                 // Accept if: validated AND (matches OR exact name found in list)
-                const pageContainsExhibit = verifyResult.validated && (verifyResult.matches || exactMatch)
+                pageContainsExhibit = verifyResult.validated && (verifyResult.matches || exactMatch)
                 
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ExhibitsSidebar.jsx:validateExhibits',message:'Page verification decision',data:{exhibitName,targetPageNum,pageContainsExhibit,exactMatch,foundExhibitName,matches:verifyResult.matches},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'R'})}).catch(()=>{});
-                // #endregion
-                
-                // If the page doesn't contain this specific exhibit, search forward
+                // If the page doesn't contain this specific exhibit, search forward AND backward
                 if (!pageContainsExhibit) {
-                  // #region agent log
-                  fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ExhibitsSidebar.jsx:validateExhibits',message:'Searching forward for exhibit',data:{exhibitName,targetPageNum,searchStart:targetPageNum+1,searchEnd:Math.min(targetPageNum+25,pdfDoc.numPages)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'R'})}).catch(()=>{});
-                  // #endregion
-                  // Search forward up to 25 pages to find the page with this specific exhibit
-                  // Increased from 5 to handle cases where exhibits are far from their mentions
-                  for (let pageNum = targetPageNum + 1; pageNum <= Math.min(targetPageNum + 25, pdfDoc.numPages); pageNum++) {
+                  // Get pages that contain THIS SPECIFIC exhibit using chunk metadata
+                  // This is much more efficient than searching all exhibit pages
+                  const pagesWithExhibits = getPagesWithExhibits(exhibitName)
+                  const allPagesArray = Array.from(pagesWithExhibits).sort((a, b) => a - b)
+                  
+                  // Search BOTH forward and backward from targetPageNum
+                  // Prioritize pages close to targetPageNum (within 5 pages)
+                  const forwardPages = allPagesArray.filter(pageNum => pageNum > targetPageNum && pageNum <= pdfDoc.numPages)
+                  const backwardPages = allPagesArray.filter(pageNum => pageNum < targetPageNum && pageNum >= 1)
+                  
+                  // Build candidate list: first check backward (exhibit might be before prose mention), then forward
+                  // Prioritize pages within 5 pages of targetPageNum
+                  let candidatePages = []
+                  
+                  // Add backward pages (closest first, but limit to 3 pages)
+                  const nearbyBackward = backwardPages.filter(p => targetPageNum - p <= 5).slice(-3).reverse()
+                  candidatePages.push(...nearbyBackward)
+                  
+                  // Add forward pages (closest first, limit to 10 pages)
+                  candidatePages.push(...forwardPages.slice(0, 10))
+                  
+                  // FALLBACK: If chunk metadata returned 0 pages, use the old last-occurrence method
+                  // This ensures we still find the exhibit even if chunk matching fails
+                  if (candidatePages.length === 0 && extractedText) {
+                    // Use the old method: find all pages with any exhibits, then filter
+                    const allPagesWithExhibits = getPagesWithExhibits() // No specific name = all exhibits
+                    const allPagesArray2 = Array.from(allPagesWithExhibits).sort((a, b) => a - b)
+                    const forwardPages2 = allPagesArray2.filter(pageNum => pageNum > targetPageNum && pageNum <= pdfDoc.numPages)
+                    const backwardPages2 = allPagesArray2.filter(pageNum => pageNum < targetPageNum && pageNum >= 1)
+                    candidatePages = []
+                    candidatePages.push(...backwardPages2.filter(p => targetPageNum - p <= 5).slice(-3).reverse())
+                    candidatePages.push(...forwardPages2.slice(0, 10))
+                    
+                    // If that also returns 0, fall back to sequential search (last resort)
+                    if (candidatePages.length === 0) {
+                      // Last resort: sequential search backward first (up to 5 pages), then forward (up to 25 pages)
+                      for (let pageNum = Math.max(1, targetPageNum - 5); pageNum < targetPageNum; pageNum++) {
+                        candidatePages.push(pageNum)
+                      }
+                      for (let pageNum = targetPageNum + 1; pageNum <= Math.min(targetPageNum + 25, pdfDoc.numPages); pageNum++) {
+                        candidatePages.push(pageNum)
+                      }
+                    }
+                  }
+                  
+                  // Search up to 10 candidate pages (instead of 25 sequential pages)
+                  const maxPagesToTest = Math.min(candidatePages.length, 10)
+                  for (let i = 0; i < maxPagesToTest; i++) {
+                    const pageNum = candidatePages[i]
                     try {
+                      // Validate page number before accessing
+                      if (!pdfDoc || !pageNum || pageNum < 1 || pageNum > pdfDoc.numPages) {
+                        continue
+                      }
                       const testPage = await pdfDoc.getPage(pageNum - 1)
                       const testScale = 1.0
                       const testViewport = testPage.getViewport({ scale: testScale })
@@ -291,15 +461,8 @@ const ExhibitsSidebar = ({
                       const testExactMatch = exactNamePattern.test(testFoundName)
                       const testPageContainsExhibit = testResult.validated && (testResult.matches || testExactMatch)
                       
-                      // #region agent log
-                      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ExhibitsSidebar.jsx:validateExhibits',message:'Testing forward page',data:{exhibitName,pageNum,testPageContainsExhibit,testExactMatch,testFoundName,testMatches:testResult.matches},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'R'})}).catch(()=>{});
-                      // #endregion
-                      
                       if (testPageContainsExhibit) {
                         verifiedPageNum = pageNum
-                        // #region agent log
-                        fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ExhibitsSidebar.jsx:validateExhibits',message:'Found exhibit on forward page',data:{exhibitName,verifiedPageNum,originalTargetPage:targetPageNum},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'R'})}).catch(()=>{});
-                        // #endregion
                         break
                       }
                     } catch (testError) {
@@ -313,23 +476,19 @@ const ExhibitsSidebar = ({
               }
               
               // Use the verified page number
-              // If verification failed to find the exhibit and we didn't find it in forward search,
-              // don't use the original mention page - it's likely prose. Instead, keep searching
-              // or mark as unverified rather than showing the wrong page
+              // Always store verifiedPageNum, even if it's the initial targetPageNum
+              // This ensures instant loading on subsequent clicks
+              // If verification failed to find the exhibit and we didn't find it in search,
+              // we still store targetPageNum (which may be prose) but mark it as unverified
               if (verifiedPageNum === targetPageNum && !pageContainsExhibit) {
-                // The initial page didn't contain the exhibit and forward search didn't find it
+                // The initial page didn't contain the exhibit and search didn't find it
                 // This means we couldn't verify the page. Don't use the mention page as it's likely prose.
                 // We'll still store it but it should be treated as unverified
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ExhibitsSidebar.jsx:validateExhibits',message:'Could not verify exhibit page, may be prose',data:{exhibitName,verifiedPageNum,targetPageNum},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'U'})}).catch(()=>{});
-                // #endregion
               }
               
-              targetPageNum = verifiedPageNum
-              
-              // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ExhibitsSidebar.jsx:validateExhibits',message:'Final verified page stored',data:{exhibitName,verifiedPageNum,targetPageNum},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'S'})}).catch(()=>{});
-              // #endregion
+              // Always use verifiedPageNum (which defaults to targetPageNum if search failed)
+              // This ensures we have a page number stored for instant loading on click
+              targetPageNum = verifiedPageNum || targetPageNum
 
               // Render the page as an image
               const page = await pdfDoc.getPage(targetPageNum - 1)
@@ -375,15 +534,18 @@ const ExhibitsSidebar = ({
               
               // Return original exhibit (either validated as correct or validation failed)
               // Store the verified page number so we don't need to verify again on click
+              // Always store it, even if it's the initial targetPageNum (so clicking is instant)
+              // Use targetPageNum as fallback since it's always set
               return {
                 ...exhibit,
                 validated: validationResult.validated || false,
-                verifiedPageNum: verifiedPageNum
+                verifiedPageNum: verifiedPageNum || targetPageNum // Store even if it's the initial targetPageNum
               }
             } catch (error) {
               console.error(`Error validating exhibit ${exhibit.type} ${exhibit.number}:`, error)
               // Return original exhibit if validation fails
-              return { ...exhibit, validated: false, verifiedPageNum: null }
+              // Still store targetPageNum so clicking doesn't require re-validation
+              return { ...exhibit, validated: false, verifiedPageNum: targetPageNum || null }
             }
           })
         )
@@ -908,10 +1070,6 @@ const ExhibitsSidebar = ({
       // This avoids duplicate AI calls and page renders, significantly reducing latency
       let targetPageNum = exhibit.verifiedPageNum
       
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ExhibitsSidebar.jsx:extractExhibitContent',message:'Extracting exhibit content',data:{exhibitName:`${exhibit.type} ${exhibit.number}`,verifiedPageNum:exhibit.verifiedPageNum,hasVerifiedPage:!!exhibit.verifiedPageNum},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'T'})}).catch(()=>{});
-      // #endregion
-      
       if (!targetPageNum) {
         // Only do the full verification if we don't have a cached page number
         // This can happen if validation failed or was skipped
@@ -1032,11 +1190,56 @@ const ExhibitsSidebar = ({
           const exactMatch = exactNamePattern.test(foundExhibitName)
           const pageContainsExhibit = verifyResult.validated && (verifyResult.matches || exactMatch)
           
-          // If the page doesn't contain this specific exhibit, search forward
-          if (!pageContainsExhibit) {
-            // Search forward up to 25 pages to find the page with this specific exhibit
-            // Increased from 5 to handle cases where exhibits are far from their mentions
-            for (let pageNum = targetPageNum + 1; pageNum <= Math.min(targetPageNum + 25, pdfDoc.numPages); pageNum++) {
+        // If the page doesn't contain this specific exhibit, search forward AND backward
+        if (!pageContainsExhibit) {
+          // Get pages that contain THIS SPECIFIC exhibit using chunk metadata
+          // This is much more efficient than searching all exhibit pages
+          const pagesWithExhibits = getPagesWithExhibits(exhibitName)
+          const allPagesArray = Array.from(pagesWithExhibits).sort((a, b) => a - b)
+          
+          // Search BOTH forward and backward from targetPageNum
+          // Prioritize pages close to targetPageNum (within 5 pages)
+          const forwardPages = allPagesArray.filter(pageNum => pageNum > targetPageNum && pageNum <= pdfDoc.numPages)
+          const backwardPages = allPagesArray.filter(pageNum => pageNum < targetPageNum && pageNum >= 1)
+          
+          // Build candidate list: first check backward (exhibit might be before prose mention), then forward
+          // Prioritize pages within 5 pages of targetPageNum
+          let candidatePages = []
+          
+          // Add backward pages (closest first, but limit to 3 pages)
+          const nearbyBackward = backwardPages.filter(p => targetPageNum - p <= 5).slice(-3).reverse()
+          candidatePages.push(...nearbyBackward)
+          
+          // Add forward pages (closest first, limit to 10 pages)
+          candidatePages.push(...forwardPages.slice(0, 10))
+          
+          // FALLBACK: If chunk metadata returned 0 pages, use the old last-occurrence method
+          // This ensures we still find the exhibit even if chunk matching fails
+          if (candidatePages.length === 0 && extractedText) {
+            // Use the old method: find all pages with any exhibits, then filter
+            const allPagesWithExhibits = getPagesWithExhibits() // No specific name = all exhibits
+            const allPagesArray2 = Array.from(allPagesWithExhibits).sort((a, b) => a - b)
+            const forwardPages2 = allPagesArray2.filter(pageNum => pageNum > targetPageNum && pageNum <= pdfDoc.numPages)
+            const backwardPages2 = allPagesArray2.filter(pageNum => pageNum < targetPageNum && pageNum >= 1)
+            candidatePages = []
+            candidatePages.push(...backwardPages2.filter(p => targetPageNum - p <= 5).slice(-3).reverse())
+            candidatePages.push(...forwardPages2.slice(0, 10))
+            
+            // If that also returns 0, fall back to sequential search (last resort)
+            if (candidatePages.length === 0) {
+              // Last resort: sequential search backward first (up to 5 pages), then forward (up to 25 pages)
+              for (let pageNum = Math.max(1, targetPageNum - 5); pageNum < targetPageNum; pageNum++) {
+                candidatePages.push(pageNum)
+              }
+              for (let pageNum = targetPageNum + 1; pageNum <= Math.min(targetPageNum + 25, pdfDoc.numPages); pageNum++) {
+                candidatePages.push(pageNum)
+              }
+            }
+          }
+          
+          // Search up to 10 candidate pages (instead of 25 sequential pages)
+          for (let i = 0; i < Math.min(candidatePages.length, 10); i++) {
+            const pageNum = candidatePages[i]
               try {
                 const testPage = await pdfDoc.getPage(pageNum - 1)
                 const testScale = 1.0
@@ -1074,10 +1277,6 @@ const ExhibitsSidebar = ({
         // Use the verified page number
         targetPageNum = verifiedPageNum
       }
-      
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a4913c7c-1e6d-4c0a-8f80-1cbb76ae61f6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ExhibitsSidebar.jsx:extractExhibitContent',message:'Final page for display',data:{exhibitName:`${exhibit.type} ${exhibit.number}`,targetPageNum,verifiedPageNum:exhibit.verifiedPageNum},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'T'})}).catch(()=>{});
-      // #endregion
       
       // Render the page where the exhibit appears
       const pageImage = await renderPageAsImage(targetPageNum)
