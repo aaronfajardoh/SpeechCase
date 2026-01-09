@@ -2936,22 +2936,34 @@
 
 /* Drop indicator for new line - macOS style */
 .drop-indicator {
-  display: block;
-  height: 2px;
-  background: rgba(66, 133, 244, 0.4);
-  margin: 2.5px 1rem;
-  border-radius: 1px;
+  display: block !important;
+  height: 4px !important;
+  background: #4285f4 !important;
+  margin: 6px 1rem !important;
+  border-radius: 2px !important;
   animation: newLineDropIndicator 0.2s ease;
-  opacity: 0.6;
+  opacity: 1 !important;
+  box-shadow: 0 0 6px rgba(66, 133, 244, 0.8) !important;
+  z-index: 1000 !important;
+  position: relative !important;
+  min-height: 4px !important;
 }
 
 @keyframes newLineDropIndicator {
   0% {
     opacity: 0;
+    transform: scaleX(0);
   }
   100% {
-    opacity: 0.6;
+    opacity: 1;
+    transform: scaleX(1);
   }
+}
+
+/* Ensure drop indicator is always visible */
+.drop-indicator-newline {
+  display: block !important;
+  visibility: visible !important;
 }
 
 /* Inline drop indicator - macOS style */

@@ -26,6 +26,7 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
   const prevHighlightItemsLengthRef = useRef(highlightItems.length)
   const dragOverThrottleRef = useRef(null) // Throttle drag-over to prevent excessive re-renders
   const lastDropPositionRef = useRef(null) // Track last drop position to avoid unnecessary updates
+  const lastItemSwitchTimeRef = useRef(0) // Track when we last switched items to prevent rapid switching
   
   // Use external summary text if provided, otherwise use local state
   const summaryText = externalSummaryText || localSummaryText
@@ -126,27 +127,44 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
     const mouseX = e.clientX
     const mouseY = e.clientY
     const centerX = rect.left + rect.width / 2
-    const centerY = rect.top + rect.height / 2
     
-    // Check if mouse is in the left or right half
-    const isLeft = mouseX < centerX
-    const position = isLeft ? 'before' : 'after'
+    // Use larger buffer zones (top 25% and bottom 25%) for easier placement between items
+    // This makes it easier to place items between others without flickering
+    const verticalTop = rect.top + rect.height * 0.25
+    const verticalBottom = rect.top + rect.height * 0.75
     
-    // Determine if inline (same line) or new line
-    // Use top 30% and bottom 30% as "between items" zones for easier placement
-    const verticalTop = rect.top + rect.height * 0.3
-    const verticalBottom = rect.top + rect.height * 0.7
-    let isInline = mouseY >= verticalTop && mouseY <= verticalBottom
+    // Determine position and inline state based on vertical position
+    let position, isInline
     
-    // Force new line if blue item is involved or if mouse is in top/bottom zones
-    if (cannotBeInline || mouseY < verticalTop || mouseY > verticalBottom) {
+    if (mouseY < verticalTop) {
+      // Top 25% - place before this item (new line)
+      position = 'before'
       isInline = false
+    } else if (mouseY > verticalBottom) {
+      // Bottom 25% - place after this item (new line)
+      position = 'after'
+      isInline = false
+    } else {
+      // Middle 50% - can be inline or new line based on horizontal position
+      const isLeft = mouseX < centerX
+      position = isLeft ? 'before' : 'after'
+      // Only allow inline if not blue and mouse is in center zone
+      isInline = !cannotBeInline
     }
     
     const newDropPosition = { itemId: item.id, position, inline: isInline }
     
     // Only update state if the drop position actually changed
     const lastPos = lastDropPositionRef.current
+    const isItemSwitch = lastPos && lastPos.itemId !== newDropPosition.itemId
+    const now = Date.now()
+    
+    // Prevent rapid switching between items (debounce item switches by 30ms)
+    // Reduced from 50ms to make indicator more responsive
+    if (isItemSwitch && (now - lastItemSwitchTimeRef.current) < 30) {
+      return
+    }
+    
     if (!lastPos || 
         lastPos.itemId !== newDropPosition.itemId || 
         lastPos.position !== newDropPosition.position || 
@@ -160,6 +178,9 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
       dragOverThrottleRef.current = requestAnimationFrame(() => {
         dragOverThrottleRef.current = null
         lastDropPositionRef.current = newDropPosition
+        if (isItemSwitch) {
+          lastItemSwitchTimeRef.current = now
+        }
         setDragOverId(item.id)
         setDropPosition(newDropPosition)
       })
@@ -269,6 +290,7 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
     }
     
     lastDropPositionRef.current = null
+    lastItemSwitchTimeRef.current = 0
     setDraggedId(null)
     setDragOverId(null)
     setDropPosition(null)

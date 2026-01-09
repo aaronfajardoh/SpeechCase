@@ -12514,10 +12514,6 @@ function Home() {
     // Create merged items from connected highlights
     const mergedItems = mergeConnectedHighlights(highlights)
     
-    // Always use sorted order from mergeConnectedHighlights (which sorts by column then Y position)
-    // This ensures highlights appear in reading order (left-to-right, top-to-bottom)
-    // The only exception is when user has manually reordered via drag-drop (handled by isDraggingHighlightRef)
-    
     // Update highlightItems
     setHighlightItems(prev => {
       // Create a map of merged item IDs to track which highlights are merged
@@ -12531,8 +12527,8 @@ function Home() {
       })
       
       // Update existing items with new text/color, add new ones
-      // Always use sorted order from mergeConnectedHighlights (column then Y position)
-      // Only preserve text from existing items (user's manual edits)
+      // IMPORTANT: Preserve user's custom order from prev for existing items
+      // Only use mergedItem.order for truly new items that don't exist in prev
       const updated = mergedItems.map(mergedItem => {
         // First, check if the merged item's ID itself exists in previous items
         // (This handles the case where the merged item uses the first highlight's ID)
@@ -12549,16 +12545,19 @@ function Home() {
               // Combine text from all existing items in the order they appear in mergedIds
               // This ensures the first highlight's text comes first, then the second, etc.
               const combinedText = existingItems.map(item => item.text).filter(Boolean).join(' ')
-              // Always use sorted order from mergeConnectedHighlights
-              return { ...mergedItem, text: combinedText, order: mergedItem.order }
+              // Preserve order from existing item (user's custom order)
+              if (existingByMergedId.isSnip) {
+                return { ...mergedItem, ...existingByMergedId, text: combinedText, order: existingByMergedId.order }
+              }
+              return { ...mergedItem, text: combinedText, order: existingByMergedId.order }
             }
           }
-          // Preserve text from existing item, but use sorted order
+          // Preserve both text and order from existing item (user's manual edits and custom order)
           // For snip items, preserve all properties (isSnip, image, etc.)
           if (existingByMergedId.isSnip) {
-            return { ...mergedItem, ...existingByMergedId, order: mergedItem.order }
+            return { ...mergedItem, ...existingByMergedId, order: existingByMergedId.order }
           }
-          return { ...mergedItem, text: existingByMergedId.text, order: mergedItem.order }
+          return { ...mergedItem, text: existingByMergedId.text, order: existingByMergedId.order }
         }
         
         // For merged items, check if any of the merged highlight IDs have existing items
@@ -12574,27 +12573,27 @@ function Home() {
               // Combine text from all existing items in the order they appear in mergedIds
               // This ensures the first highlight's text comes first, then the second, etc.
               const combinedText = existingItems.map(item => item.text).filter(Boolean).join(' ')
-              // Always use sorted order from mergeConnectedHighlights
-              return { ...mergedItem, text: combinedText, order: mergedItem.order }
+              // Use the order from the first existing item (preserve user's custom order)
+              return { ...mergedItem, text: combinedText, order: existingItems[0].order }
             }
-            // Single existing item - preserve text, use sorted order
+            // Single existing item - preserve both text and order
             // For snip items, preserve all properties (isSnip, image, etc.)
             const existingItem = existingItems[0]
             if (existingItem.isSnip) {
-              return { ...mergedItem, ...existingItem, order: mergedItem.order }
+              return { ...mergedItem, ...existingItem, order: existingItem.order }
             }
             const existingText = existingItem.text
-            return { ...mergedItem, text: existingText, order: mergedItem.order }
+            return { ...mergedItem, text: existingText, order: existingItem.order }
           }
         } else {
-          // For non-merged items, preserve existing text, use sorted order
+          // For non-merged items, preserve existing text and order
           const existing = prev.find(item => item.id === mergedItem.id)
           if (existing) {
             // Preserve all properties from existing item (especially isSnip and image for snip highlights)
             if (existing.isSnip) {
-              return { ...mergedItem, ...existing, order: mergedItem.order }
+              return { ...mergedItem, ...existing, order: existing.order }
             }
-            return { ...mergedItem, text: existing.text, order: mergedItem.order }
+            return { ...mergedItem, text: existing.text, order: existing.order }
           }
         }
         // For new items, use the sorted order from mergeConnectedHighlights (already set)
@@ -12624,7 +12623,7 @@ function Home() {
         return false
       })
       
-      // Sort by order (which comes from mergeConnectedHighlights - column then Y position)
+      // Sort by order to maintain user's custom order
       const finalItems = filtered.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
       
       // Early return if nothing actually changed (same items, same order, same text, same color)
