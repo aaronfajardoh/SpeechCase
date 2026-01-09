@@ -11919,14 +11919,9 @@ function Home() {
     // Create merged items from connected highlights
     const mergedItems = mergeConnectedHighlights(highlights)
     
-    // Detect if this is a single-column PDF (all highlights have null or same columnIndex)
-    // For single-column PDFs, we should sort by Y position, not preserve custom order
-    const columnIndices = highlights
-      .map(h => h.columnIndex)
-      .filter(ci => ci !== null && ci !== undefined)
-    const uniqueColumns = new Set(columnIndices)
-    // Single column if: no column indices at all, OR all highlights have the same columnIndex
-    const isSingleColumn = uniqueColumns.size <= 1
+    // Always use sorted order from mergeConnectedHighlights (which sorts by column then Y position)
+    // This ensures highlights appear in reading order (left-to-right, top-to-bottom)
+    // The only exception is when user has manually reordered via drag-drop (handled by isDraggingHighlightRef)
     
     // Update highlightItems
     setHighlightItems(prev => {
@@ -11940,17 +11935,9 @@ function Home() {
         }
       })
       
-      // Find the maximum order value from existing items to assign to new items
-      const maxExistingOrder = prev.length > 0 
-        ? Math.max(...prev.map(item => item.order ?? 0), -1)
-        : -1
-      
-      // Track new items to assign sequential order values
-      let newItemCounter = 0
-      
       // Update existing items with new text/color, add new ones
-      // For single-column PDFs: use sorted order from mergeConnectedHighlights (Y position)
-      // For multi-column PDFs: preserve user's custom order from prev for existing items
+      // Always use sorted order from mergeConnectedHighlights (column then Y position)
+      // Only preserve text from existing items (user's manual edits)
       const updated = mergedItems.map(mergedItem => {
         // First, check if the merged item's ID itself exists in previous items
         // (This handles the case where the merged item uses the first highlight's ID)
@@ -11967,14 +11954,12 @@ function Home() {
               // Combine text from all existing items in the order they appear in mergedIds
               // This ensures the first highlight's text comes first, then the second, etc.
               const combinedText = existingItems.map(item => item.text).filter(Boolean).join(' ')
-              // For single-column: use sorted order, for multi-column: preserve custom order
-              const order = isSingleColumn ? mergedItem.order : existingByMergedId.order
-              return { ...mergedItem, text: combinedText, order }
+              // Always use sorted order from mergeConnectedHighlights
+              return { ...mergedItem, text: combinedText, order: mergedItem.order }
             }
           }
-          // For single-column: use sorted order, for multi-column: preserve custom order
-          const order = isSingleColumn ? mergedItem.order : existingByMergedId.order
-          return { ...mergedItem, text: existingByMergedId.text, order }
+          // Preserve text from existing item, but use sorted order
+          return { ...mergedItem, text: existingByMergedId.text, order: mergedItem.order }
         }
         
         // For merged items, check if any of the merged highlight IDs have existing items
@@ -11990,28 +11975,22 @@ function Home() {
               // Combine text from all existing items in the order they appear in mergedIds
               // This ensures the first highlight's text comes first, then the second, etc.
               const combinedText = existingItems.map(item => item.text).filter(Boolean).join(' ')
-              // For single-column: use sorted order, for multi-column: preserve custom order
-              const order = isSingleColumn ? mergedItem.order : existingItems[0].order
-              return { ...mergedItem, text: combinedText, order }
+              // Always use sorted order from mergeConnectedHighlights
+              return { ...mergedItem, text: combinedText, order: mergedItem.order }
             }
-            // Single existing item - preserve text, but use sorted order for single-column
+            // Single existing item - preserve text, use sorted order
             const existingText = existingItems[0].text
-            const order = isSingleColumn ? mergedItem.order : existingItems[0].order
-            return { ...mergedItem, text: existingText, order }
+            return { ...mergedItem, text: existingText, order: mergedItem.order }
           }
         } else {
-          // For non-merged items, preserve existing text, but use sorted order for single-column
+          // For non-merged items, preserve existing text, use sorted order
           const existing = prev.find(item => item.id === mergedItem.id)
           if (existing) {
-            const order = isSingleColumn ? mergedItem.order : existing.order
-            return { ...mergedItem, text: existing.text, order }
+            return { ...mergedItem, text: existing.text, order: mergedItem.order }
           }
         }
         // For new items, use the sorted order from mergeConnectedHighlights (already set)
-        // For single-column: use sorted order, for multi-column: place at end
-        const order = isSingleColumn ? mergedItem.order : (maxExistingOrder + newItemCounter + 1)
-        newItemCounter++
-        return { ...mergedItem, order }
+        return mergedItem
       })
       
       // Remove items that no longer exist as separate items (they're now merged)
@@ -12037,7 +12016,7 @@ function Home() {
         return false
       })
       
-      // Sort by order to maintain user's custom order
+      // Sort by order (which comes from mergeConnectedHighlights - column then Y position)
       const finalItems = filtered.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
       
       // Early return if nothing actually changed (same items, same order, same text, same color)

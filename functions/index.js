@@ -49,6 +49,13 @@ const ttsClient = new textToSpeech.TextToSpeechClient();
 exports.processPdf = onCall(
     {
       secrets: ["OPENAI_API_KEY"],
+      cors: [
+        /^https:\/\/casediver\.web\.app$/,
+        /^https:\/\/casediver\.firebaseapp\.com$/,
+        /^https:\/\/.*\.web\.app$/,
+        /^https:\/\/.*\.firebaseapp\.com$/,
+        /^http:\/\/localhost:\d+$/,
+      ],
     },
     async (request) => {
       try {
@@ -133,6 +140,13 @@ exports.processPdf = onCall(
 exports.askQuestion = onCall(
     {
       secrets: ["OPENAI_API_KEY"],
+      cors: [
+        /^https:\/\/casediver\.web\.app$/,
+        /^https:\/\/casediver\.firebaseapp\.com$/,
+        /^https:\/\/.*\.web\.app$/,
+        /^https:\/\/.*\.firebaseapp\.com$/,
+        /^http:\/\/localhost:\d+$/,
+      ],
     },
     async (request) => {
       try {
@@ -243,6 +257,13 @@ async function getDocumentFullText(uid, documentId) {
 exports.generateTimeline = onCall(
     {
       secrets: ["OPENAI_API_KEY"],
+      cors: [
+        /^https:\/\/casediver\.web\.app$/,
+        /^https:\/\/casediver\.firebaseapp\.com$/,
+        /^https:\/\/.*\.web\.app$/,
+        /^https:\/\/.*\.firebaseapp\.com$/,
+        /^http:\/\/localhost:\d+$/,
+      ],
     },
     async (request) => {
       try {
@@ -337,6 +358,13 @@ exports.generateCharacters = onCall(
         "GOOGLE_SEARCH_ENGINE_ID",
         "GOOGLE_AI_KEY",
       ], // Google API keys are optional - function works without them (no images)
+      cors: [
+        /^https:\/\/casediver\.web\.app$/,
+        /^https:\/\/casediver\.firebaseapp\.com$/,
+        /^https:\/\/.*\.web\.app$/,
+        /^https:\/\/.*\.firebaseapp\.com$/,
+        /^http:\/\/localhost:\d+$/,
+      ],
     },
     async (request) => {
       try {
@@ -486,12 +514,11 @@ exports.generateSummary = onCall(
     {
       secrets: ["OPENAI_API_KEY"],
       cors: [
-        "https://casediver.web.app",
-        "https://casediver.firebaseapp.com",
+        /^https:\/\/casediver\.web\.app$/,
+        /^https:\/\/casediver\.firebaseapp\.com$/,
         /^https:\/\/.*\.web\.app$/,
         /^https:\/\/.*\.firebaseapp\.com$/,
-        "http://localhost:5173",
-        "http://localhost:3000",
+        /^http:\/\/localhost:\d+$/,
       ],
     },
     async (request) => {
@@ -581,58 +608,69 @@ exports.generateSummary = onCall(
  * @param {Object} context - Firebase callable context (includes auth)
  * @return {Promise<Object>} Audio data in base64
  */
-exports.generateTts = onCall(async (request) => {
-  try {
-    const {text, voiceId = "en-US-Standard-C"} = request.data;
-    const uid = request.auth && request.auth.uid;
+exports.generateTts = onCall(
+    {
+      cors: [
+        /^https:\/\/casediver\.web\.app$/,
+        /^https:\/\/casediver\.firebaseapp\.com$/,
+        /^https:\/\/.*\.web\.app$/,
+        /^https:\/\/.*\.firebaseapp\.com$/,
+        /^http:\/\/localhost:\d+$/,
+      ],
+    },
+    async (request) => {
+      try {
+        const {text, voiceId = "en-US-Standard-C"} = request.data;
+        const uid = request.auth && request.auth.uid;
 
-    if (!uid) {
-      throw new HttpsError("unauthenticated", "User must be authenticated");
-    }
+        if (!uid) {
+          throw new HttpsError("unauthenticated", "User must be authenticated");
+        }
 
-    if (!text || text.trim().length === 0) {
-      throw new HttpsError("invalid-argument", "text is required");
-    }
+        if (!text || text.trim().length === 0) {
+          throw new HttpsError("invalid-argument", "text is required");
+        }
 
-    logger.info(`Generating TTS for user ${uid}, text length: ${text.length}`);
+        logger.info(`Generating TTS for user ${uid}, text length: ${text.length}`);
 
-    // Prepare the request for Google Cloud Text-to-Speech
-    const requestTts = {
-      input: {text: text.trim()},
-      voice: {
-        languageCode: voiceId.split("-").slice(0, 2).join("-") || "en-US",
-        name: voiceId,
-        ssmlGender: "NEUTRAL",
-      },
-      audioConfig: {
-        audioEncoding: "MP3",
-      },
-    };
+        // Prepare the request for Google Cloud Text-to-Speech
+        const requestTts = {
+          input: {text: text.trim()},
+          voice: {
+            languageCode: voiceId.split("-").slice(0, 2).join("-") || "en-US",
+            name: voiceId,
+            ssmlGender: "NEUTRAL",
+          },
+          audioConfig: {
+            audioEncoding: "MP3",
+          },
+        };
 
-    // Generate speech
-    const [response] = await ttsClient.synthesizeSpeech(requestTts);
+        // Generate speech
+        const [response] = await ttsClient.synthesizeSpeech(requestTts);
 
-    if (!response.audioContent) {
-      throw new HttpsError("internal", "Failed to generate audio content.");
-    }
+        if (!response.audioContent) {
+          throw new HttpsError("internal", "Failed to generate audio content.");
+        }
 
-    // Convert audio buffer to base64
-    const audioBase64 = response.audioContent.toString("base64");
+        // Convert audio buffer to base64
+        const audioBase64 = response.audioContent.toString("base64");
 
-    logger.info(`Successfully generated TTS audio, size: ${audioBase64.length} bytes`);
+        logger.info(`Successfully generated TTS audio, size: ${audioBase64.length} bytes`);
 
-    return {
-      audioContent: audioBase64,
-      mimeType: "audio/mp3",
-    };
-  } catch (error) {
-    logger.error("Error generating TTS:", error);
-    if (error instanceof HttpsError) {
-      throw error;
-    }
-    throw new HttpsError("internal", `Failed to generate TTS: ${error.message}`);
-  }
-});
+        return {
+          audioContent: audioBase64,
+          mimeType: "audio/mp3",
+        };
+      } catch (error) {
+        logger.error("Error generating TTS:", error);
+        if (error instanceof HttpsError) {
+          throw error;
+        }
+        throw new HttpsError("internal", `Failed to generate TTS: ${error.message}`);
+      }
+    },
+);
 
 /**
  * Delete Document: Delete a document and its associated Storage file
@@ -642,58 +680,69 @@ exports.generateTts = onCall(async (request) => {
  * @param {Object} context - Firebase callable context (includes auth)
  * @return {Promise<Object>} Success response
  */
-exports.deleteDocument = onCall(async (request) => {
-  try {
-    const {documentId, storageUrl} = request.data;
-    const uid = request.auth && request.auth.uid;
-
-    if (!uid) {
-      throw new HttpsError("unauthenticated", "User must be authenticated");
-    }
-
-    if (!documentId) {
-      throw new HttpsError("invalid-argument", "documentId is required");
-    }
-
-    logger.info(`Deleting document for user ${uid}, document ${documentId}`);
-
-    // Delete from Firestore (this will also delete chunks via vectorStore)
-    await vectorStore.deleteDocument(uid, documentId);
-
-    // Delete from Storage if URL is provided
-    if (storageUrl) {
+exports.deleteDocument = onCall(
+    {
+      cors: [
+        /^https:\/\/casediver\.web\.app$/,
+        /^https:\/\/casediver\.firebaseapp\.com$/,
+        /^https:\/\/.*\.web\.app$/,
+        /^https:\/\/.*\.firebaseapp\.com$/,
+        /^http:\/\/localhost:\d+$/,
+      ],
+    },
+    async (request) => {
       try {
-        const admin = require("firebase-admin");
-        const bucket = admin.storage().bucket();
-        // Extract the file path from the storage URL
-        // URL format: https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{path}?alt=media
-        const urlMatch = storageUrl.match(/\/o\/(.+?)\?/);
-        if (urlMatch && urlMatch[1]) {
-          const filePath = decodeURIComponent(urlMatch[1]);
-          const file = bucket.file(filePath);
-          await file.delete();
-          logger.info(`Deleted file from Storage: ${filePath}`);
+        const {documentId, storageUrl} = request.data;
+        const uid = request.auth && request.auth.uid;
+
+        if (!uid) {
+          throw new HttpsError("unauthenticated", "User must be authenticated");
         }
-      } catch (storageError) {
-        logger.warn("Error deleting file from Storage:", storageError);
-        // Continue even if storage deletion fails
+
+        if (!documentId) {
+          throw new HttpsError("invalid-argument", "documentId is required");
+        }
+
+        logger.info(`Deleting document for user ${uid}, document ${documentId}`);
+
+        // Delete from Firestore (this will also delete chunks via vectorStore)
+        await vectorStore.deleteDocument(uid, documentId);
+
+        // Delete from Storage if URL is provided
+        if (storageUrl) {
+          try {
+            const admin = require("firebase-admin");
+            const bucket = admin.storage().bucket();
+            // Extract the file path from the storage URL
+            // URL format: https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{path}?alt=media
+            const urlMatch = storageUrl.match(/\/o\/(.+?)\?/);
+            if (urlMatch && urlMatch[1]) {
+              const filePath = decodeURIComponent(urlMatch[1]);
+              const file = bucket.file(filePath);
+              await file.delete();
+              logger.info(`Deleted file from Storage: ${filePath}`);
+            }
+          } catch (storageError) {
+            logger.warn("Error deleting file from Storage:", storageError);
+            // Continue even if storage deletion fails
+          }
+        }
+
+        logger.info(`Successfully deleted document ${documentId}`);
+
+        return {
+          success: true,
+          message: "Document deleted successfully",
+        };
+      } catch (error) {
+        logger.error("Error deleting document:", error);
+        if (error instanceof HttpsError) {
+          throw error;
+        }
+        throw new HttpsError("internal", `Failed to delete document: ${error.message}`);
       }
-    }
-
-    logger.info(`Successfully deleted document ${documentId}`);
-
-    return {
-      success: true,
-      message: "Document deleted successfully",
-    };
-  } catch (error) {
-    logger.error("Error deleting document:", error);
-    if (error instanceof HttpsError) {
-      throw error;
-    }
-    throw new HttpsError("internal", `Failed to delete document: ${error.message}`);
-  }
-});
+    },
+);
 
 /**
  * Send Support Email: Send support request email with attachments
@@ -707,6 +756,13 @@ exports.deleteDocument = onCall(async (request) => {
 exports.sendSupportEmail = onCall(
     {
       secrets: ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS"],
+      cors: [
+        /^https:\/\/casediver\.web\.app$/,
+        /^https:\/\/casediver\.firebaseapp\.com$/,
+        /^https:\/\/.*\.web\.app$/,
+        /^https:\/\/.*\.firebaseapp\.com$/,
+        /^http:\/\/localhost:\d+$/,
+      ],
     },
     async (request) => {
       try {
