@@ -3046,11 +3046,18 @@
   color: rgba(0, 0, 0, 0.85);
   font-family: 'SF Pro Text', 'Helvetica Neue', sans-serif;
   font-size: 0.875rem;
+  line-height: 1.5;
   outline: none;
   box-sizing: border-box;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Textarea specific styles */
+  resize: none;
+  overflow: hidden;
+  min-height: 2.5rem;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 .highlight-edit-input:focus {

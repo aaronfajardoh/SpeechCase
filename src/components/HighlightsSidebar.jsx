@@ -70,6 +70,9 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
     setEditingText(item.text)
     setTimeout(() => {
       if (editInputRef.current) {
+        // Set initial height to match content
+        editInputRef.current.style.height = 'auto'
+        editInputRef.current.style.height = editInputRef.current.scrollHeight + 'px'
         editInputRef.current.focus()
         editInputRef.current.select()
       }
@@ -793,14 +796,13 @@ ${htmlContent}
                         )}
                         
                         {editingId === item.id ? (
-                          <input
+                          <textarea
                             ref={editInputRef}
-                            type="text"
                             value={editingText}
                             onChange={(e) => setEditingText(e.target.value)}
                             onBlur={() => handleSaveEdit(item.id)}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
+                              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                                 handleSaveEdit(item.id)
                               } else if (e.key === 'Escape') {
                                 handleCancelEdit()
@@ -808,6 +810,16 @@ ${htmlContent}
                             }}
                             className="highlight-edit-input"
                             autoFocus
+                            rows={1}
+                            style={{
+                              resize: 'none',
+                              overflow: 'hidden'
+                            }}
+                            onInput={(e) => {
+                              // Auto-resize textarea to fit content
+                              e.target.style.height = 'auto'
+                              e.target.style.height = e.target.scrollHeight + 'px'
+                            }}
                           />
                         ) : (
                           <span
