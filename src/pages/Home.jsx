@@ -3590,6 +3590,32 @@ function Home() {
     }
   }
 
+  // Helper function to get canvas displayed dimensions consistently
+  // Uses canvas.style.width/height (which matches internal dimensions) when available,
+  // falls back to getBoundingClientRect() if style not set yet
+  const getCanvasDisplayedDimensions = (canvas) => {
+    if (!canvas) return { width: 0, height: 0 }
+    
+    // Get CSS dimensions (which should match internal dimensions since we set them explicitly)
+    const canvasStyleWidth = canvas.style.width
+    const canvasStyleHeight = canvas.style.height
+    
+    if (canvasStyleWidth && canvasStyleHeight) {
+      // Parse CSS width/height (remove 'px' suffix)
+      return {
+        width: parseFloat(canvasStyleWidth),
+        height: parseFloat(canvasStyleHeight)
+      }
+    } else {
+      // Fallback to getBoundingClientRect if style not set yet
+      const canvasRect = canvas.getBoundingClientRect()
+      return {
+        width: canvasRect.width,
+        height: canvasRect.height
+      }
+    }
+  }
+
   const renderPages = async () => {
     if (!pdfDoc || pageData.length === 0) return
 
@@ -3679,9 +3705,9 @@ function Home() {
 
         // Set highlight layer dimensions to match canvas display size
         if (highlightLayerDiv) {
-          const canvasRect = canvas.getBoundingClientRect()
-          highlightLayerDiv.style.width = canvasRect.width + 'px'
-          highlightLayerDiv.style.height = canvasRect.height + 'px'
+          const canvasDims = getCanvasDisplayedDimensions(canvas)
+          highlightLayerDiv.style.width = canvasDims.width + 'px'
+          highlightLayerDiv.style.height = canvasDims.height + 'px'
           
           const textLayerDiv = textLayerRefs.current[pageNum]
           const parentContainer = highlightLayerDiv.parentElement
@@ -3690,17 +3716,17 @@ function Home() {
         // Set connection layer dimensions to match canvas display size
         const connectionLayerDiv = connectionLayerRefs.current[pageNum]
         if (connectionLayerDiv) {
-          const canvasRect = canvas.getBoundingClientRect()
-          connectionLayerDiv.style.width = canvasRect.width + 'px'
-          connectionLayerDiv.style.height = canvasRect.height + 'px'
+          const canvasDims = getCanvasDisplayedDimensions(canvas)
+          connectionLayerDiv.style.width = canvasDims.width + 'px'
+          connectionLayerDiv.style.height = canvasDims.height + 'px'
         }
         
         // Set selection layer dimensions to match canvas display size
         const selectionLayerDiv = selectionLayerRefs.current[pageNum]
         if (selectionLayerDiv) {
-          const canvasRect = canvas.getBoundingClientRect()
-          selectionLayerDiv.style.width = canvasRect.width + 'px'
-          selectionLayerDiv.style.height = canvasRect.height + 'px'
+          const canvasDims = getCanvasDisplayedDimensions(canvas)
+          selectionLayerDiv.style.width = canvasDims.width + 'px'
+          selectionLayerDiv.style.height = canvasDims.height + 'px'
         }
 
         // Render text layer (this will also set text layer dimensions)
@@ -3843,19 +3869,19 @@ function Home() {
     // Wait for canvas to be laid out to get accurate dimensions
     await new Promise(resolve => requestAnimationFrame(resolve))
 
-    // Calculate the scale ratio between canvas internal size and displayed size
-    // This ensures text layer scales correctly on mobile when canvas is scaled by CSS
-    const canvasRect = canvas.getBoundingClientRect()
+    // Get canvas dimensions - use helper function for consistency
     const canvasWidth = canvas.width
     const canvasHeight = canvas.height
-    const displayedWidth = canvasRect.width
-    const displayedHeight = canvasRect.height
+    const canvasDims = getCanvasDisplayedDimensions(canvas)
+    const displayedWidth = canvasDims.width
+    const displayedHeight = canvasDims.height
     
-    // Calculate scale factors (should be the same for both X and Y if aspect ratio is maintained)
+    // Calculate scale factors (should be 1.0 when CSS size matches internal size)
+    // This accounts for any CSS scaling that might occur
     const scaleX = displayedWidth / canvasWidth
     const scaleY = displayedHeight / canvasHeight
 
-    // Set text layer dimensions to match canvas display size
+    // Set text layer dimensions to match canvas display size exactly
     textLayerDiv.style.width = displayedWidth + 'px'
     textLayerDiv.style.height = displayedHeight + 'px'
 
@@ -11512,11 +11538,11 @@ function Home() {
       const canvas = canvasRefs.current[pageNum]
       if (!canvas) return
 
-      const canvasRect = canvas.getBoundingClientRect()
+      const canvasDims = getCanvasDisplayedDimensions(canvas)
       const canvasWidth = canvas.width
       const canvasHeight = canvas.height
-      const displayedWidth = canvasRect.width
-      const displayedHeight = canvasRect.height
+      const displayedWidth = canvasDims.width
+      const displayedHeight = canvasDims.height
       
       // Create one SVG per page
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -12440,10 +12466,10 @@ function Home() {
     if (!textLayer) return
 
     // Get canvas displayed dimensions (text layer matches canvas displayed size)
-    // Use canvas directly for faster updates - canvas dimensions update immediately on resize
-    const canvasRect = canvas.getBoundingClientRect()
-    const currentCanvasDisplayedWidth = canvasRect.width
-    const currentCanvasDisplayedHeight = canvasRect.height
+    // Use helper function for consistency - ensures alignment even when canvas exceeds container
+    const canvasDims = getCanvasDisplayedDimensions(canvas)
+    const currentCanvasDisplayedWidth = canvasDims.width
+    const currentCanvasDisplayedHeight = canvasDims.height
     
     // Ensure highlight layer has dimensions set (critical for visibility)
     if (highlightLayer) {
@@ -14393,7 +14419,7 @@ function Home() {
                     className="pdf-canvas-wrapper"
                     style={{
                       aspectRatio: `${pageInfo.viewport.width} / ${pageInfo.viewport.height}`,
-                      maxWidth: '100%'
+                      /* Removed maxWidth constraint to allow canvas to grow beyond container when zooming */
                     }}
                   >
                     <canvas

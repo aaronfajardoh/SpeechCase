@@ -3668,10 +3668,10 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.2);
   border-radius: 2px;
   margin: 0 auto;
-  /* Width will be determined by canvas size, constrained by max-width */
-  max-width: 100%;
-  /* Fallback for browsers that don't support aspect-ratio */
-  overflow: hidden;
+  /* Width will be determined by canvas size - allow it to grow beyond container when zooming */
+  /* Removed max-width constraint to allow canvas to zoom beyond container */
+  /* Changed overflow to visible so canvas can extend beyond wrapper */
+  overflow: visible;
   /* Allow pinch-to-zoom on canvas wrapper */
   touch-action: pan-x pan-y pinch-zoom;
 }
@@ -3726,8 +3726,7 @@
   display: block;
   /* Width and height are set explicitly in JavaScript to match internal dimensions */
   /* This prevents CSS scaling that causes blurriness */
-  max-width: 100%;
-  max-height: 100%;
+  /* Removed max-width/max-height to allow canvas to grow beyond container when zooming */
   /* Allow pinch-to-zoom on canvas */
   touch-action: pan-x pan-y pinch-zoom;
   pointer-events: auto;
@@ -5579,8 +5578,9 @@
   .pdf-canvas-wrapper {
     border-radius: 0;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-    /* Width will be determined by canvas size, constrained by max-width */
-    max-width: 100%;
+    /* Width will be determined by canvas size - allow it to grow beyond container when zooming */
+    /* Removed max-width constraint to allow canvas to zoom beyond container */
+    overflow: visible;
     /* Ensure proper scaling on mobile */
     transform: translateZ(0);
     -webkit-transform: translateZ(0);
@@ -5589,8 +5589,7 @@
   .pdf-canvas {
     /* Width and height are set explicitly in JavaScript to match internal dimensions */
     /* This prevents CSS scaling that causes blurriness */
-    max-width: 100%;
-    max-height: 100%;
+    /* Removed max-width/max-height to allow canvas to grow beyond container when zooming */
     /* Ensure canvas scales properly */
     transform: translateZ(0);
     -webkit-transform: translateZ(0);
