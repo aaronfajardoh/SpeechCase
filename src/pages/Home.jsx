@@ -136,6 +136,7 @@ function Home() {
   const resizeStartWidthRef = useRef(230) // Track initial sidebar width when resizing starts
   const normalSidebarWidthRef = useRef(230) // Store normal sidebar width before expansion
   const previousInteractionModeRef = useRef('read') // Track previous interaction mode to detect changes
+  const interactionModeRef = useRef('read') // Track current interaction mode for click handlers
   const sidebarWidthRef = useRef(230) // Track current sidebar width
   const isSidebarCollapsedRef = useRef(false) // Track current sidebar collapsed state
   const sidebarViewRef = useRef('pages') // Track current sidebar view
@@ -185,6 +186,7 @@ function Home() {
   const historyIndexRef = useRef(0) // Track current history index for undo/redo
   const highlightHistoryRef = useRef([[]]) // Track current highlight history for undo/redo
   const highlightsRef = useRef([]) // Track current highlights for undo/redo
+  const isDraggingHighlightRef = useRef(false) // Track if user is currently dragging a highlight
   const textItemsRef = useRef([]) // Track text items for event handlers
   const audioRef = useRef(null) // Track audio element for Google TTS playback
   const googleTtsTextRef = useRef('') // Track text being spoken via Google TTS
@@ -594,9 +596,11 @@ function Home() {
             setHighlights(docData.highlights)
           }
           
-          // Don't load highlightItems directly - let the useEffect create them from highlights
-          // This ensures they're sorted by text position, not creation order
-          // highlightItems will be generated automatically by the useEffect that syncs with highlights
+          // Load highlightItems from Firestore if they exist (to preserve user's custom order)
+          // If they don't exist, the useEffect will create them from highlights
+          if (docData.highlightItems && Array.isArray(docData.highlightItems) && docData.highlightItems.length > 0) {
+            setHighlightItems(docData.highlightItems)
+          }
           
           // Load chat history if it exists
           if (docData.chatHistory && Array.isArray(docData.chatHistory)) {
@@ -1120,6 +1124,7 @@ function Home() {
     
     // Update previous interaction mode ref
     previousInteractionModeRef.current = interactionMode
+    interactionModeRef.current = interactionMode // Keep ref in sync with state
   }, [interactionMode, isMobile, pdfDoc]) // Only depend on interactionMode to prevent interference
 
   // Auto-expand/collapse sidebar when switching to/from highlights view
@@ -4125,8 +4130,16 @@ function Home() {
         // Ensure pointer events are enabled for clicks
         span.style.pointerEvents = 'auto'
         span.style.cursor = interactionMode === 'read' ? 'pointer' : 'text'
-        span.addEventListener('click', (e) => {
-          if (interactionMode === 'read') {
+        
+        // Remove any existing click handler first to avoid duplicates
+        if (span._ttsClickHandler) {
+          span.removeEventListener('click', span._ttsClickHandler)
+        }
+        
+        // Create new handler that checks current interactionMode from ref
+        span._ttsClickHandler = (e) => {
+          // Check current interactionMode from ref, not captured value
+          if (interactionModeRef.current === 'read') {
             e.preventDefault()
             e.stopPropagation()
             if (/\S/.test(word)) {
@@ -4136,7 +4149,9 @@ function Home() {
               handleWordClick(nextWordStart, word)
             }
           }
-        })
+        }
+        
+        span.addEventListener('click', span._ttsClickHandler)
       }
     })
     
@@ -6113,6 +6128,13 @@ function Home() {
   }
 
   const handleWordClick = (charIndex, word, clickedElement = null) => {
+    // CRITICAL: Only handle clicks in 'read' mode (Set Start mode)
+    // In 'highlight' mode, clicks should only create highlights, not start TTS
+    // Check ref first (most up-to-date), then state as fallback
+    if (interactionModeRef.current !== 'read') {
+      return
+    }
+    
     // Since we now have word-level spans, charIndex should already be at the word start
     // Only call findWordStart if we clicked on whitespace/punctuation
     let wordStart = charIndex
@@ -8570,9 +8592,142 @@ function Home() {
     return context.measureText(text).width
   }
 
+  // Helper function to detect column boundaries from span positions
+  // Returns an array of boundaries sorted from left to right
+  const detectColumnBoundaries = (textLayerDiv) => {
+    if (!textLayerDiv) return []
+    
+    const textLayerRect = textLayerDiv.getBoundingClientRect()
+    const allSpans = Array.from(textLayerDiv.querySelectorAll('span'))
+    
+    if (allSpans.length === 0) return []
+    
+    // Collect X positions of all spans with their widths and font sizes
+    const spanData = []
+    const fontSizes = []
+    
+    allSpans.forEach(span => {
+      const spanRect = span.getBoundingClientRect()
+      const spanX = spanRect.left - textLayerRect.left
+      const spanRight = spanX + spanRect.width
+      
+      // Get font size
+      let fontSize = parseFloat(span.style.fontSize)
+      if (isNaN(fontSize) || span.style.fontSize === '') {
+        const computedStyle = window.getComputedStyle(span)
+        fontSize = parseFloat(computedStyle.fontSize)
+      }
+      if (isNaN(fontSize)) {
+        fontSize = spanRect.height || 12
+      }
+      
+      // Only consider spans with actual text content and reasonable width
+      if (span.textContent && span.textContent.trim().length > 0 && spanRect.width > 5) {
+        spanData.push({ left: spanX, right: spanRight, width: spanRect.width })
+        fontSizes.push(fontSize)
+      }
+    })
+    
+    if (spanData.length === 0) return []
+    
+    // Calculate average font size for dynamic gap threshold
+    const avgFontSize = fontSizes.length > 0 
+      ? fontSizes.reduce((a, b) => a + b, 0) / fontSizes.length 
+      : 12
+    // Use 2.5x font size as minimum gap threshold (proportional to text size)
+    const minGap = avgFontSize * 2.5
+    
+    // Sort by left position
+    spanData.sort((a, b) => a.left - b.left)
+    
+    const minX = spanData[0].left
+    const maxX = spanData[spanData.length - 1].right
+    const contentWidth = maxX - minX
+    const middleStart = minX + contentWidth * 0.15
+    const middleEnd = minX + contentWidth * 0.85
+    
+    // Find all significant gaps that could be column boundaries
+    const gaps = []
+    for (let i = 1; i < spanData.length; i++) {
+      const gap = spanData[i].left - spanData[i - 1].right
+      const gapCenter = (spanData[i].left + spanData[i - 1].right) / 2
+      
+      // Check if gap is significant and in the middle region
+      if (gap > minGap && gapCenter >= middleStart && gapCenter <= middleEnd) {
+        gaps.push({ gap, center: gapCenter, left: spanData[i - 1].right, right: spanData[i].left })
+      }
+    }
+    
+    // Sort gaps by size (largest first)
+    gaps.sort((a, b) => b.gap - a.gap)
+    
+    // If we have gaps, use them as boundaries
+    if (gaps.length > 0) {
+      // Take the largest gaps (up to 4 boundaries for 5 columns max)
+      const boundaries = gaps.slice(0, 4).map(g => g.center).sort((a, b) => a - b)
+      
+      return boundaries
+    }
+    
+    // Fallback: Use clustering approach to find multiple column boundaries
+    const xPositions = spanData.map(s => s.left)
+    const sortedX = [...xPositions].sort((a, b) => a - b)
+    
+    // Try to find 2-4 column boundaries using variance minimization
+    let bestBoundaries = null
+    let minTotalVariance = Infinity
+    
+    // Try different numbers of columns (2-5)
+    for (let numColumns = 2; numColumns <= 5; numColumns++) {
+      const boundaries = []
+      const clusterSize = Math.floor(sortedX.length / numColumns)
+      
+      for (let col = 1; col < numColumns; col++) {
+        const splitIdx = col * clusterSize
+        if (splitIdx > 0 && splitIdx < sortedX.length) {
+          boundaries.push((sortedX[splitIdx - 1] + sortedX[splitIdx]) / 2)
+        }
+      }
+      
+      if (boundaries.length === 0) continue
+      
+      // Calculate total variance for this configuration
+      let totalVariance = 0
+      let prevBoundary = 0
+      for (let i = 0; i <= boundaries.length; i++) {
+        const startIdx = i === 0 ? 0 : sortedX.findIndex(x => x >= boundaries[i - 1])
+        const endIdx = i === boundaries.length ? sortedX.length : sortedX.findIndex(x => x >= boundaries[i])
+        
+        if (startIdx >= 0 && endIdx > startIdx) {
+          const cluster = sortedX.slice(startIdx, endIdx)
+          if (cluster.length > 0) {
+            const mean = cluster.reduce((a, b) => a + b, 0) / cluster.length
+            const variance = cluster.reduce((sum, x) => sum + Math.pow(x - mean, 2), 0) / cluster.length
+            totalVariance += variance
+          }
+        }
+      }
+      
+      if (totalVariance < minTotalVariance) {
+        minTotalVariance = totalVariance
+        bestBoundaries = boundaries.sort((a, b) => a - b)
+      }
+    }
+    
+    if (bestBoundaries && bestBoundaries.length > 0) {
+      return bestBoundaries
+    }
+    
+    // Final fallback: single midpoint
+    const fallbackBoundary = (minX + maxX) / 2
+    return [fallbackBoundary]
+  }
+
   // Helper function to extract column index from a selection range
-  const getColumnIndexFromRange = (range) => {
-    if (!range) return null
+  const getColumnIndexFromRange = (range, textLayerDiv = null, rectangles = null) => {
+    if (!range) {
+      return null
+    }
     
     try {
       // Find the span that contains the start of the selection
@@ -8598,6 +8753,37 @@ function Home() {
         if (lineContainer && lineContainer.dataset.columnIndex !== undefined) {
           return parseInt(lineContainer.dataset.columnIndex)
         }
+      }
+      
+      // Fallback: Calculate column index from X position of rectangles
+      // This is needed when spans don't have data-column-index attribute set
+      if (rectangles && rectangles.length > 0 && textLayerDiv) {
+        const textLayerRect = textLayerDiv.getBoundingClientRect()
+        const firstRectX = rectangles[0].x
+        
+        // Detect column boundaries from actual span positions (returns array)
+        const columnBoundaries = detectColumnBoundaries(textLayerDiv)
+        
+        let result
+        if (columnBoundaries.length > 0) {
+          // Find which column the X position falls into
+          // Boundaries are sorted left to right, so find the first boundary that's greater than X
+          let columnIndex = 0
+          for (let i = 0; i < columnBoundaries.length; i++) {
+            if (firstRectX < columnBoundaries[i]) {
+              break
+            }
+            columnIndex = i + 1
+          }
+          result = columnIndex
+        } else {
+          // Fallback to midpoint if detection fails
+          const textLayerWidth = textLayerRect.width
+          const midPoint = textLayerWidth / 2
+          result = firstRectX < midPoint ? 0 : 1
+        }
+        
+        return result
       }
     } catch (e) {
       console.warn('Failed to extract column index from range:', e)
@@ -10584,7 +10770,8 @@ function Home() {
         const textLayerHeightAtCreation = textLayerRect ? textLayerRect.height : null
         
         // Extract column index from selection range for column-aware sorting
-        const columnIndex = getColumnIndexFromRange(selectionRange)
+        // Pass rectangles and textLayerDiv as fallback parameters
+        const columnIndex = getColumnIndexFromRange(selectionRange, textLayerDiv, rectangles)
         
         // Create highlight with array of rectangles (visual selection)
         // But use expanded text (full words) for the highlights-editor
@@ -11592,6 +11779,24 @@ function Home() {
 
   // Sync highlight items with highlights (for undo/redo)
   useEffect(() => {
+    // Skip if we're in the middle of a drag operation (prevents interference with drag-drop)
+    if (isDraggingHighlightRef.current) {
+      return
+    }
+    
+    // Skip if highlightItems already exist and highlights haven't changed
+    // This prevents overwriting user's custom order when only highlights are loaded
+    // Only skip on initial load - after that, we need to sync for new highlights
+    if (highlightItems.length > 0 && highlights.length === highlightItems.length && isInitialLoadRef.current) {
+      const highlightIds = new Set(highlights.map(h => h.id))
+      const itemIds = new Set(highlightItems.map(item => item.id))
+      const idsMatch = highlightIds.size === itemIds.size && 
+                       Array.from(highlightIds).every(id => itemIds.has(id))
+      if (idsMatch) {
+        return
+      }
+    }
+    
     // Create merged items from connected highlights
     const mergedItems = mergeConnectedHighlights(highlights)
     
@@ -11616,8 +11821,8 @@ function Home() {
       let newItemCounter = 0
       
       // Update existing items with new text/color, add new ones
-      // IMPORTANT: Use the sorted order from mergeConnectedHighlights (text position order)
-      // Only preserve manual text edits, not order (order should always follow text position)
+      // IMPORTANT: Preserve user's custom order from prev for existing items
+      // Only use mergedItem.order for truly new items that don't exist in prev
       const updated = mergedItems.map(mergedItem => {
         // First, check if the merged item's ID itself exists in previous items
         // (This handles the case where the merged item uses the first highlight's ID)
@@ -11634,12 +11839,12 @@ function Home() {
               // Combine text from all existing items in the order they appear in mergedIds
               // This ensures the first highlight's text comes first, then the second, etc.
               const combinedText = existingItems.map(item => item.text).filter(Boolean).join(' ')
-              // Use sorted order from mergeConnectedHighlights, not prev order
-              return { ...mergedItem, text: combinedText, order: mergedItem.order }
+              // Preserve order from existing item (user's custom order)
+              return { ...mergedItem, text: combinedText, order: existingByMergedId.order }
             }
           }
-          // Preserve text from existing item (user's manual edits) but use sorted order from mergeConnectedHighlights
-          return { ...mergedItem, text: existingByMergedId.text, order: mergedItem.order }
+          // Preserve both text and order from existing item (user's manual edits and custom order)
+          return { ...mergedItem, text: existingByMergedId.text, order: existingByMergedId.order }
         }
         
         // For merged items, check if any of the merged highlight IDs have existing items
@@ -11655,22 +11860,24 @@ function Home() {
               // Combine text from all existing items in the order they appear in mergedIds
               // This ensures the first highlight's text comes first, then the second, etc.
               const combinedText = existingItems.map(item => item.text).filter(Boolean).join(' ')
-              // Use sorted order from mergeConnectedHighlights, not prev order
-              return { ...mergedItem, text: combinedText, order: mergedItem.order }
+              // Use the order from the first existing item (preserve user's custom order)
+              return { ...mergedItem, text: combinedText, order: existingItems[0].order }
             }
-            // Single existing item - preserve text but use sorted order
+            // Single existing item - preserve both text and order
             const existingText = existingItems[0].text
-            return { ...mergedItem, text: existingText, order: mergedItem.order }
+            return { ...mergedItem, text: existingText, order: existingItems[0].order }
           }
         } else {
-          // For non-merged items, preserve existing text but use sorted order from mergeConnectedHighlights
+          // For non-merged items, preserve existing text and order
           const existing = prev.find(item => item.id === mergedItem.id)
           if (existing) {
-            return { ...mergedItem, text: existing.text, order: mergedItem.order }
+            return { ...mergedItem, text: existing.text, order: existing.order }
           }
         }
         // For new items, use the sorted order from mergeConnectedHighlights (already set)
-        return mergedItem
+        // Assign order based on maxExistingOrder to place new items at the end
+        newItemCounter++
+        return { ...mergedItem, order: maxExistingOrder + newItemCounter }
       })
       
       // Remove items that no longer exist as separate items (they're now merged)
@@ -11697,7 +11904,26 @@ function Home() {
       })
       
       // Sort by order to maintain user's custom order
-      return filtered.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+      const finalItems = filtered.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+      
+      // Early return if nothing actually changed (same items, same order, same text, same color)
+      // This prevents unnecessary re-renders that cause "vibrating" during drag operations
+      if (prev.length === finalItems.length) {
+        const prevMap = new Map(prev.map(item => [item.id, item]))
+        const hasChanges = finalItems.some(item => {
+          const prevItem = prevMap.get(item.id)
+          if (!prevItem) return true
+          return prevItem.order !== item.order || 
+                 prevItem.text !== item.text || 
+                 prevItem.color !== item.color ||
+                 prevItem.inline !== item.inline
+        })
+        if (!hasChanges) {
+          return prev
+        }
+      }
+      
+      return finalItems
     })
   }, [highlights, mergeConnectedHighlights])
 
@@ -11779,7 +12005,8 @@ function Home() {
           const clickedSpan = e.target.closest('span')
           if (!clickedSpan || clickedSpan.closest('.textLayer') !== textLayer) return
           
-          if (interactionMode === 'read') {
+          // Check current interactionMode from ref, not captured value
+          if (interactionModeRef.current === 'read') {
             // Get charIndex from data attribute (more reliable than element reference)
             let charIndexAttr = clickedSpan.dataset.charIndex
             let charIndex = charIndexAttr ? parseInt(charIndexAttr, 10) : null
@@ -13849,6 +14076,9 @@ function Home() {
                     onDelete={handleDeleteHighlight}
                     pdfFileName={pdfFile?.name}
                     summaryText={summaryText}
+                    onDragStateChange={(isDragging) => {
+                      isDraggingHighlightRef.current = isDragging
+                    }}
                     onExpandSummary={() => {
                       // Save exact scroll position before opening full view
                       const pdfViewer = document.querySelector('.pdf-viewer-container')

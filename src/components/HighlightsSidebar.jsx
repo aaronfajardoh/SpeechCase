@@ -7,7 +7,7 @@ import MermaidDiagram from './MermaidDiagram.jsx'
 import { markdownToClipboardHtml, copyHtmlToClipboard } from '../utils/clipboardUtils.js'
 
 // Sidebar tab: highlights
-const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, highlights, onColorChange, onDelete, pdfFileName, onExpandSummary, onExpandHighlights, onSummaryGenerated, summaryText: externalSummaryText }) => {
+const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, highlights, onColorChange, onDelete, pdfFileName, onExpandSummary, onExpandHighlights, onSummaryGenerated, summaryText: externalSummaryText, onDragStateChange }) => {
   const [hoveredItemId, setHoveredItemId] = useState(null)
   const [tooltipPosition, setTooltipPosition] = useState(null)
   const isHoveringTooltipRef = useRef(false)
@@ -24,6 +24,8 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
   const editInputRef = useRef(null)
   const highlightsItemsRef = useRef(null)
   const prevHighlightItemsLengthRef = useRef(highlightItems.length)
+  const dragOverThrottleRef = useRef(null) // Throttle drag-over to prevent excessive re-renders
+  const lastDropPositionRef = useRef(null) // Track last drop position to avoid unnecessary updates
   
   // Use external summary text if provided, otherwise use local state
   const summaryText = externalSummaryText || localSummaryText
@@ -34,6 +36,10 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
       if (hoverTimeoutRef.current) {
         clearTimeout(hoverTimeoutRef.current)
         hoverTimeoutRef.current = null
+      }
+      if (dragOverThrottleRef.current) {
+        cancelAnimationFrame(dragOverThrottleRef.current)
+        dragOverThrottleRef.current = null
       }
     }
   }, [editingId])
@@ -93,13 +99,16 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
   const handleDragStart = (e, item) => {
     setDraggedId(item.id)
     e.dataTransfer.effectAllowed = 'move'
+    if (onDragStateChange) onDragStateChange(true)
   }
 
-  // Handle drag over
+  // Handle drag over (throttled to prevent excessive re-renders)
   const handleDragOver = (e, item) => {
     e.preventDefault()
+    e.stopPropagation() // Prevent bubbling to avoid multiple handlers
     e.dataTransfer.dropEffect = 'move'
-    setDragOverId(item.id)
+    
+    if (!draggedId || draggedId === item.id) return
     
     // Check if dragged item or target item is blue (bullet point)
     const draggedItem = highlightItems.find(i => i.id === draggedId)
@@ -121,24 +130,44 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
     const position = isLeft ? 'before' : 'after'
     
     // Determine if inline (same line) or new line
-    // If mouse is in the middle 70% vertically, consider it inline
-    // This allows for easier inline placement
-    const verticalTop = rect.top + rect.height * 0.15
-    const verticalBottom = rect.top + rect.height * 0.85
+    // Use top 30% and bottom 30% as "between items" zones for easier placement
+    const verticalTop = rect.top + rect.height * 0.3
+    const verticalBottom = rect.top + rect.height * 0.7
     let isInline = mouseY >= verticalTop && mouseY <= verticalBottom
     
-    // Force new line if blue item is involved
-    if (cannotBeInline) {
+    // Force new line if blue item is involved or if mouse is in top/bottom zones
+    if (cannotBeInline || mouseY < verticalTop || mouseY > verticalBottom) {
       isInline = false
     }
     
-    setDropPosition({ itemId: item.id, position, inline: isInline })
+    const newDropPosition = { itemId: item.id, position, inline: isInline }
+    
+    // Only update state if the drop position actually changed
+    const lastPos = lastDropPositionRef.current
+    if (!lastPos || 
+        lastPos.itemId !== newDropPosition.itemId || 
+        lastPos.position !== newDropPosition.position || 
+        lastPos.inline !== newDropPosition.inline) {
+      
+      // Throttle state updates using requestAnimationFrame for smooth updates
+      if (dragOverThrottleRef.current) {
+        return
+      }
+      
+      dragOverThrottleRef.current = requestAnimationFrame(() => {
+        dragOverThrottleRef.current = null
+        lastDropPositionRef.current = newDropPosition
+        setDragOverId(item.id)
+        setDropPosition(newDropPosition)
+      })
+    }
   }
 
-  // Handle drop
+  // Handle drop on an item
   const handleDrop = (e, targetItem) => {
     e.preventDefault()
-    if (!draggedId || draggedId === targetItem.id) {
+    e.stopPropagation() // Prevent event from bubbling to container
+    if (!draggedId || !targetItem || draggedId === targetItem.id) {
       setDraggedId(null)
       setDragOverId(null)
       setDropPosition(null)
@@ -153,29 +182,51 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
     // Blue items cannot be placed inline - force new line
     const cannotBeInline = isDraggedBlue || isTargetBlue
 
-    const position = dropPosition || { itemId: targetItem.id, position: 'after', inline: false }
+    // Use dropPosition if available and it matches the target, otherwise use target
+    // IMPORTANT: If dropPosition exists but itemId doesn't match targetItem, use dropPosition's itemId
+    let position = dropPosition
+    let actualTargetItem = targetItem
+    
+    // If we have a dropPosition with a different itemId, use that item instead
+    if (dropPosition && dropPosition.itemId && dropPosition.itemId !== targetItem.id) {
+      const dropTargetItem = highlightItems.find(item => item.id === dropPosition.itemId)
+      if (dropTargetItem) {
+        actualTargetItem = dropTargetItem
+        position = dropPosition
+      } else {
+        position = { itemId: targetItem.id, position: 'after', inline: false }
+      }
+    } else if (!position) {
+      position = { itemId: targetItem.id, position: 'after', inline: false }
+    }
+    
     // Force new line if blue item is involved
-    const isInline = !cannotBeInline && position.inline && position.itemId === targetItem.id
+    const isInline = !cannotBeInline && position.inline && position.itemId === actualTargetItem.id
 
     setHighlightItems(prev => {
       const items = [...prev]
       const draggedIndex = items.findIndex(item => item.id === draggedId)
-      const targetIndex = items.findIndex(item => item.id === targetItem.id)
+      const targetIndex = items.findIndex(item => item.id === actualTargetItem.id)
 
-      if (draggedIndex === -1 || targetIndex === -1) return prev
+      if (draggedIndex === -1 || targetIndex === -1) {
+        return prev
+      }
 
       const [draggedItem] = items.splice(draggedIndex, 1)
       
-      // Adjust target index if dragged item was before target
+      // Calculate insert index based on position
       let insertIndex = targetIndex
+      
+      // If dragging from before target, we need to adjust
       if (draggedIndex < targetIndex) {
         insertIndex = targetIndex - 1
       }
       
-      // Insert based on position
+      // Insert based on position (before or after)
       if (position.position === 'after') {
         insertIndex += 1
       }
+      // If position is 'before', insertIndex is already correct (or adjusted above)
       
       // Add inline property if placing inline (but never for blue items)
       const itemToInsert = isInline 
@@ -187,7 +238,7 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
       // If placing inline, also mark the target item as inline (if it wasn't already)
       // But skip this if either item is blue
       if (isInline && !cannotBeInline) {
-        const finalTargetIndex = items.findIndex(item => item.id === targetItem.id)
+        const finalTargetIndex = items.findIndex(item => item.id === actualTargetItem.id)
         if (finalTargetIndex !== -1) {
           items[finalTargetIndex] = { ...items[finalTargetIndex], inline: true }
         }
@@ -200,13 +251,28 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
     setDraggedId(null)
     setDragOverId(null)
     setDropPosition(null)
+    if (onDragStateChange) {
+      // Delay clearing drag state to allow useEffect to complete
+      setTimeout(() => onDragStateChange(false), 100)
+    }
   }
 
   // Handle drag end
   const handleDragEnd = () => {
+    // Clear throttle
+    if (dragOverThrottleRef.current) {
+      cancelAnimationFrame(dragOverThrottleRef.current)
+      dragOverThrottleRef.current = null
+    }
+    
+    lastDropPositionRef.current = null
     setDraggedId(null)
     setDragOverId(null)
     setDropPosition(null)
+    if (onDragStateChange) {
+      // Delay clearing drag state to allow useEffect to complete
+      setTimeout(() => onDragStateChange(false), 100)
+    }
   }
 
   // Handle concatenation (dropping on drag handle)
@@ -582,33 +648,56 @@ ${htmlContent}
                 ref={highlightsItemsRef}
                 className="highlights-items"
                 onDragOver={(e) => {
-                  // Allow dropping on empty space
+                  // Allow dropping on empty space, but don't clear existing dropPosition
+                  // This allows drops between items to work correctly
                   if (e.target === e.currentTarget || e.target.classList.contains('highlights-items')) {
                     e.preventDefault()
                     e.dataTransfer.dropEffect = 'move'
-                    setDropPosition({ itemId: null, position: 'after', inline: false })
+                    // Only set dropPosition to null if we don't already have one
+                    // This prevents clearing the position when dragging between items
+                    if (!dropPosition || !dropPosition.itemId) {
+                      setDropPosition({ itemId: null, position: 'after', inline: false })
+                    }
                   }
                 }}
                 onDrop={(e) => {
-                  // Handle drop on empty space
+                  // Handle drop on empty space or between items
                   if (e.target === e.currentTarget || e.target.classList.contains('highlights-items')) {
                     e.preventDefault()
+                    e.stopPropagation()
                     if (!draggedId) return
                     
-                    setHighlightItems(prev => {
-                      const items = [...prev]
-                      const draggedIndex = items.findIndex(item => item.id === draggedId)
-                      if (draggedIndex === -1) return prev
-                      
-                      const [draggedItem] = items.splice(draggedIndex, 1)
-                      items.push({ ...draggedItem, inline: false })
-                      
-                      return items.map((item, index) => ({ ...item, order: index }))
-                    })
+                    // If we have a drop position with an itemId, use that to place between items
+                    if (dropPosition && dropPosition.itemId) {
+                      const targetItem = highlightItems.find(item => item.id === dropPosition.itemId)
+                      if (targetItem) {
+                        // Call handleDrop with the target item from dropPosition
+                        // This ensures consistent logic and proper saving
+                        handleDrop(e, targetItem)
+                        return
+                      }
+                    }
                     
-                    setDraggedId(null)
-                    setDragOverId(null)
-                    setDropPosition(null)
+                    // Fallback: drop at end (only if no dropPosition)
+                    if (!dropPosition || !dropPosition.itemId) {
+                      setHighlightItems(prev => {
+                        const items = [...prev]
+                        const draggedIndex = items.findIndex(item => item.id === draggedId)
+                        if (draggedIndex === -1) return prev
+                        
+                        const [draggedItem] = items.splice(draggedIndex, 1)
+                        items.push({ ...draggedItem, inline: false })
+                        
+                        return items.map((item, index) => ({ ...item, order: index }))
+                      })
+                      
+                      setDraggedId(null)
+                      setDragOverId(null)
+                      setDropPosition(null)
+                      if (onDragStateChange) {
+                        setTimeout(() => onDragStateChange(false), 100)
+                      }
+                    }
                   }
                 }}
               >
@@ -681,10 +770,22 @@ ${htmlContent}
                         className={`highlight-item ${getFormattingClass(item.color)} ${draggedId === item.id ? 'dragging' : ''} ${dragOverId === item.id ? 'drag-over' : ''} ${item.inline ? 'inline-item' : ''} ${isInlineDrop ? 'drop-preview-inline' : ''}`}
                         data-color={item.color || 'yellow'}
                         draggable={editingId !== item.id}
-                        onDragStart={(e) => handleDragStart(e, item)}
-                        onDragOver={(e) => handleDragOver(e, item)}
-                        onDrop={(e) => handleDrop(e, item)}
-                        onDragEnd={handleDragEnd}
+                        onDragStart={(e) => {
+                          e.stopPropagation()
+                          handleDragStart(e, item)
+                        }}
+                        onDragOver={(e) => {
+                          e.stopPropagation()
+                          handleDragOver(e, item)
+                        }}
+                        onDrop={(e) => {
+                          e.stopPropagation()
+                          handleDrop(e, item)
+                        }}
+                        onDragEnd={(e) => {
+                          e.stopPropagation()
+                          handleDragEnd()
+                        }}
                       >
                         {/* Inline drop indicator before */}
                         {isInlineDrop && dropPosition.position === 'before' && (
