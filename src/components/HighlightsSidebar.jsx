@@ -376,7 +376,13 @@ const HighlightsSidebar = ({ highlightItems, setHighlightItems, documentId, high
 
   // Format as Summary button handler
   const handleFormatAsSummary = () => {
-    generateSummary()
+    if (summaryText) {
+      // If summary already exists, switch to summary tab
+      setActiveTab('summary')
+    } else {
+      // Otherwise, generate a new summary
+      generateSummary()
+    }
   }
 
   // Update summary button handler
@@ -992,7 +998,7 @@ ${htmlContent}
                   onClick={handleFormatAsSummary}
                   disabled={isGeneratingSummary || highlightItems.length === 0}
                 >
-                  {isGeneratingSummary ? 'Generating...' : 'Format as Summary'}
+                  {isGeneratingSummary ? 'Generating...' : (summaryText ? 'Go to Summary' : 'Format as Summary')}
                 </button>
               </div>
             </>

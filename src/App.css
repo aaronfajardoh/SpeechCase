@@ -3186,26 +3186,28 @@
 
 /* Overlay reload button - macOS style */
 .btn-update-summary-overlay {
-  position: absolute;
+  position: sticky;
   top: 0.75rem;
-  right: 0.75rem;
-  width: 28px;
-  height: 28px;
+  float: right;
+  clear: both;
+  width: 38px;
+  height: 38px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 0 1px rgba(0, 0, 0, 0.05);
-  color: rgba(0, 0, 0, 0.4);
+  color: rgba(0, 0, 0, 0.65);
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 10;
   opacity: 0.5;
   font-family: 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  margin-bottom: 0.5rem;
 }
 
 .btn-update-summary-overlay:hover:not(:disabled) {
