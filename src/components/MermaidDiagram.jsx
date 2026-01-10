@@ -55,7 +55,53 @@ const MermaidDiagram = ({ chart, fontSize = 18 }) => {
 
         // Render the diagram - mermaid.render returns { svg, bindFunctions }
         const { svg } = await mermaid.render(id, chart)
-        setSvgContent(svg)
+        
+        // Process SVG to add rounded corners and light blue background
+        const parser = new DOMParser()
+        const svgDoc = parser.parseFromString(svg, 'image/svg+xml')
+        const svgElement = svgDoc.documentElement
+        
+        // Add rounded corners to all rect elements
+        const rects = svgElement.querySelectorAll('rect')
+        rects.forEach(rect => {
+          // Only add rounded corners to node rectangles (not background or other elements)
+          const parent = rect.parentElement
+          if (parent && parent.classList.contains('node')) {
+            rect.setAttribute('rx', '8')
+            rect.setAttribute('ry', '8')
+          }
+        })
+        
+        // Update fill colors to light blue for node shapes
+        const nodeRects = svgElement.querySelectorAll('.node rect')
+        nodeRects.forEach(rect => {
+          rect.setAttribute('fill', '#e3f2fd')
+          rect.setAttribute('stroke', '#1976d2')
+        })
+        
+        const nodePolygons = svgElement.querySelectorAll('.node polygon')
+        nodePolygons.forEach(polygon => {
+          polygon.setAttribute('fill', '#e3f2fd')
+          polygon.setAttribute('stroke', '#1976d2')
+        })
+        
+        const nodeCircles = svgElement.querySelectorAll('.node circle')
+        nodeCircles.forEach(circle => {
+          circle.setAttribute('fill', '#e3f2fd')
+          circle.setAttribute('stroke', '#1976d2')
+        })
+        
+        const nodeEllipses = svgElement.querySelectorAll('.node ellipse')
+        nodeEllipses.forEach(ellipse => {
+          ellipse.setAttribute('fill', '#e3f2fd')
+          ellipse.setAttribute('stroke', '#1976d2')
+        })
+        
+        // Convert back to string
+        const serializer = new XMLSerializer()
+        const modifiedSvg = serializer.serializeToString(svgElement)
+        
+        setSvgContent(modifiedSvg)
       } catch (err) {
         console.error('Error rendering Mermaid diagram:', err)
         setError(err.message || 'Failed to render diagram')

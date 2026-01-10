@@ -2449,6 +2449,21 @@
   align-items: center;
 }
 
+/* Style Mermaid diagram nodes with light blue background and rounded corners */
+.mermaid-container svg .node rect,
+.mermaid-container svg .node polygon,
+.mermaid-container svg .node circle,
+.mermaid-container svg .node ellipse {
+  fill: #e3f2fd !important; /* Light blue background */
+  stroke: #1976d2 !important; /* Darker blue border */
+}
+
+/* Ensure rounded corners are applied to rectangles */
+.mermaid-container svg .node rect {
+  rx: 8 !important;
+  ry: 8 !important;
+}
+
 .mermaid-loading {
   text-align: center;
   color: #999;
