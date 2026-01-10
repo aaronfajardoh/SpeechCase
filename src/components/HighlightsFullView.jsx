@@ -856,6 +856,39 @@ ${htmlContent}
                   </button>
                   <ReactMarkdown
                     components={{
+                      img: ({ src, alt, ...props }) => {
+                        // Check if this is a snip placeholder
+                        const isSnipPlaceholder = (alt && alt.startsWith('Snip: ')) || (src === 'snip-placeholder');
+                        if (isSnipPlaceholder) {
+                          const snipId = alt ? alt.replace('Snip: ', '') : 'snip_1';
+                          const snipIndex = parseInt(snipId.replace('snip_', '')) - 1;
+                          const snipItems = highlightItems?.filter(item => item.isSnip && item.image) || [];
+                          const snipItem = snipItems[snipIndex];
+                          if (snipItem && snipItem.image) {
+                            return <img src={snipItem.image} alt={snipItem.text || 'User screenshot'} style={{ maxWidth: '100%', height: 'auto', margin: '1rem 0', borderRadius: '4px' }} />;
+                          }
+                          return null;
+                        }
+                        // Regular image (concept image or other)
+                        if (!src || src.trim().length === 0) {
+                          return null;
+                        }
+                        // Check if this is a concept image
+                        const isConceptImage = alt === 'Concept Image' || alt?.includes('Concept');
+                        const imageStyle = isConceptImage ? {
+                          maxWidth: '50%',
+                          height: 'auto',
+                          margin: '1rem 0',
+                          borderRadius: '4px',
+                          display: 'block',
+                        } : {
+                          maxWidth: '100%',
+                          height: 'auto',
+                          margin: '1rem 0',
+                          borderRadius: '4px',
+                        };
+                        return <img src={src} alt={alt || 'Image'} style={imageStyle} />;
+                      },
                       code({ node, inline, className, children, ...props }) {
                         const match = /language-(\w+)/.exec(className || '')
                         const language = match ? match[1] : ''

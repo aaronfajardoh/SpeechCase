@@ -27,7 +27,7 @@ const vectorStore = require("./src/vectorStore");
 const {generateEmbedding, generateEmbeddingsBatch} = require("./src/embeddings");
 const {chunkText, addMetadataTags} = require("./src/chunking");
 const prompts = require("./src/prompts");
-const {getOpenAIClient} = require("./src/embeddings");
+const {getDeepSeekClient} = require("./src/embeddings");
 const textToSpeech = require("@google-cloud/text-to-speech");
 const {getCharacterImagesBatch} = require("./src/imageService");
 const nodemailer = require("nodemailer");
@@ -49,7 +49,7 @@ const ttsClient = new textToSpeech.TextToSpeechClient();
  */
 exports.processPdf = onCall(
     {
-      secrets: ["OPENAI_API_KEY"],
+      secrets: ["OPENAI_API_KEY", "DEEPSEEK_API_KEY"],
       cors: [
         /^https:\/\/casediver\.web\.app$/,
         /^https:\/\/casediver\.firebaseapp\.com$/,
@@ -140,7 +140,7 @@ exports.processPdf = onCall(
  */
 exports.askQuestion = onCall(
     {
-      secrets: ["OPENAI_API_KEY"],
+      secrets: ["OPENAI_API_KEY", "DEEPSEEK_API_KEY"],
       cors: [
         /^https:\/\/casediver\.web\.app$/,
         /^https:\/\/casediver\.firebaseapp\.com$/,
@@ -192,10 +192,10 @@ exports.askQuestion = onCall(
             .map((chunk, index) => `[${index + 1}] ${chunk.text}`)
             .join("\n\n");
 
-        // Use OpenAI to generate answer based on context
-        const openaiClient = getOpenAIClient();
-        const completion = await openaiClient.chat.completions.create({
-          model: "gpt-4o-mini",
+        // Use DeepSeek to generate answer based on context
+        const deepseekClient = getDeepSeekClient();
+        const completion = await deepseekClient.chat.completions.create({
+          model: "deepseek-chat",
           messages: [
             {
               role: "system",
@@ -257,7 +257,7 @@ async function getDocumentFullText(uid, documentId) {
  */
 exports.generateTimeline = onCall(
     {
-      secrets: ["OPENAI_API_KEY"],
+      secrets: ["OPENAI_API_KEY", "DEEPSEEK_API_KEY"],
       cors: [
         /^https:\/\/casediver\.web\.app$/,
         /^https:\/\/casediver\.firebaseapp\.com$/,
@@ -293,10 +293,10 @@ exports.generateTimeline = onCall(
           throw new HttpsError("failed-precondition", "Document has no text content.");
         }
 
-        // Generate timeline using OpenAI
-        const openaiClient = getOpenAIClient();
-        const completion = await openaiClient.chat.completions.create({
-          model: "gpt-4o-mini",
+        // Generate timeline using DeepSeek
+        const deepseekClient = getDeepSeekClient();
+        const completion = await deepseekClient.chat.completions.create({
+          model: "deepseek-chat",
           messages: [
             {
               role: "system",
@@ -394,10 +394,10 @@ exports.generateCharacters = onCall(
           throw new HttpsError("failed-precondition", "Document has no text content.");
         }
 
-        // Generate characters using OpenAI
-        const openaiClient = getOpenAIClient();
-        const completion = await openaiClient.chat.completions.create({
-          model: "gpt-4o-mini",
+        // Generate characters using DeepSeek
+        const deepseekClient = getDeepSeekClient();
+        const completion = await deepseekClient.chat.completions.create({
+          model: "deepseek-chat",
           messages: [
             {
               role: "system",
@@ -513,14 +513,8 @@ exports.generateCharacters = onCall(
  */
 exports.generateSummary = onCall(
     {
-      secrets: ["OPENAI_API_KEY", "GOOGLE_AI_KEY"],
-      cors: [
-        /^https:\/\/casediver\.web\.app$/,
-        /^https:\/\/casediver\.firebaseapp\.com$/,
-        /^https:\/\/.*\.web\.app$/,
-        /^https:\/\/.*\.firebaseapp\.com$/,
-        /^http:\/\/localhost:\d+$/,
-      ],
+      secrets: ["OPENAI_API_KEY", "DEEPSEEK_API_KEY", "GOOGLE_AI_KEY"],
+      timeoutSeconds: 300, // 5 minutes for image generation
     },
     async (request) => {
       try {
@@ -618,67 +612,137 @@ exports.generateSummary = onCall(
           throw new HttpsError("failed-precondition", "No content available to summarize.");
         }
 
-        // Generate summary using OpenAI
-        const openaiClient = getOpenAIClient();
+        // Generate summary using DeepSeek
+        let deepseekClient;
+        try {
+          deepseekClient = getDeepSeekClient();
+        } catch (clientError) {
+          logger.error("Failed to initialize DeepSeek client:", clientError);
+          throw new HttpsError(
+              "failed-precondition",
+              "DeepSeek API key not configured. Please set DEEPSEEK_API_KEY secret in Firebase Functions.",
+          );
+        }
         const userPrompt = prompts.summaryUserPrompt(contentToSummarize, imageContext);
-        const completion = await openaiClient.chat.completions.create({
-          model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "system",
-              content: prompts.summarySystemPrompt,
-            },
-            {
-              role: "user",
-              content: userPrompt,
-            },
-          ],
-          temperature: 0.7,
-          max_tokens: 2000,
-        });
+        let completion;
+        try {
+          completion = await deepseekClient.chat.completions.create({
+            model: "deepseek-chat",
+            messages: [
+              {
+                role: "system",
+                content: prompts.summarySystemPrompt,
+              },
+              {
+                role: "user",
+                content: userPrompt,
+              },
+            ],
+            temperature: 0.7,
+            max_tokens: 2000,
+          });
+        } catch (apiError) {
+          logger.error("DeepSeek API error:", apiError);
+          if (apiError.status === 401 || apiError.code === "invalid_api_key") {
+            throw new HttpsError(
+                "failed-precondition",
+                "Invalid DeepSeek API key. Please check your DEEPSEEK_API_KEY secret.",
+            );
+          }
+          throw new HttpsError(
+              "internal",
+              `DeepSeek API error: ${apiError.message || "Unknown error"}`,
+          );
+        }
+
+        if (!completion || !completion.choices || completion.choices.length === 0) {
+          throw new HttpsError("internal", "DeepSeek API returned an empty response.");
+        }
 
         let summary = completion.choices[0].message.content;
 
-        // Generate conceptual image after summary is created
-        let conceptImageUrl = null;
+        // Parse and generate images for <<GENERATE_IMAGE>> tags
         if (googleAiKey) {
           try {
             const {generateConceptImage} = require("./src/aiHelpers");
-            const conceptImageResult = await generateConceptImage(
-                summary,
-                uid,
-                documentId,
-                googleAiKey,
-            );
-            if (conceptImageResult && conceptImageResult.imageUrl) {
-              conceptImageUrl = conceptImageResult.imageUrl;
-              // Use a lightweight second OpenAI call to insert the concept image contextually
-              // This allows the model to see the full summary and decide optimal placement
-              const insertionCompletion = await openaiClient.chat.completions.create({
-                model: "gpt-4o-mini",
-                messages: [
-                  {
-                    role: "system",
-                    content: "You are a content editor. Insert the provided concept image URL into the summary text where it is most contextually appropriate based on the content flow. IMPORTANT: Use markdown image syntax with an exclamation mark: ![Concept Image](url). DO NOT use link syntax [Concept Image](url). Also, preserve ALL existing snip placeholders in the format ![Snip: <id>](snip-placeholder) exactly as they appear. Return the complete summary with the image inserted in the optimal location (beginning, middle, or end - wherever it enhances understanding), and keep all snip placeholders intact.",
-                  },
-                  {
-                    role: "user",
-                    content: `Summary:\n${summary}\n\nConcept Image URL: ${conceptImageUrl}\n\nInsert this image where it best fits contextually in the summary flow. Use markdown image syntax: ![Concept Image](url). Preserve all existing ![Snip: <id>](snip-placeholder) placeholders exactly as they are.`,
-                  },
-                ],
-                temperature: 0.3,
-                max_tokens: 2500,
+
+            // Step B: Parse <<GENERATE_IMAGE: ...>> tags using regex
+            // Match <<GENERATE_IMAGE: ...>> where ... can span multiple lines
+            // Use [\s\S] to match any character including newlines
+            const generateImageRegex = /<<GENERATE_IMAGE:\s*([\s\S]*?)>>/g;
+            const imageTags = [];
+            let match;
+
+            while ((match = generateImageRegex.exec(summary)) !== null) {
+              imageTags.push({
+                fullMatch: match[0],
+                prompt: match[1].trim(),
+                index: imageTags.length + 1, // 1-indexed for filename
               });
-              summary = insertionCompletion.choices[0].message.content;
-              // Fix common markdown syntax errors: [Concept Image](url) -> ![Concept Image](url)
-              // Only replace if there's NOT already a ! before [Concept Image]
-              summary = summary.replace(/(?!!)\[Concept Image\]\(/g, "![Concept Image](");
-              // Also fix double exclamation marks if they exist
-              summary = summary.replace(/!!\[Concept Image\]\(/g, "![Concept Image](");
+            }
+
+            // Step C: Generate images concurrently for each tag
+            if (imageTags.length > 0) {
+              logger.info(`Found ${imageTags.length} <<GENERATE_IMAGE>> tag(s), generating images...`);
+
+              const imageGenerationPromises = imageTags.map((tag) =>
+                generateConceptImage(
+                    null, // summaryText not needed when using directPrompt
+                    uid,
+                    documentId,
+                    googleAiKey,
+                    tag.prompt, // directPrompt
+                    tag.index.toString(), // imageSuffix for unique filename
+                )
+                    .then((result) => {
+                      if (result && result.imageUrl) {
+                        return {
+                          fullMatch: tag.fullMatch,
+                          imageUrl: result.imageUrl,
+                        };
+                      }
+                      // If generation failed, return null to remove the tag
+                      logger.warn(`Failed to generate image for tag: ${tag.prompt.substring(0, 50)}...`);
+                      return {
+                        fullMatch: tag.fullMatch,
+                        imageUrl: null,
+                      };
+                    })
+                    .catch((err) => {
+                      logger.error(`Error generating image for tag: ${err.message}`);
+                      return {
+                        fullMatch: tag.fullMatch,
+                        imageUrl: null,
+                      };
+                    }),
+              );
+
+              const imageResults = await Promise.all(imageGenerationPromises);
+
+              // Step D: Replace tags with markdown image URLs
+              for (const result of imageResults) {
+                if (result.imageUrl) {
+                  // Replace the tag with markdown image syntax
+                  summary = summary.replace(
+                      result.fullMatch,
+                      `![Concept Image](${result.imageUrl})`,
+                  );
+                } else {
+                  // If image generation failed, remove the tag
+                  summary = summary.replace(result.fullMatch, "");
+                }
+              }
+
+              logger.info(`Successfully processed ${imageResults.filter((r) => r.imageUrl).length} of ${imageTags.length} image generation requests`);
             }
           } catch (error) {
-            logger.error("Failed to generate or insert concept image:", error);
-            // Continue without concept image
+            logger.error("Failed to generate images from <<GENERATE_IMAGE>> tags:", error);
+            logger.error("Image generation error details:", {
+              message: error.message,
+              stack: error.stack ? error.stack.substring(0, 500) : null,
+            });
+            // Continue without generated images - remove any remaining tags (including multi-line)
+            summary = summary.replace(/<<GENERATE_IMAGE:\s*[\s\S]*?>>/g, "");
           }
         }
 
@@ -690,11 +754,9 @@ exports.generateSummary = onCall(
 
         logger.info(`Successfully generated summary for document ${documentId}`);
 
-
         return {
           success: true,
           summary: summary,
-          conceptImageUrl: conceptImageUrl,
         };
       } catch (error) {
         logger.error("Error generating summary:", error);

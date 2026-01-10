@@ -1030,7 +1030,21 @@ ${htmlContent}
                       if (!src || src.trim().length === 0) {
                         return null;
                       }
-                      return <img src={src} alt={alt || 'Image'} style={{ maxWidth: '100%', height: 'auto', margin: '1rem 0', borderRadius: '4px' }} />;
+                      // Check if this is a concept image (from alt text or URL pattern)
+                      const isConceptImage = alt === 'Concept Image' || alt?.includes('Concept');
+                      const imageStyle = isConceptImage ? {
+                        maxWidth: '50%',
+                        height: 'auto',
+                        margin: '1rem 0',
+                        borderRadius: '4px',
+                        display: 'block',
+                      } : {
+                        maxWidth: '100%',
+                        height: 'auto',
+                        margin: '1rem 0',
+                        borderRadius: '4px',
+                      };
+                      return <img src={src} alt={alt || 'Image'} style={imageStyle} />;
                     },
                     p: ({ children, ...props }) => {
                       // Check if paragraph contains image markdown text and render it as an image
@@ -1060,7 +1074,7 @@ ${htmlContent}
                             return (
                               <React.Fragment key={idx}>
                                 {parts[0] && <span>{parts[0]}</span>}
-                                <img src={imageUrl} alt="Concept Image" style={{ maxWidth: '100%', height: 'auto', margin: '1rem 0', borderRadius: '4px' }} />
+                                <img src={imageUrl} alt="Concept Image" style={{ maxWidth: '50%', height: 'auto', margin: '1rem 0', borderRadius: '4px', display: 'block' }} />
                                 {parts[1] && <span>{parts[1]}</span>}
                               </React.Fragment>
                             );
@@ -1071,7 +1085,7 @@ ${htmlContent}
                             return (
                               <React.Fragment key={idx}>
                                 {parts[0] && <span>{parts[0]}</span>}
-                                <img src={imageUrl} alt="Concept Image" style={{ maxWidth: '100%', height: 'auto', margin: '1rem 0', borderRadius: '4px' }} />
+                                <img src={imageUrl} alt="Concept Image" style={{ maxWidth: '50%', height: 'auto', margin: '1rem 0', borderRadius: '4px', display: 'block' }} />
                                 {parts[1] && <span>{parts[1]}</span>}
                               </React.Fragment>
                             );

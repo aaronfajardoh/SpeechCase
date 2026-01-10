@@ -95,71 +95,111 @@ async function analyzeSnipWithGemini(base64Image, apiKey) {
 /**
  * Generate a conceptual image using Gemini 3 Pro Image and upload to Firebase Storage
  * @param {string} summaryText - The generated summary text
+ *   (required if directPrompt is not provided)
  * @param {string} uid - User ID
  * @param {string} documentId - Document ID
  * @param {string} apiKey - Google AI API key
+ * @param {string|null} directPrompt - Optional direct prompt for image generation
+ *   (skips prompt generation step)
+ * @param {string} imageSuffix - Optional suffix for unique image filename
+ *   (e.g., "1", "2", "3")
  * @return {Promise<Object|null>} Object with imageUrl and prompt, or null on error
  */
-async function generateConceptImage(summaryText, uid, documentId, apiKey) {
+async function generateConceptImage(summaryText, uid, documentId, apiKey, directPrompt = null, imageSuffix = "") {
   if (!apiKey) {
     return null;
   }
 
-  if (!summaryText || summaryText.trim().length === 0) {
-    return null;
-  }
+  let imagePrompt = null;
 
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
+  // If directPrompt is provided, use it directly (skip prompt generation)
+  if (directPrompt) {
+    imagePrompt = directPrompt.trim();
 
-    // Step 1: Generate image prompt using Gemini - try multiple models
-    const textModelNames = [
-      "gemini-1.5-pro-latest",
-      "gemini-1.5-pro",
-      "gemini-2.0-flash-exp",
+    // Style enforcement: check if prompt contains style keywords
+    const styleKeywords = [
+      "line drawing",
+      "sketch",
+      "minimalist",
+      "business sketch",
+      "illustration",
+      "diagram",
+      "drawing",
     ];
+    const hasStyleKeyword = styleKeywords.some((keyword) =>
+      imagePrompt.toLowerCase().includes(keyword.toLowerCase()),
+    );
 
-    let promptResult = null;
-    let lastError = null;
-    for (const modelName of textModelNames) {
-      try {
-        const flashModel = genAI.getGenerativeModel({
-          model: modelName,
-        });
+    // If no style keyword found, append appropriate style instruction
+    if (!hasStyleKeyword) {
+      imagePrompt = `${imagePrompt}, business line drawing style`;
+    }
+  } else {
+    // Backward compatibility: generate prompt from summary text
+    if (!summaryText || summaryText.trim().length === 0) {
+      return null;
+    }
 
-        const promptGenerationPrompt = `Create an image generation prompt for a business-style line drawing or conceptual illustration that represents this summary. The image should be professional, clean, and suitable for a business case study context. Keep the prompt concise (1-2 sentences).
+    try {
+      const genAI = new GoogleGenerativeAI(apiKey);
+
+      // Step 1: Generate image prompt using Gemini - try multiple models
+      const textModelNames = [
+        "gemini-1.5-pro-latest",
+        "gemini-1.5-pro",
+        "gemini-2.0-flash-exp",
+      ];
+
+      let promptResult = null;
+      let lastError = null;
+      for (const modelName of textModelNames) {
+        try {
+          const flashModel = genAI.getGenerativeModel({
+            model: modelName,
+          });
+
+          const promptGenerationPrompt = `Create an image generation prompt for a business-style line drawing or conceptual illustration that represents this summary. The image should be professional, clean, and suitable for a business case study context. Keep the prompt concise (1-2 sentences).
 
 Summary:
 ${summaryText.substring(0, 2000)}`; // Limit summary length for prompt generation
 
-        promptResult = await flashModel.generateContent({
-          contents: [{
-            role: "user",
-            parts: [{text: promptGenerationPrompt}],
-          }],
-        });
-        break; // Success, exit loop
-      } catch (modelError) {
-        lastError = modelError;
-        continue; // Try next model
+          promptResult = await flashModel.generateContent({
+            contents: [{
+              role: "user",
+              parts: [{text: promptGenerationPrompt}],
+            }],
+          });
+          break; // Success, exit loop
+        } catch (modelError) {
+          lastError = modelError;
+          continue; // Try next model
+        }
       }
-    }
 
-    if (!promptResult) {
-      const errorMsg = lastError && lastError.message ? lastError.message : String(lastError);
-      console.warn("Failed to generate image prompt with any model:", errorMsg);
+      if (!promptResult) {
+        const errorMsg = lastError && lastError.message ? lastError.message : String(lastError);
+        console.warn("Failed to generate image prompt with any model:", errorMsg);
+        return null;
+      }
+
+      const promptResponse = await promptResult.response;
+      imagePrompt = promptResponse.text().trim();
+
+      if (!imagePrompt || imagePrompt.length === 0) {
+        console.warn("Failed to generate image prompt");
+        return null;
+      }
+    } catch (error) {
+      const errorMessage = error && error.message ? error.message : String(error);
+      console.warn("Error generating image prompt:", errorMessage);
       return null;
     }
+  }
 
-    const promptResponse = await promptResult.response;
-    const imagePrompt = promptResponse.text().trim();
+  // Step 2: Generate image using Gemini 3 Pro Image
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
 
-    if (!imagePrompt || imagePrompt.length === 0) {
-      console.warn("Failed to generate image prompt");
-      return null;
-    }
-
-    // Step 2: Generate image using Gemini 3 Pro Image (same model as Characters component)
     const imageModel = genAI.getGenerativeModel({
       model: "gemini-3-pro-image-preview",
     });
@@ -198,9 +238,10 @@ ${summaryText.substring(0, 2000)}`; // Limit summary length for prompt generatio
     // Step 3: Convert base64 to Buffer
     const imageBuffer = Buffer.from(base64ImageData, "base64");
 
-    // Step 4: Upload to Firebase Storage
+    // Step 4: Upload to Firebase Storage with unique filename if imageSuffix is provided
     const bucket = admin.storage().bucket();
-    const storagePath = `users/${uid}/summaries/${documentId}/concept-image.png`;
+    const filename = imageSuffix ? `concept-image-${imageSuffix}.png` : "concept-image.png";
+    const storagePath = `users/${uid}/summaries/${documentId}/${filename}`;
     const file = bucket.file(storagePath);
 
     await file.save(imageBuffer, {

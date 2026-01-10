@@ -6,6 +6,7 @@
 const OpenAI = require("openai");
 
 let openaiClient = null;
+let deepseekClient = null;
 
 /**
  * Initialize OpenAI client
@@ -31,6 +32,25 @@ function getOpenAIClient() {
     initializeOpenAI(apiKey);
   }
   return openaiClient;
+}
+
+/**
+ * Get DeepSeek client (initializes if needed)
+ * DeepSeek API is compatible with OpenAI SDK
+ * @return {OpenAI} DeepSeek client instance
+ */
+function getDeepSeekClient() {
+  if (!deepseekClient) {
+    const apiKey = process.env.DEEPSEEK_API_KEY;
+    if (!apiKey) {
+      throw new Error("DeepSeek API key not configured. Set DEEPSEEK_API_KEY environment variable.");
+    }
+    deepseekClient = new OpenAI({
+      apiKey: apiKey,
+      baseURL: "https://api.deepseek.com",
+    });
+  }
+  return deepseekClient;
 }
 
 /**
@@ -139,6 +159,7 @@ function cosineSimilarity(vec1, vec2) {
 module.exports = {
   initializeOpenAI,
   getOpenAIClient,
+  getDeepSeekClient,
   generateEmbedding,
   generateEmbeddingsBatch,
   cosineSimilarity,
