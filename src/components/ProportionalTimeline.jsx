@@ -291,51 +291,14 @@ const ProportionalTimeline = ({ events, selectedEvent, onEventClick, onCloseDeta
       return
     }
 
-    console.log('ProportionalTimeline: Fetching icons for remarkable events...')
-    setIsLoadingIcons(true)
-    
-    fetch('/api/ai/timeline-icons', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        timeline: events,
-        documentId
-      })
-    })
-      .then(async res => {
-        if (!res.ok) {
-          const text = await res.text()
-          console.error(`Timeline icons API error (${res.status}):`, text)
-          throw new Error(`API error: ${res.status} - ${text.substring(0, 100)}`)
-        }
-        return res.json()
-      })
-      .then(data => {
-        if (data.success && data.icons) {
-          console.log(`Received ${Object.keys(data.icons).length} icons for timeline events`)
-          setEventIcons(prev => {
-            const updated = { ...prev }
-            Object.keys(data.icons).forEach(index => {
-              if (!updated[index]) {
-                updated[index] = data.icons[index]
-              }
-            })
-            return updated
-          })
-          iconsFetchedRef.current = eventsKey
-        } else {
-          console.log('No icons returned from API:', data)
-        }
-      })
-      .catch(error => {
-        console.error('Error fetching timeline icons:', error)
-        // Don't mark as fetched on error so we can retry
-      })
-      .finally(() => {
-        setIsLoadingIcons(false)
-      })
+    // Note: Icon generation is handled by the generateTimeline Cloud Function
+    // Icons should be provided via initialIcons prop. The /api/ai/timeline-icons endpoint
+    // only exists in local development (server.js), not in production.
+    // In production, icons come from the Cloud Function response.
+    console.log('ProportionalTimeline: Icons should be provided via initialIcons prop from timeline generation')
+    setIsLoadingIcons(false)
+    // Mark as fetched to prevent retries
+    iconsFetchedRef.current = eventsKey
   }, [events, documentId]) // Only re-fetch if events or documentId changes
 
   // Get brief description: short, single-sentence-ish summary

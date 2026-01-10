@@ -355,17 +355,13 @@ exports.generateCharacters = onCall(
     {
       secrets: [
         "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
         "GOOGLE_SEARCH_API_KEY",
         "GOOGLE_SEARCH_ENGINE_ID",
         "GOOGLE_AI_KEY",
       ], // Google API keys are optional - function works without them (no images)
-      cors: [
-        /^https:\/\/casediver\.web\.app$/,
-        /^https:\/\/casediver\.firebaseapp\.com$/,
-        /^https:\/\/.*\.web\.app$/,
-        /^https:\/\/.*\.firebaseapp\.com$/,
-        /^http:\/\/localhost:\d+$/,
-      ],
+      // CORS is handled automatically by Firebase callable functions
+      // Explicit cors config removed to avoid conflicts
     },
     async (request) => {
       try {

@@ -5,7 +5,7 @@ import { renderTextLayer } from 'pdfjs-dist/build/pdf'
 import { PDFDocument, rgb } from 'pdf-lib'
 import { httpsCallable } from 'firebase/functions'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
-import { doc, getDoc, onSnapshot, collection, query, orderBy, updateDoc, setDoc } from 'firebase/firestore'
+import { doc, getDoc, getDocs, onSnapshot, collection, query, orderBy, limit, updateDoc, setDoc } from 'firebase/firestore'
 import { functions, storage, db } from '../firebase'
 import { useAuth } from '../contexts/AuthContext'
 import '../App.css'
@@ -373,17 +373,43 @@ function Home() {
         
         // Check if document already exists and has been processed
         let documentAlreadyProcessed = false
+        let needsReprocessing = false
         if (!isNewDocument) {
           try {
             const docRef = doc(db, 'users', currentUser.uid, 'documents', finalDocumentId)
             const docSnap = await getDoc(docRef)
             if (docSnap.exists()) {
               const docData = docSnap.data()
-              // Check if document has been processed (has chunks or other AI processing indicators)
-              documentAlreadyProcessed = !!(docData.storageUrl || docData.processedAt || docData.chunks)
               if (docData.storageUrl) {
                 storageUrl = docData.storageUrl
                 console.log('Using existing Storage URL:', storageUrl)
+              }
+              
+              // Check processing status - if stuck in "processing", we need to retry
+              if (docData.processingStatus === 'processing') {
+                // Check if chunks actually exist
+                const chunksRef = collection(db, 'users', currentUser.uid, 'documents', finalDocumentId, 'chunks')
+                const chunksQuery = query(chunksRef, limit(1))
+                const chunksSnapshot = await getDocs(chunksQuery)
+                
+                if (chunksSnapshot.empty) {
+                  // Stuck in processing but no chunks - needs reprocessing
+                  console.log('Document stuck in processing status, will retry processing')
+                  needsReprocessing = true
+                  documentAlreadyProcessed = false
+                } else {
+                  // Has chunks, just status wasn't updated - mark as processed
+                  documentAlreadyProcessed = true
+                }
+              } else if (docData.processingStatus === 'completed') {
+                // Check if chunks actually exist
+                const chunksRef = collection(db, 'users', currentUser.uid, 'documents', finalDocumentId, 'chunks')
+                const chunksQuery = query(chunksRef, limit(1))
+                const chunksSnapshot = await getDocs(chunksQuery)
+                documentAlreadyProcessed = !chunksSnapshot.empty
+              } else {
+                // Failed or pending - needs processing
+                documentAlreadyProcessed = false
               }
             }
           } catch (error) {
@@ -436,7 +462,8 @@ function Home() {
         }
         
         // Process PDF in background (don't block UI) - only if needed
-        if (isNewDocument || !documentAlreadyProcessed) {
+        if (isNewDocument || !documentAlreadyProcessed || needsReprocessing) {
+          console.log(`[processPDFForAI] Starting processing: isNewDocument=${isNewDocument}, documentAlreadyProcessed=${documentAlreadyProcessed}, needsReprocessing=${needsReprocessing}`)
           processPDFForAI(finalDocumentId, initialText, {
             fileName: file.name,
             pageCount: pdf.numPages,
@@ -445,13 +472,14 @@ function Home() {
             fileSize: file.size,
             uploadedAt: new Date().toISOString()
           }).then(() => {
+            console.log('[processPDFForAI] Processing completed successfully')
             setIsPDFProcessing(false)
             // Redirect to document route after new upload completes
             if (isNewDocument && finalDocumentId) {
               navigate(`/document/${finalDocumentId}`, { replace: true })
             }
           }).catch(err => {
-            console.error('Error processing PDF for AI:', err)
+            console.error('[processPDFForAI] Error processing PDF for AI:', err)
             setIsPDFProcessing(false)
             // Don't show error to user - AI features will just be unavailable
             // Still redirect even if processing fails
@@ -459,6 +487,8 @@ function Home() {
               navigate(`/document/${finalDocumentId}`, { replace: true })
             }
           })
+        } else {
+          console.log('[processPDFForAI] Skipping - document already processed')
         }
       }
       
@@ -6567,6 +6597,54 @@ function Home() {
     setCharactersError(null)
 
     try {
+      // Check if document has been processed by checking for chunks in subcollection
+      // If not processed yet, wait and retry (up to 20 times = 10 seconds)
+      if (retryCount < 20 && currentUser) {
+        try {
+          const docRef = doc(db, 'users', currentUser.uid, 'documents', documentId)
+          const docSnap = await getDoc(docRef)
+          
+          if (docSnap.exists()) {
+            const docData = docSnap.data()
+            // Check processing status
+            if (docData.processingStatus === 'processing') {
+              console.log(`[generateCharacters] Document still processing, retry ${retryCount + 1}/20`)
+              setTimeout(() => {
+                generateCharacters(retryCount + 1)
+              }, 500)
+              return
+            }
+            
+            // Check if chunks exist in subcollection
+            const chunksRef = collection(db, 'users', currentUser.uid, 'documents', documentId, 'chunks')
+            const chunksQuery = query(chunksRef, limit(1))
+            const chunksSnapshot = await getDocs(chunksQuery)
+            
+            if (chunksSnapshot.empty) {
+              // No chunks found - document hasn't been processed yet
+              console.log(`[generateCharacters] No chunks found, retry ${retryCount + 1}/20`)
+              setTimeout(() => {
+                generateCharacters(retryCount + 1)
+              }, 1000) // Wait 1 second before retrying
+              return
+            }
+          } else {
+            // Document doesn't exist - might need to process first
+            console.log(`[generateCharacters] Document not found, retry ${retryCount + 1}/20`)
+            if (retryCount < 10) {
+              setTimeout(() => {
+                generateCharacters(retryCount + 1)
+              }, 1000)
+              return
+            }
+          }
+        } catch (checkError) {
+          // If check fails, continue anyway - let the Cloud Function handle it
+          console.warn('Error checking document processing status:', checkError)
+        }
+      }
+
+      console.log(`[generateCharacters] Calling Cloud Function (retry ${retryCount})`)
       const generateCharactersFn = httpsCallable(functions, 'generateCharacters')
       const result = await generateCharactersFn({
         documentId: documentId,
@@ -6576,7 +6654,9 @@ function Home() {
       
       // Check if we have characters data (even if success field is missing)
       if (data.characters && Array.isArray(data.characters) && data.characters.length > 0) {
+        console.log(`[generateCharacters] Success! Got ${data.characters.length} characters`)
         setCharacters(data)
+        setIsCharactersLoading(false)
         return
       }
       
@@ -6584,18 +6664,37 @@ function Home() {
         console.log('Characters extraction failed:', data)
         setCharactersError(data.message || 'Could not extract characters from this document.')
         setCharacters(null)
+        setIsCharactersLoading(false)
         return
       }
 
+      console.log(`[generateCharacters] Success!`)
       setCharacters(data)
+      setIsCharactersLoading(false)
     } catch (error) {
       console.error('Error extracting characters:', error)
-      // Handle Firebase-specific errors
-      const errorMessage = error.code ? `Firebase error: ${error.message}` : (error.message || 'Failed to extract characters')
-      setCharactersError(errorMessage)
+      // Handle specific error: document not processed yet
+      if (error.message && error.message.includes('Document has no text content')) {
+        // Document hasn't been processed yet - wait and retry if we haven't exceeded retry limit
+        if (retryCount < 20) {
+          console.log(`[generateCharacters] "Document has no text content" error, retry ${retryCount + 1}/20`)
+          // Don't set loading to false yet - we're retrying
+          setTimeout(() => {
+            generateCharacters(retryCount + 1)
+          }, 1000) // Wait 1 second before retrying
+          return
+        } else {
+          console.log('[generateCharacters] Max retries reached, showing error')
+          setCharactersError('PDF is still being processed. Please wait a moment and try again.')
+          setIsCharactersLoading(false)
+        }
+      } else {
+        // Handle other Firebase-specific errors
+        const errorMessage = error.code ? `Firebase error: ${error.message}` : (error.message || 'Failed to extract characters')
+        setCharactersError(errorMessage)
+        setIsCharactersLoading(false)
+      }
       setCharacters(null)
-    } finally {
-      setIsCharactersLoading(false)
     }
   }
 
@@ -14432,7 +14531,7 @@ function Home() {
             <div className="header-logo">
               <img src="/logo.png" alt="SpeechCase" className="logo" />
             </div>
-            <h1>Casedive</h1>
+            <h1>Casediver</h1>
           </header>
 
           <div className="upload-section">
@@ -14621,13 +14720,6 @@ function Home() {
               <IconZoomIn size={16} />
             </button>
           </div>
-          <button
-            onClick={() => setTextLayerVisible(!textLayerVisible)}
-            className="btn-toolbar"
-            title={textLayerVisible ? "Hide text layer" : "Show text layer"}
-          >
-            {textLayerVisible ? <IconEye size={16} /> : <IconEyeOff size={16} />}
-          </button>
           
           <button
             onClick={handleReset}
@@ -14707,14 +14799,15 @@ function Home() {
                   <IconUsers size={18} />
                   {!isSidebarCollapsed && <span>Characters</span>}
                 </button>
-                <button
+                {/* Temporarily hidden - feature not finished */}
+                {/* <button
                   className={`sidebar-tab ${sidebarView === 'chat' ? 'active' : ''}`}
                   onClick={() => setSidebarView('chat')}
                   title="Chat"
                 >
                   <IconMessageCircle size={18} />
                   {!isSidebarCollapsed && <span>Chat</span>}
-                </button>
+                </button> */}
                 <button
                   className={`sidebar-tab ${sidebarView === 'highlights' ? 'active' : ''}`}
                   onClick={() => setSidebarView('highlights')}
@@ -14723,14 +14816,15 @@ function Home() {
                   <IconHighlighter size={18} />
                   {!isSidebarCollapsed && <span>Highlights</span>}
                 </button>
-                <button
+                {/* Temporarily hidden - feature not finished */}
+                {/* <button
                   className={`sidebar-tab ${sidebarView === 'exhibits' ? 'active' : ''}`}
                   onClick={() => setSidebarView('exhibits')}
                   title="Exhibits Insights"
                 >
                   <IconFileText size={18} />
                   {!isSidebarCollapsed && <span>Exhibits</span>}
-                </button>
+                </button> */}
               </div>
               <button
                 className="sidebar-toggle-btn"
@@ -14808,8 +14902,9 @@ function Home() {
                     isSidebarCollapsed={isSidebarCollapsed}
                   />
                 )}
-                {sidebarView === 'chat' && <ChatSidebar />}
-                {sidebarView === 'exhibits' && (
+                {/* Temporarily hidden - feature not finished */}
+                {/* {sidebarView === 'chat' && <ChatSidebar />} */}
+                {/* {sidebarView === 'exhibits' && (
                   <ExhibitsSidebar
                     extractedText={extractedText}
                     pdfDoc={pdfDoc}
@@ -14825,7 +14920,7 @@ function Home() {
                       // The sidebar will handle displaying the page
                     }}
                   />
-                )}
+                )} */}
                 {sidebarView === 'highlights' && (
                   <HighlightsSidebar
                     highlightItems={highlightItems}
