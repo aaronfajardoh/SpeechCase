@@ -228,16 +228,19 @@ IMPORTANT: When the content includes processes, relationships, hierarchies, flow
 - Gantt charts for timelines
 - Entity relationship diagrams for connections
 
-Include 1-3 relevant diagrams when they enhance understanding. Keep diagrams concise and focused on key concepts from the highlights. IMPORTANT: Design diagrams to be compact and fit within a single screen view (approximately 650px height) - avoid overly tall or deep hierarchies. Prioritize horizontal layouts over vertical when possible, and limit the number of nodes per diagram to maintain readability.`,
+Include 1-3 relevant diagrams when they enhance understanding. Keep diagrams concise and focused on key concepts from the highlights. IMPORTANT: Design diagrams to be compact and fit within a single screen view (approximately 650px height) - avoid overly tall or deep hierarchies. Prioritize horizontal layouts over vertical when possible, and limit the number of nodes per diagram to maintain readability.
+
+IMAGE INSERTION: When image placeholders like \`![Snip: snip_1](snip-placeholder)\` appear in your response, they will be replaced with the actual images on the frontend. Insert these placeholders where images are most contextually relevant in the summary flow. You must use ONLY the image IDs that are explicitly listed in the 'Available Images' section. DO NOT create placeholders for image IDs that are not listed. Each image ID listed in 'Available Images' must appear at least once in your summary using the format \`![Snip: <id>](snip-placeholder)\` where <id> is one of the IDs from the Available Images list. If a concept image URL is provided, insert it using markdown image syntax \`![Concept Image](url)\` wherever it is most contextually appropriate in the summary - this could be at the beginning, middle, or end depending on what makes the most sense for the content.`,
 
   /**
    * Summary User Prompt Template
    * @param {string} highlights - Highlighted text content
+   * @param {string} imageContext - Optional context about available images
    * @return {string} Formatted prompt string
    */
-  summaryUserPrompt: (highlights) => `Create a summary based exclusively on the following highlights from a reading. Only use information present in these highlights:
+  summaryUserPrompt: (highlights, imageContext = "") => `Create a summary based exclusively on the following highlights from a reading. Only use information present in these highlights:
 
-${highlights}
+${highlights}${imageContext}
 
 Synthesize these highlights into a well-structured summary that captures the main points and key ideas. When appropriate, include Mermaid diagrams (using \`\`\`mermaid code blocks) to visualize processes, relationships, hierarchies, or flows that would enhance understanding. Keep diagrams compact and screen-friendly - design them to fit within a single viewport (approximately 650px height) with readable font sizes.`,
 

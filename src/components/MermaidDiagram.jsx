@@ -40,6 +40,7 @@ const MermaidDiagram = ({ chart, fontSize = 18 }) => {
   const containerRef = useRef(null)
   const [error, setError] = useState(null)
   const [svgContent, setSvgContent] = useState(null)
+  const [isModalOpen, setIsModalOpen] = useState(false)
 
   useEffect(() => {
     if (!chart) return
@@ -103,6 +104,13 @@ const MermaidDiagram = ({ chart, fontSize = 18 }) => {
         svgElement.style.maxWidth = '100%'
         svgElement.style.maxHeight = `${maxHeight}px`
       }
+      
+      // Set min-width to ensure readability (allow horizontal scroll if needed)
+      svgElement.style.minWidth = '100%'
+      // If SVG is naturally wider, allow it to be wider for better readability
+      if (svgWidth > maxWidth) {
+        svgElement.style.minWidth = `${Math.min(svgWidth, maxWidth * 1.2)}px`
+      }
     }
 
     // Scale after SVG is rendered and dimensions are available
@@ -132,18 +140,95 @@ const MermaidDiagram = ({ chart, fontSize = 18 }) => {
     )
   }
 
-  return (
-    <div className="mermaid-container" ref={containerRef}>
-      {svgContent ? (
+  const handleDiagramClick = () => {
+    setIsModalOpen(true)
+  }
+
+  const Modal = ({ isOpen, onClose, children }) => {
+    if (!isOpen) return null
+    return (
+      <div 
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10000,
+          cursor: 'pointer'
+        }}
+        onClick={onClose}
+      >
         <div 
-          ref={mermaidRef}
-          className="mermaid-diagram-content"
-          dangerouslySetInnerHTML={{ __html: svgContent }}
+          style={{
+            maxWidth: '90vw',
+            maxHeight: '90vh',
+            overflow: 'auto',
+            backgroundColor: 'white',
+            padding: '2rem',
+            borderRadius: '8px',
+            cursor: 'default',
+            position: 'relative'
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {children}
+          <button 
+            onClick={onClose}
+            style={{
+              position: 'absolute',
+              top: '1rem',
+              right: '1rem',
+              padding: '0.5rem 1rem',
+              backgroundColor: '#333',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '0.875rem'
+            }}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <div 
+        className="mermaid-container" 
+        ref={containerRef}
+        style={{ 
+          overflowX: 'auto', 
+          overflowY: 'hidden', 
+          width: '100%',
+          cursor: 'pointer'
+        }}
+        onClick={handleDiagramClick}
+      >
+        {svgContent ? (
+          <div 
+            ref={mermaidRef}
+            className="mermaid-diagram-content"
+            dangerouslySetInnerHTML={{ __html: svgContent }}
+          />
+        ) : (
+          <div className="mermaid-loading">Rendering diagram...</div>
+        )}
+      </div>
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)}>
+        <div 
+          dangerouslySetInnerHTML={{ __html: svgContent || '' }}
+          style={{ minWidth: '100%' }}
         />
-      ) : (
-        <div className="mermaid-loading">Rendering diagram...</div>
-      )}
-    </div>
+      </Modal>
+    </>
   )
 }
 

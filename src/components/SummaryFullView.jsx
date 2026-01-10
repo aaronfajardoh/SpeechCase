@@ -813,6 +813,78 @@ ${htmlContent}
                     >
                       <ReactMarkdown
                         components={{
+                          img: ({ src, alt, ...props }) => {
+                            // Check if this is a snip placeholder (either by alt text or src)
+                            const isSnipPlaceholder = (alt && alt.startsWith('Snip: ')) || (src === 'snip-placeholder');
+                            if (isSnipPlaceholder) {
+                              const snipId = alt ? alt.replace('Snip: ', '') : 'snip_1'; // Default to first if no alt
+                              // Find the snip by matching the ID pattern (snip_1, snip_2, etc.)
+                              const snipIndex = parseInt(snipId.replace('snip_', '')) - 1;
+                              const snipItems = highlightItems?.filter(item => item.isSnip && item.image) || [];
+                              const snipItem = snipItems[snipIndex];
+                              if (snipItem && snipItem.image) {
+                                return <img src={snipItem.image} alt={snipItem.text || 'User screenshot'} style={{ maxWidth: '100%', height: 'auto', margin: '1rem 0', borderRadius: '4px' }} />;
+                              }
+                              // Fallback: silently skip if snip not found (don't render anything)
+                              return null;
+                            }
+                            // Regular image (concept image or other) - ensure src is valid
+                            if (!src || src.trim().length === 0) {
+                              return null;
+                            }
+                            return <img src={src} alt={alt || 'Image'} style={{ maxWidth: '100%', height: 'auto', margin: '1rem 0', borderRadius: '4px' }} />;
+                          },
+                          p: ({ children, ...props }) => {
+                            // Check if paragraph contains image markdown text and render it as an image
+                            const childrenArray = React.Children.toArray(children);
+                            const childrenStr = childrenArray.map(child => {
+                              if (typeof child === 'string') return child;
+                              if (typeof child === 'object' && child.props) {
+                                // Try to extract text from nested children
+                                if (typeof child.props.children === 'string') {
+                                  return child.props.children;
+                                }
+                                if (Array.isArray(child.props.children)) {
+                                  return child.props.children.map(c => typeof c === 'string' ? c : '').join('');
+                                }
+                              }
+                              return '';
+                            }).join('');
+                            
+                            // Check for concept image markdown: ![Concept Image](url)
+                            const conceptImageMatch = childrenStr.match(/!\[Concept Image\]\(([^)]+)\)/);
+                            if (conceptImageMatch) {
+                              const imageUrl = conceptImageMatch[1];
+                              // Replace the markdown text with the actual image
+                              const processedChildren = childrenArray.map((child, idx) => {
+                                if (typeof child === 'string' && child.includes('![Concept Image]')) {
+                                  const parts = child.split(/!\[Concept Image\]\([^)]+\)/);
+                                  return (
+                                    <React.Fragment key={idx}>
+                                      {parts[0] && <span>{parts[0]}</span>}
+                                      <img src={imageUrl} alt="Concept Image" style={{ maxWidth: '100%', height: 'auto', margin: '1rem 0', borderRadius: '4px' }} />
+                                      {parts[1] && <span>{parts[1]}</span>}
+                                    </React.Fragment>
+                                  );
+                                }
+                                // Handle nested elements that might contain the markdown
+                                if (typeof child === 'object' && child.props && typeof child.props.children === 'string' && child.props.children.includes('![Concept Image]')) {
+                                  const parts = child.props.children.split(/!\[Concept Image\]\([^)]+\)/);
+                                  return (
+                                    <React.Fragment key={idx}>
+                                      {parts[0] && <span>{parts[0]}</span>}
+                                      <img src={imageUrl} alt="Concept Image" style={{ maxWidth: '100%', height: 'auto', margin: '1rem 0', borderRadius: '4px' }} />
+                                      {parts[1] && <span>{parts[1]}</span>}
+                                    </React.Fragment>
+                                  );
+                                }
+                                return child;
+                              });
+                              return <div>{processedChildren}</div>;
+                            }
+                            
+                            return <p {...props}>{children}</p>;
+                          },
                           code({ node, inline, className, children, ...props }) {
                             const match = /language-(\w+)/.exec(className || '')
                             const language = match ? match[1] : ''
@@ -830,7 +902,20 @@ ${htmlContent}
                           }
                         }}
                       >
-                        {summaryText || localSummaryText}
+                        {(() => {
+                          // Preprocess summary text: convert old snip format and ensure concept images are properly formatted
+                          const textToProcess = summaryText || localSummaryText;
+                          let processedText = textToProcess?.replace(/!\[Snip: ([^\]]+)\](?!\()/g, '![Snip: $1](snip-placeholder)') || textToProcess;
+                          
+                          // Fix double exclamation marks for concept images (!![Concept Image] -> ![Concept Image])
+                          processedText = processedText?.replace(/!!\[Concept Image\]\(/g, '![Concept Image](') || processedText;
+                          
+                          // Fix missing exclamation marks for concept images ([Concept Image] -> ![Concept Image])
+                          // Use a more compatible approach: replace [Concept Image]( that's NOT preceded by !
+                          processedText = processedText?.replace(/(^|[^!])\[Concept Image\]\(/g, '$1![Concept Image](') || processedText;
+                          
+                          return processedText;
+                        })()}
                       </ReactMarkdown>
                     </div>
                   )}

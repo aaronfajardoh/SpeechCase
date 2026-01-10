@@ -8,6 +8,7 @@ const {setGlobalOptions} = require("firebase-functions/v2");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
 
+
 // Initialize Firebase Admin
 admin.initializeApp();
 
@@ -512,7 +513,7 @@ exports.generateCharacters = onCall(
  */
 exports.generateSummary = onCall(
     {
-      secrets: ["OPENAI_API_KEY"],
+      secrets: ["OPENAI_API_KEY", "GOOGLE_AI_KEY"],
       cors: [
         /^https:\/\/casediver\.web\.app$/,
         /^https:\/\/casediver\.firebaseapp\.com$/,
@@ -523,8 +524,9 @@ exports.generateSummary = onCall(
     },
     async (request) => {
       try {
-        const {documentId, highlights} = request.data;
+        const {documentId, highlights, highlightItems} = request.data;
         const uid = request.auth && request.auth.uid;
+
 
         if (!uid) {
           throw new HttpsError("unauthenticated", "User must be authenticated");
@@ -542,6 +544,70 @@ exports.generateSummary = onCall(
           throw new HttpsError("not-found", "Document not found. Please process the PDF first.");
         }
 
+        // Get docRef early for fetching highlightItems
+        const docRef = db.collection("users").doc(uid)
+            .collection("documents").doc(documentId);
+
+        // Get highlightItems - prefer from request, fallback to Firestore
+        let highlightItemsArray = [];
+        if (highlightItems && Array.isArray(highlightItems)) {
+          // Use highlightItems from request (most up-to-date)
+          highlightItemsArray = highlightItems;
+        } else {
+          // Fallback: fetch from Firestore document (snips are stored there as base64 data URLs)
+          try {
+            const docData = await docRef.get();
+            if (docData.exists()) {
+              highlightItemsArray = docData.data().highlightItems || [];
+            }
+          } catch (err) {
+            logger.warn("Failed to fetch highlightItems from Firestore:", err);
+          }
+        }
+
+        // Extract snips from highlightItems
+        const snips = highlightItemsArray
+            .filter((item) => item.isSnip && item.image)
+            .map((item, index) => ({
+              id: `snip_${index + 1}`,
+              base64Image: item.image, // Full data URL: data:image/png;base64,...
+              originalId: item.id,
+            }));
+
+
+        // Analyze snips concurrently with Gemini
+        const googleAiKey = process.env.GOOGLE_AI_KEY;
+        let snipDescriptions = [];
+        if (snips.length > 0 && googleAiKey) {
+          const {analyzeSnipWithGemini} = require("./src/aiHelpers");
+          const analysisPromises = snips.map((snip) =>
+            analyzeSnipWithGemini(snip.base64Image, googleAiKey)
+                .then((description) => {
+                  return {...snip, description};
+                })
+                .catch((err) => {
+                  logger.warn(`Failed to analyze snip ${snip.id}:`, err);
+                  return {...snip, description: null};
+                }),
+          );
+          snipDescriptions = await Promise.all(analysisPromises);
+        }
+
+        // Format available images for OpenAI prompt
+        let imageContext = "";
+        const snipsWithDescriptions = snipDescriptions.filter((s) => s.description);
+
+        if (snipsWithDescriptions.length > 0) {
+          const availableImages = snipsWithDescriptions
+              .map((snip) => `[ID: ${snip.id}, Desc: "${snip.description}"]`)
+              .join(", ");
+          if (availableImages) {
+            // Only include snip IDs that actually exist
+            const validSnipIds = snipsWithDescriptions.map((s) => s.id).join(", ");
+            imageContext = `\n\nAvailable Images: ${availableImages}\n\nIMPORTANT: You must insert ONLY the provided images listed above into the summary using the placeholder format: ![Snip: <id>](snip-placeholder) where they are most contextually relevant. The available image IDs are: ${validSnipIds}. DO NOT create placeholders for images that are not listed above. Each listed image must appear at least once in the summary.`;
+          }
+        }
+
         // Use provided highlights or get full text from chunks
         let contentToSummarize = highlights;
         if (!contentToSummarize || contentToSummarize.trim().length === 0) {
@@ -554,6 +620,7 @@ exports.generateSummary = onCall(
 
         // Generate summary using OpenAI
         const openaiClient = getOpenAIClient();
+        const userPrompt = prompts.summaryUserPrompt(contentToSummarize, imageContext);
         const completion = await openaiClient.chat.completions.create({
           model: "gpt-4o-mini",
           messages: [
@@ -563,18 +630,59 @@ exports.generateSummary = onCall(
             },
             {
               role: "user",
-              content: prompts.summaryUserPrompt(contentToSummarize),
+              content: userPrompt,
             },
           ],
           temperature: 0.7,
           max_tokens: 2000,
         });
 
-        const summary = completion.choices[0].message.content;
+        let summary = completion.choices[0].message.content;
+
+        // Generate conceptual image after summary is created
+        let conceptImageUrl = null;
+        if (googleAiKey) {
+          try {
+            const {generateConceptImage} = require("./src/aiHelpers");
+            const conceptImageResult = await generateConceptImage(
+                summary,
+                uid,
+                documentId,
+                googleAiKey,
+            );
+            if (conceptImageResult && conceptImageResult.imageUrl) {
+              conceptImageUrl = conceptImageResult.imageUrl;
+              // Use a lightweight second OpenAI call to insert the concept image contextually
+              // This allows the model to see the full summary and decide optimal placement
+              const insertionCompletion = await openaiClient.chat.completions.create({
+                model: "gpt-4o-mini",
+                messages: [
+                  {
+                    role: "system",
+                    content: "You are a content editor. Insert the provided concept image URL into the summary text where it is most contextually appropriate based on the content flow. IMPORTANT: Use markdown image syntax with an exclamation mark: ![Concept Image](url). DO NOT use link syntax [Concept Image](url). Also, preserve ALL existing snip placeholders in the format ![Snip: <id>](snip-placeholder) exactly as they appear. Return the complete summary with the image inserted in the optimal location (beginning, middle, or end - wherever it enhances understanding), and keep all snip placeholders intact.",
+                  },
+                  {
+                    role: "user",
+                    content: `Summary:\n${summary}\n\nConcept Image URL: ${conceptImageUrl}\n\nInsert this image where it best fits contextually in the summary flow. Use markdown image syntax: ![Concept Image](url). Preserve all existing ![Snip: <id>](snip-placeholder) placeholders exactly as they are.`,
+                  },
+                ],
+                temperature: 0.3,
+                max_tokens: 2500,
+              });
+              summary = insertionCompletion.choices[0].message.content;
+              // Fix common markdown syntax errors: [Concept Image](url) -> ![Concept Image](url)
+              // Only replace if there's NOT already a ! before [Concept Image]
+              summary = summary.replace(/(?!!)\[Concept Image\]\(/g, "![Concept Image](");
+              // Also fix double exclamation marks if they exist
+              summary = summary.replace(/!!\[Concept Image\]\(/g, "![Concept Image](");
+            }
+          } catch (error) {
+            logger.error("Failed to generate or insert concept image:", error);
+            // Continue without concept image
+          }
+        }
 
         // Save summary to Firestore document
-        const docRef = db.collection("users").doc(uid)
-            .collection("documents").doc(documentId);
         await docRef.set({
           summary: summary,
           summaryGeneratedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -582,9 +690,11 @@ exports.generateSummary = onCall(
 
         logger.info(`Successfully generated summary for document ${documentId}`);
 
+
         return {
           success: true,
           summary: summary,
+          conceptImageUrl: conceptImageUrl,
         };
       } catch (error) {
         logger.error("Error generating summary:", error);

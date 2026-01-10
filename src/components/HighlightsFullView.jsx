@@ -254,11 +254,14 @@ const HighlightsFullView = ({ highlightItems, setHighlightItems, documentId, hig
         .map(item => item.text)
         .join('\n\n')
 
+      
       const generateSummary = httpsCallable(functions, 'generateSummary')
       const result = await generateSummary({
         documentId,
         highlights: combinedText,
+        highlightItems: highlightItems, // Pass full array for snip analysis
       })
+      
 
       const data = result.data
       
