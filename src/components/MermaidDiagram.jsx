@@ -35,6 +35,35 @@ const initializeMermaid = (fontSize = 16) => {
   }
 }
 
+/**
+ * Sanitize Mermaid diagram code by removing HTML tags that cause parse errors
+ * Mermaid doesn't support HTML tags like <br>, <b>, <i> in node labels
+ */
+const sanitizeMermaidCode = (code) => {
+  if (!code) return code
+  
+  let sanitized = code
+  
+  // Replace <br> and <br/> with spaces (Mermaid doesn't support HTML line breaks)
+  sanitized = sanitized.replace(/<br\s*\/?>/gi, ' ')
+  
+  // Remove HTML formatting tags but preserve their text content
+  sanitized = sanitized.replace(/<b>(.*?)<\/b>/gi, '$1')
+  sanitized = sanitized.replace(/<i>(.*?)<\/i>/gi, '$1')
+  sanitized = sanitized.replace(/<strong>(.*?)<\/strong>/gi, '$1')
+  sanitized = sanitized.replace(/<em>(.*?)<\/em>/gi, '$1')
+  sanitized = sanitized.replace(/<u>(.*?)<\/u>/gi, '$1')
+  
+  // Remove any remaining HTML tags (catch-all)
+  sanitized = sanitized.replace(/<[^>]+>/g, '')
+  
+  // Clean up multiple consecutive spaces that might result from tag removal
+  // Use a more conservative approach: only collapse spaces, don't remove them entirely
+  sanitized = sanitized.replace(/[ \t]{2,}/g, ' ')
+  
+  return sanitized.trim()
+}
+
 const MermaidDiagram = ({ chart, fontSize = 18 }) => {
   const mermaidRef = useRef(null)
   const containerRef = useRef(null)
@@ -51,10 +80,14 @@ const MermaidDiagram = ({ chart, fontSize = 18 }) => {
     const renderDiagram = async () => {
       try {
         setError(null)
+        
+        // Sanitize the chart code to remove HTML tags that cause parse errors
+        const sanitizedChart = sanitizeMermaidCode(chart)
+        
         const id = `mermaid-${Math.random().toString(36).substring(2, 11)}`
 
         // Render the diagram - mermaid.render returns { svg, bindFunctions }
-        const { svg } = await mermaid.render(id, chart)
+        const { svg } = await mermaid.render(id, sanitizedChart)
         
         // Process SVG to add rounded corners and light blue background
         const parser = new DOMParser()

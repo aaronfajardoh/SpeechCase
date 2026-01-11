@@ -50,13 +50,7 @@ const ttsClient = new textToSpeech.TextToSpeechClient();
 exports.processPdf = onCall(
     {
       secrets: ["OPENAI_API_KEY", "DEEPSEEK_API_KEY"],
-      cors: [
-        /^https:\/\/casediver\.web\.app$/,
-        /^https:\/\/casediver\.firebaseapp\.com$/,
-        /^https:\/\/.*\.web\.app$/,
-        /^https:\/\/.*\.firebaseapp\.com$/,
-        /^http:\/\/localhost:\d+$/,
-      ],
+      // CORS is handled automatically by Firebase callable functions
     },
     async (request) => {
       try {
@@ -141,13 +135,8 @@ exports.processPdf = onCall(
 exports.askQuestion = onCall(
     {
       secrets: ["OPENAI_API_KEY", "DEEPSEEK_API_KEY"],
-      cors: [
-        /^https:\/\/casediver\.web\.app$/,
-        /^https:\/\/casediver\.firebaseapp\.com$/,
-        /^https:\/\/.*\.web\.app$/,
-        /^https:\/\/.*\.firebaseapp\.com$/,
-        /^http:\/\/localhost:\d+$/,
-      ],
+      timeoutSeconds: 300, // 5 minutes for AI processing
+      // CORS is handled automatically by Firebase callable functions
     },
     async (request) => {
       try {
@@ -258,13 +247,9 @@ async function getDocumentFullText(uid, documentId) {
 exports.generateTimeline = onCall(
     {
       secrets: ["OPENAI_API_KEY", "DEEPSEEK_API_KEY"],
-      cors: [
-        /^https:\/\/casediver\.web\.app$/,
-        /^https:\/\/casediver\.firebaseapp\.com$/,
-        /^https:\/\/.*\.web\.app$/,
-        /^https:\/\/.*\.firebaseapp\.com$/,
-        /^http:\/\/localhost:\d+$/,
-      ],
+      timeoutSeconds: 300, // 5 minutes for AI processing
+      // CORS is handled automatically by Firebase callable functions
+      // Explicit cors config removed to avoid conflicts
     },
     async (request) => {
       try {
@@ -360,6 +345,7 @@ exports.generateCharacters = onCall(
         "GOOGLE_SEARCH_ENGINE_ID",
         "GOOGLE_AI_KEY",
       ], // Google API keys are optional - function works without them (no images)
+      timeoutSeconds: 300, // 5 minutes for AI processing and image generation
       // CORS is handled automatically by Firebase callable functions
       // Explicit cors config removed to avoid conflicts
     },
@@ -778,13 +764,7 @@ exports.generateSummary = onCall(
  */
 exports.generateTts = onCall(
     {
-      cors: [
-        /^https:\/\/casediver\.web\.app$/,
-        /^https:\/\/casediver\.firebaseapp\.com$/,
-        /^https:\/\/.*\.web\.app$/,
-        /^https:\/\/.*\.firebaseapp\.com$/,
-        /^http:\/\/localhost:\d+$/,
-      ],
+      // CORS is handled automatically by Firebase callable functions
     },
     async (request) => {
       try {
@@ -850,13 +830,7 @@ exports.generateTts = onCall(
  */
 exports.deleteDocument = onCall(
     {
-      cors: [
-        /^https:\/\/casediver\.web\.app$/,
-        /^https:\/\/casediver\.firebaseapp\.com$/,
-        /^https:\/\/.*\.web\.app$/,
-        /^https:\/\/.*\.firebaseapp\.com$/,
-        /^http:\/\/localhost:\d+$/,
-      ],
+      // CORS is handled automatically by Firebase callable functions
     },
     async (request) => {
       try {
@@ -924,13 +898,7 @@ exports.deleteDocument = onCall(
 exports.sendSupportEmail = onCall(
     {
       secrets: ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS"],
-      cors: [
-        /^https:\/\/casediver\.web\.app$/,
-        /^https:\/\/casediver\.firebaseapp\.com$/,
-        /^https:\/\/.*\.web\.app$/,
-        /^https:\/\/.*\.firebaseapp\.com$/,
-        /^http:\/\/localhost:\d+$/,
-      ],
+      // CORS is handled automatically by Firebase callable functions
     },
     async (request) => {
       try {

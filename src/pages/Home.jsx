@@ -149,7 +149,7 @@ function Home() {
   const isSidebarCollapsedRef = useRef(false) // Track current sidebar collapsed state
   const sidebarViewRef = useRef('pages') // Track current sidebar view
   const previousSidebarViewRef = useRef('pages') // Track previous sidebar view to detect changes
-  const processingFileRef = useRef(null) // Track file being processed to prevent duplicate processing
+  const processingFileRef = useRef(null) // Track files being processed to prevent duplicate processing (can be Set or string)
   const [documentId, setDocumentId] = useState(null) // Document ID for AI features
   const [highlightItems, setHighlightItems] = useState([]) // Store highlight items for sidebar: { id, text, color, order }
   const [isPDFProcessing, setIsPDFProcessing] = useState(false) // Track if PDF is being processed
@@ -347,8 +347,16 @@ function Home() {
 
       // Upload PDF to Storage and process for AI features
       if (initialText && initialText.length > 0 && currentUser) {
-        // Use existing documentId if provided, otherwise create a new one
-        const finalDocumentId = existingDocumentId || documentId || `${file.name}-${Date.now()}`
+        // CRITICAL FIX: Use existing documentId if provided, otherwise create a new one
+        // But ensure we don't create duplicate IDs if handleFileChange is called multiple times
+        // Use a stable ID based on file metadata to prevent duplicates
+        let finalDocumentId = existingDocumentId || documentId
+        if (!finalDocumentId) {
+          // Create a stable ID based on file name and size to prevent duplicates
+          // This ensures if handleFileChange is called twice with the same file, we get the same ID
+          const fileKey = `${file.name}-${file.size}`
+          finalDocumentId = `${fileKey}-${Date.now()}`
+        }
         
         // Only create new documentId if we don't have one
         if (!existingDocumentId && !documentId) {
@@ -474,17 +482,45 @@ function Home() {
           }).then(() => {
             console.log('[processPDFForAI] Processing completed successfully')
             setIsPDFProcessing(false)
-            // Redirect to document route after new upload completes
+            // CRITICAL FIX: Don't navigate if PDF is already loaded and displayed
+            // Navigation causes state loss, so we should only navigate if absolutely necessary
             if (isNewDocument && finalDocumentId) {
-              navigate(`/document/${finalDocumentId}`, { replace: true })
+              // Use a closure to capture the current state at the time of the promise
+              // This avoids stale closure issues
+              const targetPath = `/document/${finalDocumentId}`
+              
+              // Check current state synchronously (can't rely on closure due to async nature)
+              // Instead, use a ref or check DOM directly
+              const checkStateAndNavigate = () => {
+                // Check if PDF is loaded by checking if canvas elements exist in DOM
+                const firstCanvas = document.querySelector('.pdf-canvas')
+                const hasPdfInDOM = !!firstCanvas
+                
+                
+                if (location.pathname !== targetPath) {
+                  if (hasPdfInDOM) {
+                    // PDF is already rendered in DOM - just update URL without navigation
+                    window.history.replaceState(null, '', targetPath)
+                  } else {
+                    // PDF not in DOM - navigate and let loadDocument handle loading from Firestore
+                    navigate(targetPath, { replace: true })
+                  }
+                }
+              }
+              
+              // Use setTimeout to ensure DOM check happens after any pending renders
+              setTimeout(checkStateAndNavigate, 0)
             }
           }).catch(err => {
             console.error('[processPDFForAI] Error processing PDF for AI:', err)
             setIsPDFProcessing(false)
             // Don't show error to user - AI features will just be unavailable
-            // Still redirect even if processing fails
+            // Still redirect even if processing fails, but only if not already on correct route and PDF not loaded
             if (isNewDocument && finalDocumentId) {
-              navigate(`/document/${finalDocumentId}`, { replace: true })
+              const targetPath = `/document/${finalDocumentId}`
+              if (location.pathname !== targetPath && !pdfDoc) {
+                navigate(targetPath, { replace: true })
+              }
             }
           })
         } else {
@@ -554,30 +590,58 @@ function Home() {
       
       // Prevent duplicate loading - use a ref to track loading state per docId
       const loadingKey = `loading_${docId}`
-      if (processingFileRef.current === loadingKey) {
+      if (processingFileRef.current instanceof Set) {
+        if (processingFileRef.current.has(loadingKey)) {
+          return
+        }
+      } else if (processingFileRef.current === loadingKey) {
         return
       }
       
       // Mark as loading
-      processingFileRef.current = loadingKey
+      if (!processingFileRef.current || typeof processingFileRef.current === 'string') {
+        processingFileRef.current = new Set([loadingKey])
+      } else {
+        processingFileRef.current.add(loadingKey)
+      }
       
       // Handle file upload from location state (new upload)
       if (location.state?.file && !docId) {
         const file = location.state.file
         const fileKey = `${file.name}-${file.size}-${file.lastModified}`
         
-        if (processingFileRef.current === fileKey) {
+        // CRITICAL FIX: Use a more robust check - check if file is already being processed
+        // Use a Set to track all files currently being processed
+        if (!processingFileRef.current) {
+          processingFileRef.current = new Set()
+        }
+        
+        // Check if this exact file is already being processed or already loaded
+        if (processingFileRef.current.has(fileKey) || (pdfFile && pdfFile.name === file.name && pdfFile.size === file.size && pdfFile.lastModified === file.lastModified)) {
+          // Clear location state to prevent re-triggering
+          navigate(location.pathname, { replace: true, state: null })
           return
         }
         
-        processingFileRef.current = fileKey
+        // Mark file as being processed
+        if (processingFileRef.current instanceof Set) {
+          processingFileRef.current.add(fileKey)
+        } else {
+          processingFileRef.current = new Set([fileKey])
+        }
+        
         const event = { target: { files: [file] } }
         await handleFileChange(event)
+        // Clear location state immediately after processing starts to prevent duplicate calls
         navigate(location.pathname, { replace: true, state: null })
         
+        // Remove from processing set after a delay
         setTimeout(() => {
-          if (processingFileRef.current === fileKey) {
-            processingFileRef.current = null
+          if (processingFileRef.current instanceof Set) {
+            processingFileRef.current.delete(fileKey)
+            if (processingFileRef.current.size === 0) {
+              processingFileRef.current = null
+            }
           }
         }, 2000)
         return
@@ -710,7 +774,12 @@ function Home() {
               await handleFileChange(event, docId)
               
               // Clear loading flag after successful load
-              if (processingFileRef.current === loadingKey) {
+              if (processingFileRef.current instanceof Set) {
+                processingFileRef.current.delete(loadingKey)
+                if (processingFileRef.current.size === 0) {
+                  processingFileRef.current = null
+                }
+              } else if (processingFileRef.current === loadingKey) {
                 processingFileRef.current = null
               }
             } catch (fetchError) {
@@ -718,7 +787,12 @@ function Home() {
               setError(`Error loading PDF: ${fetchError.message}. If this is a CORS error, check Firebase Storage CORS configuration.`)
               setIsLoading(false)
               // Clear loading flag on error
-              if (processingFileRef.current === loadingKey) {
+              if (processingFileRef.current instanceof Set) {
+                processingFileRef.current.delete(loadingKey)
+                if (processingFileRef.current.size === 0) {
+                  processingFileRef.current = null
+                }
+              } else if (processingFileRef.current === loadingKey) {
                 processingFileRef.current = null
               }
             }
@@ -740,7 +814,12 @@ function Home() {
           setError('Error loading document: ' + err.message)
           setIsLoading(false)
           // Clear loading flag on error
-          if (processingFileRef.current === loadingKey) {
+          if (processingFileRef.current instanceof Set) {
+            processingFileRef.current.delete(loadingKey)
+            if (processingFileRef.current.size === 0) {
+              processingFileRef.current = null
+            }
+          } else if (processingFileRef.current === loadingKey) {
             processingFileRef.current = null
           }
         }
@@ -1815,20 +1894,108 @@ function Home() {
   }, [pdfDoc, totalPages, pageScale])
 
   // Render pages when pageData or interactionMode changes
+  // CRITICAL FIX: Also depend on isLoading to ensure canvas elements are rendered
   useEffect(() => {
-    if (pageData.length > 0 && pdfDoc) {
-      renderPages()
+    // CRITICAL: Only run if shouldRenderPDFReader is true (canvas elements must be in DOM)
+    // This ensures we don't try to render before the canvas elements are rendered
+    if (pageData.length > 0 && pdfDoc && !isLoading) {
+      // Wait for DOM to be committed and refs to be set
+      // Use setTimeout to ensure React has finished rendering
+      const timeoutId = setTimeout(() => {
+        // CRITICAL FIX: Wait for canvas refs to be available before rendering
+        // Poll for canvas refs to be ready, with a maximum wait time
+        let retryCount = 0
+        const maxRetries = 50 // 5 seconds max (50 * 100ms)
+        let pollTimeoutId = null
+        
+        const checkAndRender = () => {
+          // Check both refs and DOM to ensure elements are actually available
+          const firstPageCanvas = canvasRefs.current[1]
+          const firstPageTextLayer = textLayerRefs.current[1]
+          // Also check DOM directly as a fallback
+          const domCanvas = document.querySelector('.pdf-canvas')
+          
+          if (firstPageCanvas && firstPageTextLayer) {
+            // Canvas refs are ready - render pages
+            renderPages()
+          } else if (retryCount < maxRetries) {
+            // Canvas refs not ready yet - retry after a short delay
+            retryCount++
+            pollTimeoutId = setTimeout(checkAndRender, 100)
+          } else {
+            // Max retries reached - try rendering anyway (some pages might be ready)
+            console.warn('Canvas refs not ready after max retries, attempting render anyway')
+            renderPages()
+          }
+        }
+        
+        // Start checking after a small initial delay to ensure DOM is ready
+        checkAndRender()
+        
+        return () => {
+          if (pollTimeoutId) {
+            clearTimeout(pollTimeoutId)
+          }
+        }
+      }, 50) // Small initial delay to ensure React has committed DOM
+      
+      return () => {
+        clearTimeout(timeoutId)
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageData, interactionMode])
+  }, [pageData, interactionMode, isLoading])
 
   // Render thumbnails when PDF document is loaded
+  // CRITICAL FIX: Use useEffect (not useLayoutEffect) to wait for DOM to be committed
+  // Also depend on isLoading to ensure thumbnail elements are rendered
   useEffect(() => {
-    if (pdfDoc && totalPages > 0) {
-      renderThumbnails()
+    // CRITICAL: Only run if shouldRenderPDFReader is true (thumbnail elements must be in DOM)
+    if (pdfDoc && totalPages > 0 && sidebarView === 'pages' && !isSidebarCollapsed && !isLoading) {
+      // Wait for DOM to be committed and refs to be set
+      const timeoutId = setTimeout(() => {
+        // CRITICAL FIX: Wait for thumbnail refs to be available before rendering
+        // Poll for thumbnail refs to be ready, with a maximum wait time
+        let retryCount = 0
+        const maxRetries = 50 // 5 seconds max (50 * 100ms)
+        let pollTimeoutId = null
+        
+        const checkAndRenderThumbnails = () => {
+          // Check if at least the first page's thumbnail canvas is available
+          const firstThumbnailCanvas = thumbnailRefs.current[1]
+          // Also check DOM directly as a fallback
+          const domThumbnail = document.querySelector('.thumbnail-canvas')
+          
+          if (firstThumbnailCanvas) {
+            // Thumbnail refs are ready - render thumbnails
+            renderThumbnails()
+          } else if (retryCount < maxRetries) {
+            // Thumbnail refs not ready yet - retry after a short delay
+            retryCount++
+            pollTimeoutId = setTimeout(checkAndRenderThumbnails, 100)
+          } else {
+            // Max retries reached - try rendering anyway (some thumbnails might be ready)
+            console.warn('Thumbnail refs not ready after max retries, attempting render anyway')
+            renderThumbnails()
+          }
+        }
+        
+        // Start checking after a small initial delay to ensure DOM is ready
+        checkAndRenderThumbnails()
+        
+        return () => {
+          if (pollTimeoutId) {
+            clearTimeout(pollTimeoutId)
+          }
+        }
+      }, 50) // Small initial delay to ensure React has committed DOM
+      
+      return () => {
+        clearTimeout(timeoutId)
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfDoc, totalPages])
+  }, [pdfDoc, totalPages, sidebarView, isSidebarCollapsed, isLoading])
 
   // Clear rendered thumbnails when sidebar is collapsed (canvas content is lost when hidden)
   useEffect(() => {
@@ -1838,13 +2005,42 @@ function Home() {
   }, [isSidebarCollapsed, sidebarView])
 
   // Re-render thumbnails when sidebar is expanded (canvas content is lost when hidden)
+  // CRITICAL FIX: Use useEffect to wait for DOM to be committed
   useEffect(() => {
     if (pdfDoc && totalPages > 0 && !isSidebarCollapsed && sidebarView === 'pages') {
-      // Wait for DOM to be ready and sidebar content to be visible
+      // Wait for DOM to be committed
       const timeoutId = setTimeout(() => {
-        renderThumbnails()
-      }, 200)
-      return () => clearTimeout(timeoutId)
+        // Poll for thumbnail refs to be ready
+        let retryCount = 0
+        const maxRetries = 50
+        let pollTimeoutId = null
+        
+        const checkAndRenderThumbnails = () => {
+          const firstThumbnailCanvas = thumbnailRefs.current[1]
+          
+          if (firstThumbnailCanvas) {
+            renderThumbnails()
+          } else if (retryCount < maxRetries) {
+            retryCount++
+            pollTimeoutId = setTimeout(checkAndRenderThumbnails, 100)
+          } else {
+            console.warn('Thumbnail refs not ready after max retries, attempting render anyway')
+            renderThumbnails()
+          }
+        }
+        
+        checkAndRenderThumbnails()
+        
+        return () => {
+          if (pollTimeoutId) {
+            clearTimeout(pollTimeoutId)
+          }
+        }
+      }, 50)
+      
+      return () => {
+        clearTimeout(timeoutId)
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSidebarCollapsed, sidebarView, pdfDoc, totalPages])
@@ -1857,20 +2053,13 @@ function Home() {
   }, [sidebarView])
 
   // Re-render pages and thumbnails when switching back to pages view
+  // CRITICAL FIX: Don't call renderPages directly - let the useLayoutEffect handle it
+  // This prevents bypassing the canvas ref polling mechanism
   useEffect(() => {
     if (pdfDoc && totalPages > 0 && sidebarView === 'pages' && pageData.length > 0) {
-      // Wait for DOM to be ready
-      const timeoutId = setTimeout(() => {
-        // Re-render PDF pages
-        renderPages()
-        // Re-render thumbnails if sidebar is not collapsed
-        if (!isSidebarCollapsed) {
-          setTimeout(() => {
-            renderThumbnails()
-          }, 100)
-        }
-      }, 200)
-      return () => clearTimeout(timeoutId)
+      // Re-render thumbnails if sidebar is not collapsed
+      // Note: renderPages will be called automatically by the useLayoutEffect when pageData changes
+      // Thumbnails will be rendered automatically by the useLayoutEffect when sidebarView changes
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sidebarView, isSidebarCollapsed])
@@ -3370,7 +3559,9 @@ function Home() {
   }
 
   const initializePages = async () => {
-    if (!pdfDoc || totalPages === 0) return
+    if (!pdfDoc || totalPages === 0) {
+      return
+    }
 
     setRenderedPages([])
     setTextItems([])
@@ -3655,7 +3846,9 @@ function Home() {
   }
 
   const renderPages = async () => {
-    if (!pdfDoc || pageData.length === 0) return
+    if (!pdfDoc || pageData.length === 0) {
+      return
+    }
 
     // Cancel ALL existing render tasks BEFORE waiting for promise
     // This prevents multiple renders from starting simultaneously
@@ -3688,7 +3881,9 @@ function Home() {
         const textLayerDiv = textLayerRefs.current[pageNum]
         const highlightLayerDiv = highlightLayerRefs.current[pageNum]
 
-        if (!canvas || !textLayerDiv) continue
+        if (!canvas || !textLayerDiv) {
+          continue
+        }
 
         // Double-check: Cancel any existing render task for this page (defensive)
         const existingTask = activeRenderTasks.get(pageNum)
@@ -3828,7 +4023,9 @@ function Home() {
       
       for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
         const thumbnailCanvas = thumbnailRefs.current[pageNum]
-        if (!thumbnailCanvas) continue
+        if (!thumbnailCanvas) {
+          continue
+        }
 
         // Double-check: Cancel any existing render task for this thumbnail (defensive)
         const existingTask = activeThumbnailTasks.get(pageNum)
@@ -14571,7 +14768,7 @@ function Home() {
               <div className="header-logo">
                 <img src="/logo.png" alt="SpeechCase" className="logo" />
               </div>
-              <h1>Casedive</h1>
+              <h1>Casediver</h1>
             </header>
 
             <div className="upload-section">

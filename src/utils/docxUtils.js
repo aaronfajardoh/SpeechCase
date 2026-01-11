@@ -107,12 +107,44 @@ const svgToPngBlob = (svgString) => {
   })
 }
 
+/**
+ * Sanitize Mermaid diagram code by removing HTML tags that cause parse errors
+ * Mermaid doesn't support HTML tags like <br>, <b>, <i> in node labels
+ */
+const sanitizeMermaidCode = (code) => {
+  if (!code) return code
+  
+  let sanitized = code
+  
+  // Replace <br> and <br/> with spaces (Mermaid doesn't support HTML line breaks)
+  sanitized = sanitized.replace(/<br\s*\/?>/gi, ' ')
+  
+  // Remove HTML formatting tags but preserve their text content
+  sanitized = sanitized.replace(/<b>(.*?)<\/b>/gi, '$1')
+  sanitized = sanitized.replace(/<i>(.*?)<\/i>/gi, '$1')
+  sanitized = sanitized.replace(/<strong>(.*?)<\/strong>/gi, '$1')
+  sanitized = sanitized.replace(/<em>(.*?)<\/em>/gi, '$1')
+  sanitized = sanitized.replace(/<u>(.*?)<\/u>/gi, '$1')
+  
+  // Remove any remaining HTML tags (catch-all)
+  sanitized = sanitized.replace(/<[^>]+>/g, '')
+  
+  // Clean up multiple consecutive spaces that might result from tag removal
+  sanitized = sanitized.replace(/[ \t]{2,}/g, ' ')
+  
+  return sanitized.trim()
+}
+
 // Render Mermaid diagram to PNG blob
 const renderMermaidToBlob = async (mermaidCode) => {
   try {
     initializeMermaid()
+    
+    // Sanitize the chart code to remove HTML tags that cause parse errors
+    const sanitizedCode = sanitizeMermaidCode(mermaidCode)
+    
     const id = `mermaid-docx-${Math.random().toString(36).substring(2, 11)}`
-    const { svg } = await mermaid.render(id, mermaidCode)
+    const { svg } = await mermaid.render(id, sanitizedCode)
     
     if (!svg) {
       console.error('Mermaid render returned no SVG')
